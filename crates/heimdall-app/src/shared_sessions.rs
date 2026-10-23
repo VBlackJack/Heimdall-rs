@@ -247,8 +247,6 @@ const PROTOCOL_RDP: &str = "RDP";
 const RD_GATEWAY_KEY: &str = "rdpGateway";
 const PROTOCOL_TELNET: &str = "Telnet";
 const PROTOCOL_VNC: &str = "VNC";
-/// The connection type the file reader gives an FTP session: refused with its own reason.
-const FTP_TYPE: &str = "FTP";
 
 /// What a look at a file saw of it, to tell a change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -522,7 +520,10 @@ fn read_source(
     let problem = match read_bounded(&path).and_then(|bytes| parse(&source.id, &bytes, variables)) {
         // A file with nothing usable in it is no source of sessions: it reports why, and
         // keeps the previous sessions when there are some.
-        Ok(parsed) if !parsed.sessions.is_empty() => {
+        // A file that read but whose sessions were all refused (a route Heimdall cannot follow
+        // was added to each) loads none: falling back to the previous read or the offline copy
+        // would reopen those sessions as direct connections around the route the file asks for.
+        Ok(parsed) if !parsed.sessions.is_empty() || parsed.refused > 0 => {
             if let Some(cache) = cache {
                 keep_copy(cache, source, &path, &parsed);
             }
@@ -971,13 +972,8 @@ fn sanitize(
     // A jump host or a proxy the protocol cannot honour never gets here: the reader refuses
     // such a session (`refused_by_reader`), as the C# parser does
     // (`MobaXtermImporter.cs:308-326`).
-    let protocol = Protocol::of_name(kind).ok_or_else(|| {
-        if kind.eq_ignore_ascii_case(FTP_TYPE) {
-            (SkipReason::FtpNotSupported, String::new())
-        } else {
-            (SkipReason::OtherProtocol, display_text(kind))
-        }
-    })?;
+    let protocol =
+        Protocol::of_name(kind).ok_or_else(|| (SkipReason::OtherProtocol, display_text(kind)))?;
     let host = text_of(server, "remoteServer")
         .filter(|host| is_valid_host(host))
         .ok_or_else(|| {
@@ -1073,6 +1069,9 @@ fn refused_by_reader(warning: &FileWarning) -> Option<Refused> {
             folder,
             type_code,
         } => (session, folder, type_code, SkipReason::OtherProtocol),
+        FileWarning::FtpNotSupported { session, folder } => {
+            (session, folder, &no_detail, SkipReason::FtpNotSupported)
+        }
         FileWarning::WslNotSupported { session, folder } => {
             (session, folder, &no_detail, SkipReason::WslNotSupported)
         }

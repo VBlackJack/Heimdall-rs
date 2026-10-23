@@ -85,11 +85,17 @@ fn mobaxterm_ssh_sessions_are_read_with_their_folders_and_safe_key_paths() {
     // The one session of a type that is not taken says so; nothing else is said.
     assert_eq!(
         parsed.warnings,
-        [FileWarning::UnsupportedSessionType {
-            session: "unknown".to_owned(),
-            folder: "Paris/Prod/DMZ".to_owned(),
-            type_code: "99".to_owned(),
-        }]
+        [
+            FileWarning::FtpNotSupported {
+                session: "ftp".to_owned(),
+                folder: "Paris/Prod/DMZ".to_owned(),
+            },
+            FileWarning::UnsupportedSessionType {
+                session: "unknown".to_owned(),
+                folder: "Paris/Prod/DMZ".to_owned(),
+                type_code: "99".to_owned(),
+            }
+        ]
     );
     let report = report(&parsed);
     let ssh: Vec<String> = report.profiles.iter().map(ssh_line).collect();
@@ -121,18 +127,14 @@ fn mobaxterm_ssh_sessions_are_read_with_their_folders_and_safe_key_paths() {
 }
 
 #[test]
-fn mobaxterm_rdp_ftp_telnet_and_vnc_sessions_are_read_by_protocol_code() {
+fn mobaxterm_rdp_telnet_and_vnc_sessions_are_read_by_type_and_ftp_is_refused() {
     let report = report(&mobaxterm::parse(MOBA));
     let dc = &report.rdp[0];
     assert_eq!(
         (dc.name.as_str(), dc.port, dc.username.as_deref()),
         ("dc", 3389, Some("admin"))
     );
-    let ftp = &report.ftp[0];
-    assert_eq!(
-        (ftp.host.as_str(), ftp.port, ftp.passive, ftp.tls),
-        ("ftp.lab", 21, false, true)
-    );
+    assert!(report.ftp.is_empty(), "FTP is refused, as the C#");
     let telnet: Vec<(&str, u16)> = report
         .telnet
         .iter()

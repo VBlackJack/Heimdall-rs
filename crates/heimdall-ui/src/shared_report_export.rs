@@ -281,8 +281,8 @@ mod tests {
                 entry(
                     ReportCheck::SkippedSession,
                     "Prod",
-                    "ftp box",
-                    "FTP",
+                    "odd box",
+                    "12",
                     "",
                     Some(SkipReason::OtherProtocol),
                 ),
@@ -319,7 +319,7 @@ Gateway outliers: 1
 Duplicate hosts: 0
 
 Skipped sessions: 1
-Prod / ftp box: Session type FTP is not supported, only SSH, SFTP, RDP, Telnet and VNC are taken.
+Prod / odd box: Session type 12 is not supported, only SSH, SFTP, RDP, Telnet and VNC are taken.
 
 Name and host mismatch: 1
 (top level) / web01: The name is not the host db01.example.com nor its first label.
@@ -348,8 +348,8 @@ Prod / api: It connects through no gateway (direct connection), while most of it
     fn the_csv_is_a_header_and_a_quoted_row_per_entry_ended_by_crlf() {
         let expected = concat!(
             "\"Check\",\"Folder\",\"Session\",\"Detail\",\"Explanation\"\r\n",
-            "\"Skipped sessions\",\"Prod\",\"ftp box\",\"FTP\",",
-            "\"Session type FTP is not supported, only SSH, SFTP, RDP, Telnet and VNC are taken.\"\r\n",
+            "\"Skipped sessions\",\"Prod\",\"odd box\",\"12\",",
+            "\"Session type 12 is not supported, only SSH, SFTP, RDP, Telnet and VNC are taken.\"\r\n",
             "\"Name and host mismatch\",\"(top level)\",\"web01\",\"db01.example.com\",",
             "\"The name is not the host db01.example.com nor its first label.\"\r\n",
             "\"Gateway outliers\",\"Prod\",\"api\",\"\",",

@@ -46,8 +46,10 @@ pub const DIRECTORY_NAME: &str = "SharedSessionCache";
 
 /// The version of the copy's layout; a copy of another version is ignored, as the C#'s.
 /// 3 added the RD Gateway of an RDP session: a copy of version 2 may hold an RDP session that went
-/// through one as a direct connection, so it is not read.
-const FORMAT_VERSION: u64 = 3;
+/// through one as a direct connection, so it is not read. 4 followed the reader taking the session
+/// type instead of the icon: a copy of version 3 may hold a session the icon made another protocol,
+/// or one that goes through a jump host or proxy as a direct connection, so it is not read.
+const FORMAT_VERSION: u64 = 4;
 
 /// The extension of a copy.
 const EXTENSION: &str = "json";
@@ -346,7 +348,7 @@ mod tests {
         let text = fs::read_to_string(&path).expect("read");
         fs::write(
             &path,
-            text.replace("\"formatVersion\": 3", "\"formatVersion\": 9"),
+            text.replace("\"formatVersion\": 4", "\"formatVersion\": 9"),
         )
         .expect("written");
         assert_eq!(cache.read("team"), None);
@@ -354,7 +356,7 @@ mod tests {
         // may have crossed one, so it is not served.
         fs::write(
             &path,
-            text.replace("\"formatVersion\": 3", "\"formatVersion\": 1"),
+            text.replace("\"formatVersion\": 4", "\"formatVersion\": 1"),
         )
         .expect("written");
         assert_eq!(cache.read("team"), None);
@@ -382,10 +384,17 @@ mod tests {
             cache.read("team").expect("copy").sessions[0].rd_gateway,
             None
         );
+        // A version-3 copy, written by the reader that took the icon for the type, is not read.
+        fs::write(
+            &path,
+            text.replace("\"formatVersion\": 4", "\"formatVersion\": 3"),
+        )
+        .expect("written");
+        assert_eq!(cache.read("team"), None);
         // A version-2 copy, written before the RD Gateway was kept, is not read.
         fs::write(
             &path,
-            text.replace("\"formatVersion\": 3", "\"formatVersion\": 2"),
+            text.replace("\"formatVersion\": 4", "\"formatVersion\": 2"),
         )
         .expect("written");
         assert_eq!(cache.read("team"), None);

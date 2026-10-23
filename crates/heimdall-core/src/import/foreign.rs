@@ -90,6 +90,14 @@ pub enum FileWarning {
         /// The type code, as written in the file.
         type_code: String,
     },
+    /// A `MobaXterm` FTP session: not imported, as the C#; FTP sends its password in clear and
+    /// where its proxy settings sit is not known.
+    FtpNotSupported {
+        /// The session, as named in the file.
+        session: String,
+        /// The folder it is filed in.
+        folder: String,
+    },
     /// A `MobaXterm` WSL session: a Linux system on the computer that runs `MobaXterm`, so
     /// there is nothing to connect to from another one.
     WslNotSupported {

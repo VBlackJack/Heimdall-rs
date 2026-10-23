@@ -122,8 +122,10 @@ Heimdall-rs looks at each source file every few seconds. When it changes and has
 source alone is read again, the tree follows, and your expanded folders and selection stay. Open
 sessions are never closed by a reload.
 
-If the new file cannot be read, or suddenly holds no usable session, the previous sessions are
-kept and the source says why.
+If the new file cannot be read, or holds no session at all, the previous sessions are kept and
+the source says why. A file that reads but whose sessions are all skipped (for example because a
+jump host or a proxy was added to each) is not that case: it loads no session, and neither the
+previous read nor the offline copy brings back a skipped session as a direct connection.
 
 After each successful read, Heimdall-rs keeps a copy of the sessions in its data folder, in the
 `SharedSessionCache` folder beside the settings file. If the file cannot be reached at startup
@@ -168,8 +170,8 @@ finding is an advice, and its session is still loaded.
 | A source already holding 5000 sessions | The rest is left out. |
 
 The one-time import of a MobaXterm file (**Import Sessions** in the session tree) skips the
-same sessions for the same reasons, and says so in its summary. It does differ on FTP:
-Heimdall-rs has FTP profiles, so the import keeps an FTP session as an FTP profile.
+sessions of the type and route rows above for the same reasons, FTP included, and says so in
+its summary. The other rows concern shared sources only.
 
 ## 9. Known limits
 

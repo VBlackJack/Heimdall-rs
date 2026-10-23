@@ -1653,6 +1653,52 @@ fn a_session_of_a_type_heimdall_does_not_take_says_why_and_is_never_taken_as_a_c
 }
 
 #[test]
+fn a_file_that_adds_a_route_to_every_session_leaves_no_direct_session_behind() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    let direct = format!(
+        "[Bookmarks]\r\n{}{}",
+        line("tel", 98, &[(0, "t.example.com")]),
+        line("vnc", 128, &[(0, "v.example.com")]),
+    );
+    std::fs::write(&file, &direct).expect("write");
+    let sources = vec![source("team", &file)];
+    let mut shared = cached(dir.path());
+    shared.load(&sources, &Variables::default());
+    assert_eq!(shared.sessions_of("team").len(), 2);
+    // The file now sends both through a route Heimdall cannot follow.
+    let routed = format!(
+        "[Bookmarks]\r\n{}{}",
+        line(
+            "tel",
+            98,
+            &[(0, "t.example.com"), (5, "jump.example.com"), (6, "22")]
+        ),
+        line(
+            "vnc",
+            128,
+            &[(0, "v.example.com"), (12, "2"), (13, "proxy.example.com")]
+        ),
+    );
+    std::fs::write(&file, &routed).expect("write");
+    assert!(shared.refresh(&sources, &Variables::default(), later()));
+    assert!(
+        shared.sessions_of("team").is_empty(),
+        "neither the previous read nor anything else brings a direct session back"
+    );
+    assert_eq!(shared.sources()[0].refused, 2);
+    // After a restart, with the file or without it, the old copy does not answer either.
+    for keep_file in [true, false] {
+        if !keep_file {
+            std::fs::remove_file(&file).expect("remove");
+        }
+        let mut restarted = cached(dir.path());
+        restarted.load(&sources, &Variables::default());
+        assert!(restarted.sessions_of("team").is_empty(), "{keep_file}");
+    }
+}
+
+#[test]
 fn only_the_sessions_that_can_name_a_gateway_vote_on_the_route_of_a_folder() {
     use heimdall_app::shared_report::ReportCheck;
     let dir = tempfile::tempdir().expect("dir");

@@ -184,6 +184,9 @@ pub fn warning_lines(warnings: &[FileWarning]) -> Vec<String> {
                 session = session.as_str(),
                 kind = type_code.as_str()
             ),
+            FileWarning::FtpNotSupported { session, .. } => {
+                fl!("ui-import-mobaxterm-ftp", session = session.as_str())
+            }
             FileWarning::WslNotSupported { session, .. } => {
                 fl!("ui-import-mobaxterm-wsl", session = session.as_str())
             }

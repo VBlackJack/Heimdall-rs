@@ -624,6 +624,7 @@ ui-import-mobaxterm-invalid-gateway = Session "{ $session }" was not imported: i
 ui-import-mobaxterm-invalid-rd-gateway = Session "{ $session }" was not imported: its RD Gateway "{ $host }" is not a valid host. Importing it would reach the server around the gateway the file asked for.
 ui-import-mobaxterm-rd-gateway-unsupported = Session "{ $session }" was not imported: it signs in to its RD Gateway "{ $host }" in a way Heimdall does not reproduce (a smart card, or a setting it does not recognise). Importing it would reach the server around the gateway the file asked for.
 ui-import-mobaxterm-unsupported-type = Session "{ $session }" was not imported: session type { $kind } is not supported.
+ui-import-mobaxterm-ftp = Session "{ $session }" was not imported: FTP sends its password in clear, and FTP sessions are not imported yet.
 ui-import-mobaxterm-wsl = Session "{ $session }" was not imported: it is a WSL distribution, a Linux system on the computer that runs MobaXterm, with nothing to connect to.
 ui-import-mobaxterm-jump-host = Session "{ $session }" was not imported: it goes through the SSH jump host "{ $host }"; Heimdall does not route this protocol through a jump host, and a direct connection would go around it.
 ui-import-mobaxterm-proxy = Session "{ $session }" was not imported: it goes through the proxy "{ $host }"; Heimdall does not use a proxy for this protocol, and a direct connection would go around it.

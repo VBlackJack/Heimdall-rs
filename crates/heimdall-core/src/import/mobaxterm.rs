@@ -18,7 +18,8 @@
 //! `MobaXterm.ini`), read as the C# `MobaXtermImporter` reads them.
 //!
 //! A session is `name= #icon#type%host%port%user%...`: `type` names the protocol (the icon is
-//! the user's to change and decides nothing), and the `%` fields after it depend on it. `SubRep` names the folder, `\` separating its levels.
+//! the user's to change and decides nothing), and the `%` fields after it depend on it.
+//! `SubRep` names the folder, `\` separating its levels.
 //! Passwords are encrypted by `MobaXterm` with its own algorithm: they are only counted, so
 //! the user can be told to enter them again.
 
@@ -51,20 +52,22 @@ const UNSAFE_PATH_CHARACTERS: [char; 8] = [';', '|', '&', '`', '$', '>', '<', '!
 const UNSAFE_FOLDER_CHARACTERS: [char; 7] = ['<', '>', ':', '"', '|', '?', '*'];
 
 /// A `MobaXterm` session type and the C# `ConnectionType` it maps to, as the keys of the C#
-/// `SessionLayouts` (`MobaXtermImporter.cs:117-165`). FTP is read as well: the C# leaves it out,
-/// Heimdall has FTP profiles.
-const PROTOCOLS: [(u32, &str); 6] = [
+/// `SessionLayouts` (`MobaXtermImporter.cs:117-165`).
+const PROTOCOLS: [(u32, &str); 5] = [
     (0, "SSH"),
     (1, "Telnet"),
     (4, "RDP"),
     (5, "VNC"),
-    (6, "FTP"),
     (7, "SFTP"),
 ];
 
 /// The session type of a WSL distribution (`MobaXtermImporter.cs`, `WslTypeCode`): a Linux system
 /// on the computer that runs `MobaXterm`, with nothing to connect to from another one.
 const WSL_TYPE_CODE: u32 = 14;
+
+/// The session type of FTP: refused with a reason of its own, as the C#, since FTP sends its
+/// password in clear and where its proxy settings sit is not known.
+const FTP_TYPE_CODE: u32 = 6;
 
 /// Where the fields of an SSH session are, as the C# reads them.
 const SSH_KEY_FIELD: usize = 4;
@@ -153,10 +156,6 @@ fn refuse_unsupported_routes(connection_type: &str, fields: &[&str]) -> Result<(
 
 /// Prefix of the identifier a gateway carries until the caller gives it its own.
 const GATEWAY_PLACEHOLDER_ID: &str = "foreign-gateway-";
-
-/// Where the fields of an FTP session are.
-const FTP_PASSIVE_FIELD: usize = 3;
-const FTP_TLS_FIELD: usize = 4;
 
 /// What a read of a file may hold, for a file other people write: nothing larger is kept,
 /// whatever the file says, so a crafted one cannot make the reader allocate without bound.
@@ -249,6 +248,10 @@ pub fn parse_limited(
             }
             match &outcome {
                 Err(Refusal::Wsl) => parsed.warnings.push(FileWarning::WslNotSupported {
+                    session: key.clone(),
+                    folder: folder.clone(),
+                }),
+                Err(Refusal::Ftp) => parsed.warnings.push(FileWarning::FtpNotSupported {
                     session: key.clone(),
                     folder: folder.clone(),
                 }),
@@ -377,6 +380,8 @@ enum Refusal {
     NotASession,
     /// A WSL distribution.
     Wsl,
+    /// An FTP session.
+    Ftp,
     /// A session type Heimdall does not take; the type code as written.
     UnsupportedType(String),
     /// A jump host on a protocol that is never routed through one; the host as written.
@@ -561,6 +566,9 @@ fn session(
     if code == Some(WSL_TYPE_CODE) {
         return Err(Refusal::Wsl);
     }
+    if code == Some(FTP_TYPE_CODE) {
+        return Err(Refusal::Ftp);
+    }
     let (_, connection_type) = PROTOCOLS
         .iter()
         .find(|(known, _)| Some(*known) == code)
@@ -632,22 +640,6 @@ fn session(
         "RDP" => {
             set_port(&mut dto, "remotePort", port);
             set_text(&mut dto, "rdpUsername", user);
-        }
-        "FTP" => {
-            set_port(&mut dto, "ftpPort", port);
-            set_text(&mut dto, "ftpUsername", user);
-            if fields.len() > FTP_PASSIVE_FIELD {
-                dto.insert(
-                    "ftpPassiveMode".to_owned(),
-                    Value::Bool(field(FTP_PASSIVE_FIELD) != "0"),
-                );
-            }
-            if fields.len() > FTP_TLS_FIELD {
-                dto.insert(
-                    "ftpUseSsl".to_owned(),
-                    Value::Bool(field(FTP_TLS_FIELD) == "1"),
-                );
-            }
         }
         "VNC" => set_port(&mut dto, "vncPort", port),
         _ => {
@@ -1028,11 +1020,7 @@ mod tests {
         for (at, value) in fields {
             values[*at] = value;
         }
-        format!(
-            "{name}= #109#{kind}%{}
-",
-            values.join("%")
-        )
+        format!("{name}= #109#{kind}%{}\n", values.join("%"))
     }
 
     const TELNET: u32 = 1;
@@ -1112,11 +1100,10 @@ mod tests {
     #[test]
     fn the_type_decides_the_protocol_not_the_icon() {
         // Every icon, one type: a custom icon does not make a Telnet session an SSH one.
-        let text = "[Bookmarks]
-            ssh= #42#0%a.lab%22%root
-            telnet= #109#1%b.lab%23
-            rdp= #7#4%c.lab%3389%admin
-";
+        let text = "[Bookmarks]\n\
+            ssh= #42#0%a.lab%22%root\n\
+            telnet= #109#1%b.lab%23\n\
+            rdp= #7#4%c.lab%3389%admin\n";
         let parsed = parse(text);
         let types: Vec<_> = parsed
             .servers
@@ -1128,12 +1115,12 @@ mod tests {
 
     #[test]
     fn a_wsl_session_and_any_other_type_are_refused_with_their_name() {
-        let text = "[Bookmarks]
-            wsl= #151#14%AlmaLinux-9%
-            odd= #12#99%x.lab%22
-            word= #12#abc%x.lab%22
-            ok= #109#0%ok.lab%22%root
-";
+        let text = "[Bookmarks]\n\
+            wsl= #151#14%AlmaLinux-9%\n\
+            ftp= #130#6%ftp.lab%21%anon\n\
+            odd= #12#99%x.lab%22\n\
+            word= #12#abc%x.lab%22\n\
+            ok= #109#0%ok.lab%22%root\n";
         let parsed = parse(text);
         assert_eq!(parsed.servers.len(), 1);
         assert_eq!(
@@ -1141,6 +1128,10 @@ mod tests {
             [
                 FileWarning::WslNotSupported {
                     session: "wsl".to_owned(),
+                    folder: String::new(),
+                },
+                FileWarning::FtpNotSupported {
+                    session: "ftp".to_owned(),
                     folder: String::new(),
                 },
                 FileWarning::UnsupportedSessionType {

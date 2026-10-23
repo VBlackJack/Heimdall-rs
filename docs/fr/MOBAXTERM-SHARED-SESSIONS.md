@@ -128,8 +128,11 @@ Heimdall-rs regarde chaque fichier source toutes les quelques secondes. Quand il
 stabilisé, cette source seule est relue, l'arbre suit, et vos dossiers dépliés et votre
 sélection restent. Les sessions ouvertes ne sont jamais fermées par un rechargement.
 
-Si le nouveau fichier ne peut pas être lu, ou ne contient soudain aucune session utilisable, les
-sessions précédentes sont gardées et la source dit pourquoi.
+Si le nouveau fichier ne peut pas être lu, ou ne contient aucune session, les sessions
+précédentes sont gardées et la source dit pourquoi. Un fichier qui se lit mais dont toutes les
+sessions sont écartées (par exemple parce qu'un hôte de rebond ou un proxy a été ajouté à
+chacune) n'est pas ce cas : il ne charge aucune session, et ni la lecture précédente ni la copie
+hors ligne ne ramène une session écartée en connexion directe.
 
 Après chaque lecture réussie, Heimdall-rs garde une copie des sessions dans son dossier de
 données, dans le dossier `SharedSessionCache` à côté du fichier de réglages. Si le fichier est
@@ -175,8 +178,8 @@ tout autre constat est un conseil, et sa session reste chargée.
 | Une source qui contient déjà 5000 sessions | Le reste est écarté. |
 
 L'import ponctuel d'un fichier MobaXterm (**Importer des sessions** dans l'arbre des sessions) écarte
-les mêmes sessions pour les mêmes raisons, et le dit dans son résumé. Il diffère pour FTP :
-Heimdall-rs a des profils FTP, donc l'import garde une session FTP comme un profil FTP.
+les sessions des lignes de type et de route ci-dessus pour les mêmes raisons, FTP compris, et le
+dit dans son résumé. Les autres lignes ne concernent que les sources partagées.
 
 ## 9. Limites connues
 
