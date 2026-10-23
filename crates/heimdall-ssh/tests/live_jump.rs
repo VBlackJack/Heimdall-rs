@@ -57,6 +57,7 @@ fn hop(id: &str, host: &str, port: u16, user: &str, key: PathBuf) -> SshProfile 
         session_logging: None,
         ssh_mode: heimdall_core::profile::SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }
 }
 

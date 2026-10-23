@@ -67,7 +67,7 @@ use heimdall_core::folder_defaults::InheritedField;
 use heimdall_core::import::csharp_settings::PreferenceOutcome;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
-use heimdall_core::profile::{ProfileId, SshGateway, SshMode, display_address};
+use heimdall_core::profile::{ProfileId, RemoteOs, SshGateway, SshMode, display_address};
 use heimdall_core::settings::Language;
 use heimdall_core::settings::{AppTheme, BroadcastScope, ColorScheme};
 use heimdall_ssh::{AgentSource, Secret};
@@ -577,6 +577,16 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
         iced::Event::Window(window::Event::Unfocused) => {
             Some(Message::App(AppMessage::WindowFocus(false)))
         }
+        // Shift+Enter first: a command library tab types its command at the prompt, any other
+        // window state reads it as the Enter it is (see `Message::CmdLibInsertKey`).
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            modifiers,
+            repeat: false,
+            ..
+        }) if status == event::Status::Ignored && is_insert_key(&key, modifiers) => {
+            Some(Message::CmdLibInsertKey)
+        }
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key: keyboard::Key::Named(Named::Enter),
             repeat: false,
@@ -717,6 +727,15 @@ fn is_duplicate_key(
         && crate::terminal_view::keys::letter(key, physical) == Some('d')
 }
 
+/// Whether the key is Shift+Enter, as the C# command library's Insert.
+fn is_insert_key(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> bool {
+    matches!(key, keyboard::Key::Named(Named::Enter))
+        && modifiers.shift()
+        && !modifiers.control()
+        && !modifiers.alt()
+        && !modifiers.logo()
+}
+
 /// What the window reacts to.
 #[derive(Clone)]
 pub enum Message {
@@ -762,6 +781,10 @@ pub enum Message {
     /// Ctrl+D, uncaptured by any widget: duplicates the command last used in a command
     /// library tab shown, as the C# `CommandLibraryView` binds it.
     CmdLibDuplicateKey,
+    /// Shift+Enter, uncaptured by any widget: types the command last used at the prompt of the
+    /// terminal chosen, from a command library tab shown, as the C# `CommandLibraryView`
+    /// binds Insert; else the Enter of a dialog, as before.
+    CmdLibInsertKey,
     /// Tab: the next field of a dialog, or the other pane of a Files tab.
     TabKey {
         /// With Shift: the previous field.
@@ -1199,6 +1222,7 @@ impl fmt::Debug for Message {
             Self::FilesKey(key) => write!(f, "FilesKey({key:?})"),
             Self::PasswordCopyKey => f.write_str("PasswordCopyKey"),
             Self::CmdLibDuplicateKey => f.write_str("CmdLibDuplicateKey"),
+            Self::CmdLibInsertKey => f.write_str("CmdLibInsertKey"),
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
@@ -2889,6 +2913,17 @@ impl Shell {
                 ),
             ));
         }
+        // Shift+Enter no field took types the command last used at the prompt, from the same
+        // library tab, with the same conditions: nothing is written for a command that cannot
+        // be made, and nothing is run.
+        if let Some(tab) = self.cmdlib_insert_key(&message) {
+            return self.update(Message::Tool(
+                tab,
+                crate::tools::ToolMessage::CmdLib(
+                    crate::tools::CommandLibraryMessage::InsertSelected,
+                ),
+            ));
+        }
         // Escape no widget took leaves full screen when there is nothing else to close, as
         // the C# Heimdall's.
         if matches!(message, Message::EscapeUntaken) {
@@ -2949,6 +2984,8 @@ impl Shell {
             Message::Shortcut(WindowShortcut::Screenshot) => return self.screenshot(),
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
             Message::DialogKey { confirm } => self.dialog_key(confirm),
+            // No command library took it: it is the Enter of a dialog, as it was.
+            Message::CmdLibInsertKey => self.dialog_key(true),
             // Answered above, before the rest; Ctrl+C is taken by no Password Generator
             // shown, and nothing else copies on it.
             Message::EscapeUntaken
@@ -4296,6 +4333,20 @@ impl Shell {
         if !matches!(message, Message::CmdLibDuplicateKey) {
             return None;
         }
+        self.cmdlib_key_tab()
+    }
+
+    /// The command library tab Shift+Enter is for, under the same conditions.
+    fn cmdlib_insert_key(&self, message: &Message) -> Option<TabId> {
+        if !matches!(message, Message::CmdLibInsertKey) {
+            return None;
+        }
+        self.cmdlib_key_tab()
+    }
+
+    /// The command library tab shown, with nothing over it and no field of the tree with the
+    /// keyboard: the one a key of the library is for.
+    fn cmdlib_key_tab(&self) -> Option<TabId> {
         let free = !self.gated()
             && !self.settings_shown()
             && !self.tree_focused
@@ -12106,6 +12157,10 @@ fn general_tab<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column<'a, Mes
         }
         basics = basics.push(crate::address_test_view::view(draft, forms.gateways));
     }
+    // What the far end runs, under the address, as the C# General tab's list.
+    if draft.shows_remote_os() {
+        basics = basics.push(remote_os_choice(draft));
+    }
     let mut tab = column![basics].spacing(SECTION_GAP);
     if draft.protocol == DraftProtocol::Citrix {
         tab = tab.push(crate::citrix_form::basics(|field| form_field(draft, field)));
@@ -13607,6 +13662,41 @@ fn ssh_mode_choice(draft: &ProfileDraft) -> Element<'_, Message> {
         mode = mode.push(dialog_parts::hint(fl!("ui-profile-ssh-mode-external-desc")));
     }
     mode.into()
+}
+
+/// A profile's operating system of the far end in its form's list, as the C# names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RemoteOsChoice(RemoteOs);
+
+impl fmt::Display for RemoteOsChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self.0 {
+            RemoteOs::Auto => fl!("ui-profile-remote-os-auto"),
+            RemoteOs::Windows => fl!("ui-profile-remote-os-windows"),
+            RemoteOs::Linux => fl!("ui-profile-remote-os-linux"),
+        })
+    }
+}
+
+/// The C# "Operating system of the far end" list of the General tab: Automatic keeps the
+/// guess from the protocol, which is wrong for SSH into a Windows server.
+fn remote_os_choice(draft: &ProfileDraft) -> Element<'_, Message> {
+    column![
+        dialog_parts::label(fl!("ui-profile-remote-os")),
+        pick_list(
+            RemoteOs::ALL.map(RemoteOsChoice).to_vec(),
+            Some(RemoteOsChoice(draft.remote_os)),
+            |RemoteOsChoice(remote_os)| Message::App(AppMessage::ProfileChoice(
+                ProfileChoice::RemoteOs(remote_os)
+            )),
+        )
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
+        .width(Length::Fill),
+        dialog_parts::hint(fl!("ui-profile-remote-os-hint")),
+    ]
+    .spacing(spacing::XS)
+    .into()
 }
 
 /// Whether the profile's sessions keep a transcript, as the C# server dialog's choice.

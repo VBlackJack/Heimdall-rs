@@ -64,6 +64,7 @@ fn ssh(name: &str, host: &str, port: u16, username: Option<&str>) -> SshProfile 
         session_logging: None,
         ssh_mode: heimdall_core::profile::SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }
 }
 
@@ -154,6 +155,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         host: "sw.lab".to_owned(),
         port: 23,
         session_logging: None,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

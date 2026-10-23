@@ -57,6 +57,7 @@ fn ssh(id: &str, name: &str) -> SshProfile {
         session_logging: None,
         ssh_mode: SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }
 }
 

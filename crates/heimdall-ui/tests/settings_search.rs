@@ -949,6 +949,7 @@ fn the_default_ssh_mode_is_chosen_found_reset_and_applied_to_all_once_asked() {
         session_logging: None,
         ssh_mode: SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());

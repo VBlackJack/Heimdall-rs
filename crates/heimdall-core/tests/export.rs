@@ -90,6 +90,8 @@ fn ssh() -> Vec<SshProfile> {
         // Opened in PuTTY with X11 forwarding: both travel.
         ssh_mode: heimdall_core::profile::SshMode::External,
         x11_forwarding: true,
+        // SSH towards a Windows OpenSSH server: the protocol's guess is wrong, so it says so.
+        remote_os: heimdall_core::profile::RemoteOs::Windows,
     };
     let files = SshProfile {
         id: ProfileId::new("files"),
@@ -111,6 +113,7 @@ fn ssh() -> Vec<SshProfile> {
         session_logging: None,
         ssh_mode: heimdall_core::profile::SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     };
     vec![base, files]
 }
@@ -261,6 +264,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
         host: "switch.lab".to_owned(),
         port: 2323,
         session_logging: Some(false),
+        remote_os: heimdall_core::profile::RemoteOs::Linux,
     }]);
     store.merge_vnc([VncProfile {
         id: ProfileId::new("screen"),
@@ -596,4 +600,23 @@ fn the_local_tunnel_port_is_always_written_never_0() {
     for id in ["switch", "screen", "ftp", "mail", "tool"] {
         assert_eq!(local_port(id), None, "{id}");
     }
+}
+
+#[test]
+fn the_far_end_os_is_written_by_name_only_when_declared() {
+    let dir = tempfile::tempdir().expect("dir");
+    let text = export::csharp(&store(dir.path()), &line, &RdpDefaults::default());
+    let document: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    let servers = document["servers"].as_array().expect("servers");
+    let by_id = |id: &str| {
+        servers
+            .iter()
+            .find(|server| server["id"] == id)
+            .unwrap_or_else(|| panic!("{id}"))
+    };
+    assert_eq!(by_id("web")["remoteOs"], "Windows");
+    assert_eq!(by_id("switch")["remoteOs"], "Linux");
+    // Auto is what a C# file that omits the key reads as: nothing is written.
+    assert!(by_id("files").get("remoteOs").is_none());
+    assert!(by_id("dc").get("remoteOs").is_none());
 }

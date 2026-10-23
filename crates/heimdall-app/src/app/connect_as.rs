@@ -163,6 +163,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 session_logging: None,
                 ssh_mode: heimdall_core::profile::SshMode::Embedded,
                 x11_forwarding: false,
+                remote_os: heimdall_core::profile::RemoteOs::Auto,
             }),
             purpose,
         )
@@ -219,6 +220,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 host,
                 port: DEFAULT_TELNET_PORT,
                 session_logging: None,
+                remote_os: heimdall_core::profile::RemoteOs::Auto,
             }),
             Purpose::Shell,
         ),

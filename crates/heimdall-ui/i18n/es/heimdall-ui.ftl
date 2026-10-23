@@ -1135,6 +1135,11 @@ ui-profile-ssh-mode = Modo SSH
 ui-profile-ssh-mode-embedded = Incrustado (integrado)
 ui-profile-ssh-mode-external = Externo (PuTTY)
 ui-profile-ssh-mode-external-desc = Abre PuTTY en una ventana separada. PuTTY pide la contraseña por sí mismo.
+ui-profile-remote-os = Sistema operativo del extremo remoto
+ui-profile-remote-os-auto = Automático
+ui-profile-remote-os-windows = Windows
+ui-profile-remote-os-linux = Linux
+ui-profile-remote-os-hint = Automático conserva la deducción hecha a partir del protocolo (SSH se lee como Linux). Indique Windows para un servidor SSH que ejecuta Windows: la biblioteca de comandos ofrecerá entonces los comandos que le convienen.
 ui-profile-toggle-x11 = Activar reenvío X11
 ui-profile-toggle-x11-hint = Reenvía la pantalla X11 al equipo local para aplicaciones gráficas (indicador -X)
 ui-profile-x11-warning = El reenvío X11 permite al host remoto ver la pantalla de este equipo y las teclas pulsadas en sus ventanas. Actívalo solo para un servidor de confianza.
@@ -5479,6 +5484,7 @@ ui-tool-cmdlib-help =
 
     Uso:
     Elige una plataforma o escribe una palabra para encontrar un comando. Escribe sus valores: el comando los muestra tal como se copiará. Un valor vacío toma el ejemplo mostrado.
+    Abierta desde una sesión, la biblioteca arranca en su plataforma y rellena su host y su usuario. Insertar (Mayús+Intro) escribe el comando en el indicador del terminal sin ejecutarlo: lo lees, lo cambias y pulsas Intro tú mismo.
 ui-tool-cmdlib-search-placeholder = Buscar comandos
 ui-tool-cmdlib-platform-all = Todas las plataformas
 ui-tool-cmdlib-category-security = Seguridad y cifrado
@@ -5526,6 +5532,9 @@ ui-tool-cmdlib-delete-question = ¿Eliminar { $title }?
 ui-tool-cmdlib-send = Enviar
 ui-tool-cmdlib-send-to = Enviar a:
 ui-tool-cmdlib-send-none = Abra una pestaña de terminal conectada para enviarle un comando. No se envía nada sin su acuerdo.
+ui-tool-cmdlib-insert = Insertar
+ui-tool-cmdlib-inserted = Escrito en el indicador de { $target }. Pulse Intro en el terminal para ejecutarlo.
+ui-tool-cmdlib-session = Abierta para la sesión de { $host }
 ui-tool-cmdlib-library-unreadable = No se pudo leer el archivo de sus comandos. Se deja como está y no se puede modificar aquí.
 ui-tool-cmdlib-library-unsaved = No se pudieron guardar sus comandos. El cambio no se hizo.
 ui-tool-cmdlib-editor-new = Nuevo comando
@@ -5590,6 +5599,11 @@ ui-tool-cmdlib-history-replay = Repetir
 ui-tool-cmdlib-history-clear = Borrar el historial
 ui-tool-cmdlib-history-clear-question = ¿Borrar todo el historial? Los favoritos se conservan.
 ui-tool-cmdlib-history-clear-confirm = Borrar
+ui-tool-cmdlib-history-inserted = Escrito en el indicador de { $target } el { $when }
+ui-tool-cmdlib-history-copied = Copiado el { $when }
+ui-tool-cmdlib-history-host = Host: { $host }
+ui-tool-cmdlib-history-this-host = Solo este host
+ui-tool-cmdlib-history-empty-host = Todavía nada para este host. Desmarque "Solo este host" para ver los demás.
 ui-tool-cmdlib-replay-gone = El comando de esta entrada ya no existe.
 ui-tool-cmdlib-replay-blocked = Esta entrada no se puede enviar ahora: abra una pestaña de terminal conectada y rellene los valores que pide.
 ui-tool-cmdlib-activity-unsaved = No se pudieron guardar los favoritos y el historial.

@@ -55,6 +55,7 @@ fn app(dir: &Path) -> App {
         session_logging: None,
         ssh_mode: heimdall_core::profile::SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.merge_telnet([TelnetProfile {
         id: ProfileId::new("switch"),
@@ -63,6 +64,7 @@ fn app(dir: &Path) -> App {
         host: "switch.lab".to_owned(),
         port: 23,
         session_logging: None,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.merge_winrm([WinRmProfile {
         id: ProfileId::new("dc"),

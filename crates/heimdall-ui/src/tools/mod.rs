@@ -1650,6 +1650,12 @@ impl ToolPanes {
                             dangerous,
                         },
                     ))),
+                    // Typed at the prompt, no Enter: nothing to agree to.
+                    command_library_tool::Outcome::Insert { target, command } => {
+                        Task::done(Message::App(heimdall_app::Message::Tools(
+                            heimdall_app::ToolsMessage::InsertCommand { target, command },
+                        )))
+                    }
                     command_library_tool::Outcome::Broadcast {
                         targets,
                         command,

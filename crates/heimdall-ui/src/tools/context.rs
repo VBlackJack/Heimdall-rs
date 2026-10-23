@@ -36,13 +36,13 @@ use heimdall_core::tools::posix_mode::PosixMode;
 use iced::widget::text_editor::{Action, Edit};
 
 use super::{
-    BannerMessage, Base64Message, CertInspectorMessage, ChmodMessage, CrontabMessage, CveMessage,
-    DateTimeMessage, DiffMessage, DnsBatchMessage, DnsMessage, DnsSecMessage,
-    FirewallTesterMessage, HashMessage, HmacMessage, HttpHeadersMessage, IpConverterMessage,
-    JsonMessage, JwtMessage, LogViewerMessage, NetworkCartographyMessage, PingMessage,
-    PortScanMessage, RegexMessage, SmbMessage, SnmpWalkerMessage, SshConfigMessage, SshField,
-    SubnetMessage, TcpPingMessage, TcpTracerouteMessage, TlsAuditMessage, ToolMessage, UrlMessage,
-    WhoisMessage, WolMessage,
+    BannerMessage, Base64Message, CertInspectorMessage, ChmodMessage, CommandLibraryMessage,
+    CrontabMessage, CveMessage, DateTimeMessage, DiffMessage, DnsBatchMessage, DnsMessage,
+    DnsSecMessage, FirewallTesterMessage, HashMessage, HmacMessage, HttpHeadersMessage,
+    IpConverterMessage, JsonMessage, JwtMessage, LogViewerMessage, NetworkCartographyMessage,
+    PingMessage, PortScanMessage, RegexMessage, SmbMessage, SnmpWalkerMessage, SshConfigMessage,
+    SshField, SubnetMessage, TcpPingMessage, TcpTracerouteMessage, TlsAuditMessage, ToolMessage,
+    UrlMessage, WhoisMessage, WolMessage,
 };
 use crate::i18n::fl;
 
@@ -55,6 +55,18 @@ const IMPLICIT_HTTP_PORTS: [u16; 2] = [80, 443];
 /// port stays unsaid, as the C#: an SSH session's 22 is not a certificate's port.
 #[must_use]
 pub fn inherited_context(app: &App, tool: ToolId) -> ToolContext {
+    // The command library is no network tool, but it belongs to the session it is opened
+    // from, as the C# `WithSessionProfile` fills it: that session's host (when it is one a
+    // tool could be typed), user and platform.
+    if tool == ToolId::CmdLib {
+        return app
+            .session_context()
+            .map(|context| ToolContext {
+                host: context.host.as_deref().and_then(checked_host),
+                ..context
+            })
+            .unwrap_or_default();
+    }
     if !tool.is_network() {
         return ToolContext::default();
     }
@@ -291,6 +303,19 @@ pub(super) fn messages(tool: ToolId, context: &ToolContext) -> Vec<ToolMessage> 
                 ]
             })
             .unwrap_or_default(),
+        // The command library opened from a session, as the C# `Initialize` reads it: the
+        // platform filter, the host and the user, told as one message.
+        ToolId::CmdLib => {
+            if context.host.is_none() && context.user.is_none() && context.remote_os.is_auto() {
+                Vec::new()
+            } else {
+                vec![ToolMessage::CmdLib(CommandLibraryMessage::Session {
+                    host: context.host.clone(),
+                    user: context.user.clone(),
+                    platform: context.remote_os,
+                })]
+            }
+        }
         // The others read nothing of it, as their C# views.
         _ => Vec::new(),
     }
@@ -635,6 +660,7 @@ mod tests {
             session_logging: None,
             ssh_mode: heimdall_core::profile::SshMode::Embedded,
             x11_forwarding: false,
+            remote_os: heimdall_core::profile::RemoteOs::Auto,
         };
         store.merge([ssh("good", " web.lab "), ssh("bad", "-oProxyCommand=x")]);
         store.save().expect("save");
@@ -656,5 +682,73 @@ mod tests {
             inherited_context(&app, ToolId::Ping),
             ToolContext::default()
         );
+    }
+
+    #[test]
+    fn the_command_library_inherits_the_session_it_is_opened_from_and_tells_its_pane() {
+        use heimdall_core::profile::{ProfileId, RemoteOs, SshProfile};
+        let dir = tempfile::tempdir().expect("dir");
+        let mut store = heimdall_core::store::ProfileStore::open(dir.path().join("profiles.toml"))
+            .expect("store");
+        let ssh = |id: &str, host: &str, remote_os: RemoteOs| SshProfile {
+            id: ProfileId::new(id),
+            name: id.to_owned(),
+            group: None,
+            host: host.to_owned(),
+            port: 22,
+            username: Some("ops".to_owned()),
+            key_path: None,
+            gateway: None,
+            local_tunnel_port: None,
+            vault_entry: None,
+            forwards: heimdall_core::profile::Forwards::default(),
+            post_connect: heimdall_core::post_connect::PostConnect::default(),
+            forward_agent: false,
+            compression: false,
+            sftp: false,
+            legacy_algorithms: false,
+            session_logging: None,
+            ssh_mode: heimdall_core::profile::SshMode::Embedded,
+            x11_forwarding: false,
+            remote_os,
+        };
+        store.merge([
+            ssh("win", " win.lab ", RemoteOs::Windows),
+            ssh("bad", "-oProxyCommand=x", RemoteOs::Auto),
+        ]);
+        store.save().expect("save");
+        let mut app = app(dir.path());
+        assert_eq!(
+            inherited_context(&app, ToolId::CmdLib),
+            ToolContext::default(),
+            "no session"
+        );
+        app.selected_profile = Some(ProfileId::new("win"));
+        let context = inherited_context(&app, ToolId::CmdLib);
+        assert_eq!(
+            context,
+            ToolContext::of_session(Some("win.lab"), Some("ops"), RemoteOs::Windows)
+        );
+        // A host a tool could not be typed is not given; the rest of the session is.
+        app.selected_profile = Some(ProfileId::new("bad"));
+        let context = inherited_context(&app, ToolId::CmdLib);
+        assert_eq!(context.host, None);
+        assert_eq!(context.user.as_deref(), Some("ops"));
+        assert_eq!(context.remote_os, RemoteOs::Linux);
+
+        // Told to the pane as one message, which starts its filter and its history.
+        let (panes, tab) = opened(
+            ToolId::CmdLib,
+            ToolContext::of_session(Some("win.lab"), Some("ops"), RemoteOs::Windows),
+        );
+        let shown = format!("{:?}", panes.get(tab).expect("its state").pane);
+        assert!(shown.contains("platform: Some(Windows)"), "{shown}");
+        assert!(shown.contains("host: Some(\"win.lab\")"), "{shown}");
+        assert!(shown.contains("history_this_host_only: true"), "{shown}");
+        // Opened on no session, the pane is as before.
+        let (panes, tab) = opened(ToolId::CmdLib, ToolContext::default());
+        let shown = format!("{:?}", panes.get(tab).expect("its state").pane);
+        assert!(shown.contains("platform: None"), "{shown}");
+        assert!(shown.contains("session: None"), "{shown}");
     }
 }
