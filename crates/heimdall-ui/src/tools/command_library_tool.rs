@@ -701,9 +701,14 @@ impl CommandLibraryPane {
                 } else {
                     self.runbooks.import(&runbooks, &self.library).map(Some)
                 };
-                self.notice = Some(match kept {
-                    Some(runbooks) => Notice::Imported(report, runbooks),
-                    None => Notice::TransferFailed(TransferError::RunbooksUnsaved),
+                self.notice = Some(if let Some(runbooks) = kept {
+                    Notice::Imported(report, runbooks)
+                } else {
+                    // The runbooks could not be kept: the actions go back too, so a file is
+                    // never half imported.
+                    self.library = before.clone();
+                    self.keep(&before);
+                    Notice::TransferFailed(TransferError::RunbooksUnsaved)
                 });
             }
             Err(error) => self.notice = Some(Notice::TransferFailed(transfer_error(error))),
@@ -718,16 +723,17 @@ impl CommandLibraryPane {
             ExportScope::CurrentFilter => self.shown_user(),
             ExportScope::Mine | ExportScope::Everything => self.library.commands().iter().collect(),
         };
-        let shipped: Vec<&UserCommand> = match scope {
+        // The shipped actions go out whole, their translations too, as the C# `Action`.
+        let shipped: Vec<_> = match scope {
             ExportScope::CurrentFilter => self
                 .shown()
                 .into_iter()
-                .map(CatalogueEntry::command)
+                .map(library_transfer::shipped_value)
                 .collect(),
             ExportScope::Everything => command_library::shipped()
                 .entries()
                 .iter()
-                .map(CatalogueEntry::command)
+                .map(library_transfer::shipped_value)
                 .collect(),
             ExportScope::Mine => Vec::new(),
         };
@@ -735,7 +741,10 @@ impl CommandLibraryPane {
             ExportScope::CurrentFilter => Vec::new(),
             ExportScope::Mine | ExportScope::Everything => self.runbooks.exportable(&self.library),
         };
-        let actions: Vec<&UserCommand> = shipped.into_iter().chain(user).collect();
+        let actions: Vec<_> = shipped
+            .into_iter()
+            .chain(user.into_iter().map(library_transfer::action_value))
+            .collect();
         let text = (!actions.is_empty() || !runbooks.is_empty())
             .then(|| library_transfer::export_text(&actions, &runbooks));
         match text {
@@ -2345,6 +2354,16 @@ fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
                     skipped = runbooks.skipped
                 );
             }
+            if let Some(name) = runbooks
+                .as_ref()
+                .and_then(|each| each.first_updated.as_ref())
+            {
+                done = fl!(
+                    "ui-tool-cmdlib-import-replaced",
+                    done = done,
+                    name = name.as_str()
+                );
+            }
             // The first reason: the action's, else the runbook's.
             let first = report
                 .first_skipped
@@ -3593,6 +3612,27 @@ mod tests {
         assert_eq!(
             kept[0].steps,
             [Step::literal("uptime", TemplatePlatform::Linux)]
+        );
+    }
+
+    #[test]
+    fn a_runbook_save_that_fails_takes_the_imported_actions_back() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        // The runbooks file becomes unreadable after the pane opened: the save fails late.
+        std::fs::create_dir(folder.path().join(RUNBOOKS_FILE)).expect("folder");
+        let file = r#"{"actions":[{"id":"calm","title":"Calm","category":"mine","platform":1,
+            "linuxCommandTemplate":{"platform":1,"commandPattern":"echo calm","parameters":[]}}],
+            "runbooks":[{"name":"R","steps":[{"command":"id"}]}]}"#;
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
+        assert_eq!(
+            pane.notice,
+            Some(Notice::TransferFailed(TransferError::RunbooksUnsaved))
+        );
+        assert!(pane.library.commands().is_empty(), "nothing half imported");
+        assert!(
+            self::pane(folder.path()).library.commands().is_empty(),
+            "nor in the file"
         );
     }
 

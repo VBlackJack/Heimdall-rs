@@ -28,6 +28,7 @@
 
 use serde_json::{Map, Value};
 
+use super::command_library::CatalogueEntry;
 use super::runbooks::{
     ActionLookup, KeepError, MAX_RUNBOOKS, Runbook, RunbookIssue, RunbookStore, is_hidden,
     new_identity,
@@ -53,17 +54,33 @@ mod key {
     pub const NAME: &str = "name";
 }
 
+/// An action as the export writes it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportAction(Value);
+
+/// An action of the user as the export writes it.
+#[must_use]
+pub fn action_value(action: &UserCommand) -> ExportAction {
+    ExportAction(serde_json::to_value(action).unwrap_or_default())
+}
+
+/// A shipped action as the export writes it, its translations included.
+#[must_use]
+pub fn shipped_value(entry: &CatalogueEntry) -> ExportAction {
+    ExportAction(entry.to_value())
+}
+
 /// The envelope of an export: `actions`, and `runbooks` only when there are some, so a file
 /// without runbooks reads exactly as it did before they existed (as the C# writes it).
 #[must_use]
-pub fn export_text(actions: &[&UserCommand], runbooks: &[Runbook]) -> String {
+pub fn export_text(actions: &[ExportAction], runbooks: &[Runbook]) -> String {
     let mut envelope = Map::new();
     envelope.insert(key::SCHEMA_VERSION.to_owned(), Value::from(SCHEMA_VERSION));
     envelope.insert(key::EXPORT_DATE.to_owned(), Value::from(now_text()));
     envelope.insert(key::TOTAL_ACTIONS.to_owned(), Value::from(actions.len()));
     envelope.insert(
         key::ACTIONS.to_owned(),
-        serde_json::to_value(actions).unwrap_or_default(),
+        Value::Array(actions.iter().map(|action| action.0.clone()).collect()),
     );
     if !runbooks.is_empty() {
         envelope.insert(
@@ -92,7 +109,7 @@ pub fn precheck(json: &str) -> Result<FileRunbooks, LibraryError> {
         let version = version.as_str().ok_or(LibraryError::Format)?;
         let major = version.split(VERSION_SEPARATOR).next().unwrap_or_default();
         if major != SUPPORTED_MAJOR {
-            return Err(LibraryError::Version(version.to_owned()));
+            return Err(LibraryError::Version(shown_text(version)));
         }
     }
     match envelope.get(key::RUNBOOKS) {
@@ -125,6 +142,8 @@ pub enum RunbookRefusal {
     Issue(RunbookIssue),
     /// The store already holds as many runbooks as it can.
     Full,
+    /// An earlier runbook of the same file has this identity: the first is kept.
+    DuplicateInFile,
 }
 
 /// What an import of runbooks did, as the C# merge counts it.
@@ -136,6 +155,8 @@ pub struct RunbookImport {
     pub updated: usize,
     /// Runbooks left out.
     pub skipped: usize,
+    /// The name of the first runbook replaced, safe to show.
+    pub first_updated: Option<String>,
     /// The name of the first runbook left out and why.
     pub first_skipped: Option<(String, RunbookRefusal)>,
 }
@@ -151,6 +172,7 @@ pub fn import_runbooks(
     lookup: &ActionLookup<'_>,
 ) -> RunbookImport {
     let mut report = RunbookImport::default();
+    let mut seen: Vec<String> = Vec::new();
     for value in values {
         let parsed = Runbook::from_value(value)
             .and_then(|runbook| runbook.validate(lookup).map(|()| runbook));
@@ -165,6 +187,11 @@ pub fn import_runbooks(
         if bare(&runbook.public_id).chars().all(|c| c == '0') {
             runbook.public_id = new_identity();
         }
+        // One file naming an identity twice replaces nothing twice: the first is kept.
+        if seen.contains(&bare(&runbook.public_id)) {
+            skip(&mut report, value, RunbookRefusal::DuplicateInFile);
+            continue;
+        }
         let known = store
             .runbooks()
             .iter()
@@ -174,9 +201,19 @@ pub fn import_runbooks(
         if let Some(identity) = known {
             runbook.public_id = identity;
         }
+        let identity = bare(&runbook.public_id);
         match store.keep(runbook, lookup) {
-            Ok(()) if replaced => report.updated += 1,
-            Ok(()) => report.imported += 1,
+            Ok(()) if replaced => {
+                report.updated += 1;
+                report
+                    .first_updated
+                    .get_or_insert_with(|| shown_text(&name_of(value)));
+                seen.push(identity);
+            }
+            Ok(()) => {
+                report.imported += 1;
+                seen.push(identity);
+            }
             Err(KeepError::Refused(issue)) => {
                 skip(&mut report, value, RunbookRefusal::Issue(issue));
             }
@@ -196,18 +233,24 @@ fn bare(identity: &str) -> String {
 fn skip(report: &mut RunbookImport, value: &Value, why: RunbookRefusal) {
     report.skipped += 1;
     if report.first_skipped.is_none() {
-        report.first_skipped = Some((shown_name(value), why));
+        report.first_skipped = Some((shown_text(&name_of(value)), why));
     }
 }
 
-/// The name of a runbook as the file wrote it, safe to show: no control or invisible
-/// character, cut to the length of a title.
-fn shown_name(value: &Value) -> String {
+/// The name a file wrote for a runbook.
+fn name_of(value: &Value) -> String {
     value
         .get(key::NAME)
         .and_then(Value::as_str)
         .unwrap_or_default()
-        .chars()
+        .to_owned()
+}
+
+/// Text from a file made safe to show: no control or invisible character, cut to the length
+/// of a title.
+#[must_use]
+pub fn shown_text(text: &str) -> String {
+    text.chars()
         .filter(|c| !is_hidden(*c))
         .take(MAX_TITLE_LENGTH)
         .collect()

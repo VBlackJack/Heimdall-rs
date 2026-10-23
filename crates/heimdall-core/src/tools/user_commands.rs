@@ -408,7 +408,7 @@ pub struct UserCommand {
     #[serde(default)]
     pub id: String,
     /// The identity moved between installations.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub public_id: String,
     /// The title.
     #[serde(default)]
@@ -435,10 +435,10 @@ pub struct UserCommand {
     #[serde(default)]
     pub linux_command_template: Option<UserTemplate>,
     /// When it was made, as the C# writes it.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     /// When it was last changed.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
     /// Always set for the commands of this library.
     #[serde(default)]
@@ -1430,7 +1430,11 @@ impl UserLibrary {
     /// The library as the C# export writes it.
     #[must_use]
     pub fn export(&self) -> String {
-        let all: Vec<&UserCommand> = self.commands.iter().collect();
+        let all: Vec<library_transfer::ExportAction> = self
+            .commands
+            .iter()
+            .map(library_transfer::action_value)
+            .collect();
         library_transfer::export_text(&all, &[])
     }
 
@@ -1466,7 +1470,14 @@ impl UserLibrary {
         } else {
             return Err(LibraryError::Format);
         };
-        if untrusted && actions.len() > MAX_IMPORT_ACTIONS {
+        // The shipped actions of an export of everything do not count: it always re-imports.
+        if untrusted
+            && actions
+                .iter()
+                .filter(|action| !in_catalogue(action))
+                .count()
+                > MAX_IMPORT_ACTIONS
+        {
             return Err(LibraryError::TooManyActions);
         }
         let mut report = ImportReport::default();
@@ -1497,7 +1508,8 @@ impl UserLibrary {
             if let Some(issue) = issue {
                 report.skipped += 1;
                 if report.first_skipped.is_none() {
-                    report.first_skipped = Some((action.title.clone(), issue));
+                    report.first_skipped =
+                        Some((library_transfer::shown_text(&action.title), issue));
                 }
                 continue;
             }

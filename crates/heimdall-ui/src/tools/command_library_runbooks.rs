@@ -1056,6 +1056,7 @@ pub(in crate::tools) fn refusal_text(why: &RunbookRefusal) -> String {
     match why {
         RunbookRefusal::Issue(issue) => problem_text(&Problem::Issue(issue.clone())),
         RunbookRefusal::Full => problem_text(&Problem::Full),
+        RunbookRefusal::DuplicateInFile => fl!("ui-tool-cmdlib-runbooks-issue-duplicate"),
     }
 }
 

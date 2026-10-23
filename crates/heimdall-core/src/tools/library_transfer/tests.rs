@@ -20,7 +20,8 @@ use super::*;
 use crate::tools::command_library::{self, CommandIssue};
 use crate::tools::runbooks::{FailureMode, Step, StepIssue};
 use crate::tools::user_commands::{
-    Draft, MAX_IMPORT_ACTIONS, TemplatePlatform, UserLibrary, UserPlatform,
+    Draft, MAX_FILE_BYTES, MAX_IMPORT_ACTIONS, MAX_TITLE_LENGTH, TemplatePlatform, UserLibrary,
+    UserPlatform,
 };
 
 /// What the C# writes for a library with one action of the user and two runbooks
@@ -146,7 +147,7 @@ fn what_is_exported_imports_back_with_its_runbooks() {
     let find = |wanted: &str| library.get(wanted);
     origin.keep(runbook.clone(), &find).expect("kept");
 
-    let all: Vec<&UserCommand> = library.commands().iter().collect();
+    let all: Vec<ExportAction> = library.commands().iter().map(action_value).collect();
     let text = export_text(&all, origin.runbooks());
 
     let mut copy = UserLibrary::default();
@@ -232,7 +233,7 @@ fn a_csharp_export_imports_actions_and_runbooks_and_both_reads_as_linux() {
     );
 
     // And what this build writes of them is what the C# reads: its own keys.
-    let all: Vec<&UserCommand> = library.commands().iter().collect();
+    let all: Vec<ExportAction> = library.commands().iter().map(action_value).collect();
     let back: Value = serde_json::from_str(&export_text(&all, store.runbooks())).expect("json");
     let first = back["runbooks"]
         .as_array()
@@ -454,8 +455,8 @@ fn an_export_of_everything_does_not_copy_the_catalogue_back() {
     let shipped = command_library::shipped();
     let entry = shipped.entries().first().expect("a shipped action");
     let (library, _) = library_with_echo();
-    let mut all: Vec<&UserCommand> = library.commands().iter().collect();
-    all.push(entry.command());
+    let mut all: Vec<ExportAction> = library.commands().iter().map(action_value).collect();
+    all.push(shipped_value(entry));
     let text = export_text(&all, &[]);
 
     let mut copy = UserLibrary::default();
@@ -477,4 +478,138 @@ fn a_runbook_may_use_an_action_of_the_catalogue_or_of_the_same_file() {
     // An action nothing knows is not judged here: the run says so.
     let report = import_runbooks(&mut store, &values, &nothing);
     assert_eq!(report.imported, 1);
+}
+
+/// Every shipped action, as an export of everything writes them.
+fn everything() -> String {
+    let mut all: Vec<ExportAction> = command_library::shipped()
+        .entries()
+        .iter()
+        .map(shipped_value)
+        .collect();
+    all.extend(library_with_echo().0.commands().iter().map(action_value));
+    export_text(&all, &[])
+}
+
+#[test]
+fn an_export_of_everything_leaves_no_empty_identity_or_null_date_for_the_csharp() {
+    let json: Value = serde_json::from_str(&everything()).expect("json");
+    let actions = json["actions"].as_array().expect("actions");
+    assert_eq!(
+        actions.len(),
+        command_library::shipped().entries().len() + 1
+    );
+    for action in actions {
+        // An empty `publicId` would parse as a nil GUID and a null date as a bad date: the key
+        // is left out and the C# falls back to its defaults.
+        if let Some(id) = action.get("publicId") {
+            assert!(id.as_str().is_some_and(|id| !id.is_empty()), "{action}");
+        }
+        for date in ["createdAt", "updatedAt"] {
+            assert!(
+                action.get(date).is_none_or(|value| !value.is_null()),
+                "{action}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_shipped_translations_go_out_with_their_action_and_everything_re_imports() {
+    let text = everything();
+    assert!(
+        text.contains("\"translations\""),
+        "the French text is exported"
+    );
+    assert!(text.len() < usize::try_from(MAX_FILE_BYTES).expect("small"));
+    let json: Value = serde_json::from_str(&text).expect("json");
+    let translated = json["actions"]
+        .as_array()
+        .expect("actions")
+        .iter()
+        .filter(|action| action.get("translations").is_some())
+        .count();
+    assert!(translated > 0);
+
+    // The shipped ones are not counted against the cap: the file always re-imports here.
+    assert!(precheck(&text).is_ok());
+    let mut copy = UserLibrary::default();
+    let report = copy
+        .import(&text)
+        .expect("an export of everything re-imports");
+    assert_eq!(report.imported, 1);
+    assert_eq!(report.skipped, command_library::shipped().entries().len());
+}
+
+#[test]
+fn only_actions_of_the_user_count_against_the_import_cap() {
+    let shipped = command_library::shipped()
+        .entries()
+        .first()
+        .expect("an action");
+    let mut all: Vec<ExportAction> = (0..=MAX_IMPORT_ACTIONS)
+        .map(|n| {
+            ExportAction(serde_json::json!({
+                "id": format!("mine-{n}"), "title": "T", "category": "c", "platform": 1,
+                "linuxCommandTemplate": {"platform": 1, "commandPattern": "id", "parameters": []}
+            }))
+        })
+        .collect();
+    assert!(matches!(
+        UserLibrary::default().import(&export_text(&all, &[])),
+        Err(LibraryError::TooManyActions)
+    ));
+    all.pop();
+    all.push(shipped_value(shipped));
+    let report = UserLibrary::default()
+        .import(&export_text(&all, &[]))
+        .expect("the shipped one is not counted");
+    assert_eq!(report.imported, MAX_IMPORT_ACTIONS);
+}
+
+#[test]
+fn what_a_file_shows_of_itself_is_filtered_and_cut() {
+    let version = format!("2.\u{202e}{}", "9".repeat(500));
+    let file = serde_json::json!({ "schemaVersion": version }).to_string();
+    let Err(LibraryError::Version(shown)) = precheck(&file) else {
+        panic!("another version");
+    };
+    assert!(!shown.contains('\u{202e}'));
+    assert!(shown.chars().count() <= MAX_TITLE_LENGTH);
+
+    let mut library = UserLibrary::default();
+    let file = serde_json::json!({ "actions": [
+        { "id": "x", "title": "Bad\u{7}\u{200b}title", "category": "" } ] })
+    .to_string();
+    let report = library.import(&file).expect("read");
+    assert_eq!(
+        report.first_skipped.map(|(title, _)| title),
+        Some("Badtitle".to_owned())
+    );
+}
+
+#[test]
+fn the_first_replaced_runbook_is_named_and_a_repeated_identity_in_one_file_is_not_replaced_twice() {
+    let mut store = RunbookStore::default();
+    store
+        .keep(one_literal("Mine", "uptime"), &nothing)
+        .expect("kept");
+    let mine = store.runbooks()[0].public_id.clone();
+    let file = serde_json::json!({ "runbooks": [
+        { "publicId": mine, "name": "First", "steps": [ { "command": "a" } ] },
+        { "publicId": mine, "name": "Second", "steps": [ { "command": "b" } ] },
+        { "publicId": "11111111-1111-4111-8111-111111111111", "name": "N1",
+          "steps": [ { "command": "c" } ] },
+        { "publicId": "11111111-1111-4111-8111-111111111111", "name": "N2",
+          "steps": [ { "command": "d" } ] } ] })
+    .to_string();
+    let values = precheck(&file).expect("an envelope");
+    let report = import_runbooks(&mut store, &values, &nothing);
+    assert_eq!((report.imported, report.updated, report.skipped), (1, 1, 2));
+    assert_eq!(report.first_updated.as_deref(), Some("First"));
+    assert_eq!(
+        report.first_skipped,
+        Some(("Second".to_owned(), RunbookRefusal::DuplicateInFile))
+    );
+    assert_eq!(store.get(&mine).expect("kept").name, "First");
 }

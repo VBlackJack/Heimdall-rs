@@ -151,6 +151,8 @@ pub enum CatalogueError {
 pub struct CatalogueEntry {
     command: UserCommand,
     translations: BTreeMap<String, Translation>,
+    /// The `translations` object as the file wrote it, to export the action whole.
+    raw_translations: Option<Value>,
 }
 
 /// The base of a language code: two lower-case letters, `fr-FR` and `FR` both `fr`.
@@ -178,7 +180,8 @@ impl CatalogueEntry {
         let mut value: Value = serde_json::from_str(text).ok()?;
         let object = value.as_object_mut()?;
         let mut translations = BTreeMap::new();
-        if let Some(Value::Object(languages)) = object.remove("translations") {
+        let raw_translations = object.remove("translations");
+        if let Some(Value::Object(languages)) = raw_translations.clone() {
             for (language, each) in languages {
                 let translation: Translation = serde_json::from_value(each).ok()?;
                 translations.insert(normalize_language(&language), translation);
@@ -189,7 +192,19 @@ impl CatalogueEntry {
         Some(Self {
             command,
             translations,
+            raw_translations,
         })
+    }
+
+    /// The action as the C# `Action` is written, its `translations` included, for an export.
+    #[must_use]
+    pub fn to_value(&self) -> Value {
+        let mut value = serde_json::to_value(&self.command).unwrap_or_default();
+        if let (Some(object), Some(translations)) = (value.as_object_mut(), &self.raw_translations)
+        {
+            object.insert("translations".to_owned(), translations.clone());
+        }
+        value
     }
 
     /// The action, in its pivot text.
