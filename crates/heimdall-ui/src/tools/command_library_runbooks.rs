@@ -17,8 +17,9 @@
 //! The runbooks panel of the command library: the list of the user's runbooks with New, Edit,
 //! Duplicate and Delete, and the editor that adds, orders and removes steps, as the C#
 //! `CommandLibraryViewModel.Runbooks.cs` and `RunbookDialogViewModel.cs`. A runbook is user
-//! data only and none ships with Heimdall. There is no Run yet: the run panel comes apart.
+//! data only and none ships with Heimdall. A run is manual and step by step: see [`run`].
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -35,6 +36,7 @@ use heimdall_core::tools::user_commands::{
 use iced::widget::{Column, Row, button, column, container, row, text, text_input};
 use iced::{Element, Length};
 
+use self::run::{Run, RunSession};
 use super::ToolMessage;
 use super::command_library_tool::{CommandLibraryMessage, category_name, language, value_error};
 use crate::i18n::fl;
@@ -64,6 +66,22 @@ pub enum RunbookMessage {
     Duplicate(String),
     /// Ask whether to delete the runbook of that identity.
     AskDelete(String),
+    /// Start a run of the runbook of that identity.
+    Run(String),
+    /// The value typed for variable `.0` of the run.
+    RunValue(usize, String),
+    /// Confirm the variables of the run and show its steps.
+    RunBegin,
+    /// Send the current step to the terminal chosen, after the question.
+    RunSend,
+    /// Type the current step at the prompt of the terminal chosen.
+    RunInsert,
+    /// Copy the current step.
+    RunCopy,
+    /// Pass over the current step.
+    RunSkip,
+    /// Leave the run.
+    RunStop,
     /// Delete it.
     ConfirmDelete(String),
     /// Keep it.
@@ -185,6 +203,12 @@ pub struct RunbooksPane {
     failure: Option<Failure>,
     editor: Option<Editor>,
     deleting: Option<String>,
+    /// The run in progress.
+    run: Option<Run>,
+    /// What the session the library was opened for gives a run.
+    session: RunSession,
+    /// How many runs were started, which gives each its identity.
+    runs_started: u64,
 }
 
 /// The action of an identity: a command of the catalogue, else one of the user's.
@@ -216,12 +240,24 @@ fn declared_parameters(command: &UserCommand) -> Vec<&UserParameter> {
     declared
 }
 
-/// The title of an action in the language of the window.
-fn title_of(command: &UserCommand) -> String {
-    command_library::shipped().get(&command.id).map_or_else(
-        || command.title.clone(),
-        |entry| entry.localized(&language()).title.clone(),
-    )
+/// The action of an identity as the panel shows it: the catalogue's in the language of the
+/// window (its title and the labels of its values, as the library's own cards), else the
+/// user's. The lookup the model validates with has no language, so what is shown never comes
+/// from it.
+fn shown_action<'l>(library: &'l UserLibrary, id: &str) -> Option<Cow<'l, UserCommand>> {
+    shown_action_in(library, id, &language())
+}
+
+/// [`shown_action`] in `language`.
+fn shown_action_in<'l>(
+    library: &'l UserLibrary,
+    id: &str,
+    language: &str,
+) -> Option<Cow<'l, UserCommand>> {
+    if let Some(entry) = command_library::shipped().get(id) {
+        return Some(entry.localized(language));
+    }
+    library.get(id).map(Cow::Borrowed)
 }
 
 /// The fields of a step: one per declared parameter, holding what the step stores or else
@@ -276,7 +312,6 @@ impl Editor {
     }
 
     fn of(runbook: &Runbook, library: &UserLibrary) -> Self {
-        let find = lookup(library);
         Self {
             public_id: runbook.public_id.clone(),
             existing: true,
@@ -298,12 +333,14 @@ impl Editor {
                         parameters,
                         description,
                     } => {
-                        let command = find(action_id);
+                        let command = shown_action(library, action_id);
                         EditorStep::Action {
                             action_id: action_id.clone(),
-                            title: command.map_or_else(|| action_title.clone(), title_of),
+                            title: command
+                                .as_ref()
+                                .map_or_else(|| action_title.clone(), |each| each.title.clone()),
                             found: command.is_some(),
-                            fields: fields_of(command, parameters),
+                            fields: fields_of(command.as_deref(), parameters),
                             note: description.clone().unwrap_or_default(),
                         }
                     }
@@ -429,6 +466,20 @@ impl RunbooksPane {
         pane
     }
 
+    /// The identity of the first runbook.
+    #[cfg(test)]
+    pub(in crate::tools) fn first_id(&self) -> Option<String> {
+        self.store
+            .runbooks()
+            .first()
+            .map(|runbook| runbook.public_id.clone())
+    }
+
+    /// Closes the panel.
+    pub fn close(&mut self) {
+        self.open = false;
+    }
+
     /// Whether the panel is open.
     #[must_use]
     pub const fn is_open(&self) -> bool {
@@ -474,6 +525,13 @@ impl RunbooksPane {
                 }
             }
             RunbookMessage::CancelDelete => self.deleting = None,
+            RunbookMessage::Run(id) => self.start_run(&id),
+            RunbookMessage::RunValue(..)
+            | RunbookMessage::RunBegin
+            | RunbookMessage::RunSkip
+            | RunbookMessage::RunStop => self.run_message(message),
+            // Asked of a terminal: the library pane answers, it knows the terminals.
+            RunbookMessage::RunSend | RunbookMessage::RunInsert | RunbookMessage::RunCopy => {}
             RunbookMessage::Save => self.save(library),
             RunbookMessage::Cancel => self.editor = None,
             other => {
@@ -590,14 +648,20 @@ impl RunbooksPane {
         }
     }
 
-    /// The panel, or nothing while it is closed.
+    /// The panel, or nothing while it is closed; `has_terminal` says whether a terminal is
+    /// offered to send a step to.
     pub fn view<'a>(
         &'a self,
         tab: TabId,
         library: &'a UserLibrary,
+        has_terminal: bool,
+        warning: Option<String>,
     ) -> Option<Element<'a, Message>> {
         if !self.open {
             return None;
+        }
+        if let Some(run) = self.run_view(tab, library, has_terminal, warning) {
+            return Some(run);
         }
         Some(match &self.editor {
             Some(editor) => editor_view(tab, editor, library),
@@ -683,6 +747,11 @@ impl RunbooksPane {
         } else {
             row![
                 action(
+                    fl!("ui-tool-cmdlib-runbooks-run"),
+                    true,
+                    Some(send(RunbookMessage::Run(id.clone()))),
+                ),
+                action(
                     fl!("ui-tool-cmdlib-edit"),
                     false,
                     Some(send(RunbookMessage::Edit(id.clone()))),
@@ -739,6 +808,9 @@ fn send(tab: TabId, message: RunbookMessage) -> Message {
 
 /// Applies a message about the editor's content.
 fn edit(editor: &mut Editor, message: RunbookMessage, library: &UserLibrary) {
+    // What was refused is said until the user changes something: the field fixed, the reason
+    // goes with it instead of staying under a form that is now right.
+    editor.problem = None;
     match message {
         RunbookMessage::Name(value) => editor.name = value,
         RunbookMessage::Description(value) => editor.description = value,
@@ -761,12 +833,11 @@ fn edit(editor: &mut Editor, message: RunbookMessage, library: &UserLibrary) {
         }
         RunbookMessage::PickSearch(value) => editor.search = value,
         RunbookMessage::AddAction(id) if editor.steps.len() < MAX_STEPS => {
-            let find = lookup(library);
-            if let Some(command) = find(&id) {
+            if let Some(command) = shown_action(library, &id) {
                 let step = EditorStep::Action {
-                    title: title_of(command),
+                    title: command.title.clone(),
                     found: true,
-                    fields: fields_of(Some(command), &BTreeMap::new()),
+                    fields: fields_of(Some(&command), &BTreeMap::new()),
                     note: String::new(),
                     action_id: command.id.clone(),
                 };
@@ -1272,6 +1343,12 @@ fn step_view<'a>(
     .style(styles::field_box)
     .into()
 }
+
+mod run;
+
+#[cfg(test)]
+pub(in crate::tools) use self::run::StepStatus;
+pub use self::run::{Delivered, Ready, RunTarget};
 
 #[cfg(test)]
 mod tests;

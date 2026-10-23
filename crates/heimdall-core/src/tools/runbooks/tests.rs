@@ -595,3 +595,140 @@ fn a_runbook_is_duplicated_under_a_new_identity_and_deleted() {
     assert!(!store.delete(&id));
     assert_eq!(store.runbooks().len(), 1);
 }
+
+fn tracer() -> UserCommand {
+    crate::tools::command_library::shipped()
+        .get("network-trace-route")
+        .expect("shipped")
+        .command()
+        .clone()
+}
+
+fn target_step(value: &str) -> Step {
+    Step::action(
+        "network-trace-route",
+        "Trace",
+        BTreeMap::from([("target".to_owned(), value.to_owned())]),
+    )
+}
+
+#[test]
+fn the_template_follows_the_far_end_and_falls_back_to_the_other() {
+    let both = tracer();
+    assert_eq!(
+        select_template(&both, RemoteOs::Linux),
+        Some(TemplatePlatform::Linux)
+    );
+    assert_eq!(
+        select_template(&both, RemoteOs::Windows),
+        Some(TemplatePlatform::Windows)
+    );
+    assert_eq!(
+        select_template(&both, RemoteOs::Auto),
+        Some(TemplatePlatform::Windows),
+        "Windows first when it cannot be told, as the C#"
+    );
+    let mut windows_only = both.clone();
+    windows_only.linux_command_template = None;
+    assert_eq!(
+        select_template(&windows_only, RemoteOs::Linux),
+        Some(TemplatePlatform::Windows)
+    );
+    windows_only.windows_command_template = None;
+    assert_eq!(select_template(&windows_only, RemoteOs::Linux), None);
+}
+
+#[test]
+fn a_step_is_made_from_the_variables_through_the_generator() {
+    let variables = BTreeMap::from([("host".to_owned(), "web.lab".to_owned())]);
+    let command = tracer();
+    let made = resolve_step(
+        &target_step("{{host}}"),
+        &variables,
+        Some(&command),
+        RemoteOs::Linux,
+    )
+    .expect("made");
+    assert_eq!(made.command, "traceroute web.lab");
+    assert_eq!(made.platform, TemplatePlatform::Linux);
+    assert_eq!(made.level, command.level);
+    assert!(!made.literal);
+
+    // What the variable holds is judged like a value typed: syntax and line breaks are refused.
+    for refused in ["web.lab; reboot", "web.lab\nreboot", "web\u{200B}.lab", " "] {
+        let variables = BTreeMap::from([("host".to_owned(), refused.to_owned())]);
+        let result = resolve_step(
+            &target_step("{{host}}"),
+            &variables,
+            Some(&command),
+            RemoteOs::Linux,
+        );
+        assert!(
+            matches!(result, Err(RunProblem::Values(_))),
+            "{refused:?}: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn a_step_that_cannot_be_made_says_why() {
+    let command = tracer();
+    let none = BTreeMap::new();
+    assert_eq!(
+        resolve_step(
+            &target_step("{{host}}"),
+            &none,
+            Some(&command),
+            RemoteOs::Auto
+        ),
+        Err(RunProblem::UnknownVariables(vec!["host".to_owned()]))
+    );
+    assert_eq!(
+        resolve_step(&target_step("x"), &none, None, RemoteOs::Auto),
+        Err(RunProblem::ActionMissing)
+    );
+    let mut empty = command;
+    empty.windows_command_template = None;
+    empty.linux_command_template = None;
+    assert_eq!(
+        resolve_step(&target_step("x"), &none, Some(&empty), RemoteOs::Auto),
+        Err(RunProblem::NoTemplate)
+    );
+}
+
+#[test]
+fn a_literal_step_is_refused_for_a_control_or_invisible_character_and_is_always_dangerous() {
+    let none = BTreeMap::new();
+    let literal = |text: &str| {
+        resolve_step(
+            &Step::literal(text, TemplatePlatform::Linux),
+            &none,
+            None,
+            RemoteOs::Auto,
+        )
+    };
+    let made = literal("  uptime  ").expect("made");
+    assert_eq!(made.command, "uptime", "trimmed");
+    assert!(made.literal);
+    assert_eq!(made.level, Criticality::Dangerous);
+    assert_eq!(literal(""), Err(RunProblem::CommandMissing));
+    assert_eq!(
+        literal(&"x".repeat(MAX_COMMAND_LENGTH + 1)),
+        Err(RunProblem::CommandTooLong)
+    );
+    for hidden in [
+        "a\nb",
+        "a\rb",
+        "a\tb",
+        "a\u{1b}b",
+        "a\u{200B}b",
+        "a\u{202E}b",
+    ] {
+        assert_eq!(literal(hidden), Err(RunProblem::Hidden), "{hidden:?}");
+    }
+    // A literal step is typed as it is: a reference is not read in it.
+    assert_eq!(
+        literal("echo {{host}}").map(|step| step.command),
+        Ok("echo {{host}}".to_owned())
+    );
+}

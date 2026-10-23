@@ -67,6 +67,9 @@ pub struct SendConfirmation {
     pub shown: String,
     /// The command is marked dangerous.
     pub dangerous: bool,
+    /// The command is one typed as is (a literal step of a runbook), which no library action
+    /// stands for: the question says so, whether or not it is marked dangerous.
+    pub typed_as_is: bool,
 }
 
 /// What is asked before one command is written into several terminals at once, as the C#
@@ -137,7 +140,13 @@ impl App {
     /// or another control character, an empty one, or a terminal that no longer takes input
     /// is refused without a question: nothing is ever written before the question is agreed
     /// to.
-    pub(super) fn ask_send(&mut self, target: TabId, command: String, dangerous: bool) {
+    pub(super) fn ask_send(
+        &mut self,
+        target: TabId,
+        command: String,
+        dangerous: bool,
+        typed_as_is: bool,
+    ) {
         if command.trim().is_empty() || command.chars().any(char::is_control) {
             return;
         }
@@ -154,6 +163,7 @@ impl App {
             shown: visible_text(&command),
             command,
             dangerous,
+            typed_as_is,
         })));
     }
 

@@ -13060,6 +13060,10 @@ fn send_command_dialog(confirmation: &SendConfirmation) -> Element<'_, Message> 
     .spacing(spacing::SM);
     if confirmation.dangerous {
         body = body.push(dialog_parts::error(fl!("ui-dialog-send-command-dangerous")));
+    } else if confirmation.typed_as_is {
+        body = body.push(dialog_parts::body(fl!(
+            "ui-dialog-send-command-typed-as-is"
+        )));
     }
     dialog_parts::message(
         Severity::Warning,

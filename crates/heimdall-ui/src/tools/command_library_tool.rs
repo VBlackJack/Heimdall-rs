@@ -41,7 +41,7 @@ use iced::widget::{
 };
 use iced::{Element, Length, Task, window};
 
-use super::command_library_runbooks::{RunbookMessage, RunbooksPane};
+use super::command_library_runbooks::{Delivered, Ready, RunTarget, RunbookMessage, RunbooksPane};
 use super::{CopySlot, ToolMessage, ToolPane};
 use crate::file_dialog::{self, FileDialog};
 use crate::i18n::fl;
@@ -238,6 +238,8 @@ pub enum Outcome {
         command: String,
         /// Marked dangerous.
         dangerous: bool,
+        /// A command typed as is, which no library action stands for.
+        typed_as_is: bool,
     },
     /// Type `command` at the prompt of terminal `target`, no question asked.
     Insert {
@@ -309,14 +311,28 @@ enum Notice {
 struct Awaited {
     /// The command as it is typed.
     command: String,
-    /// What the history keeps of it, but where and when.
-    entry: HistoryEntry,
+    /// What the history keeps of it, but where and when; none for a command no library action
+    /// stands for (a literal step of a runbook).
+    entry: Option<HistoryEntry>,
+    /// The step of the runbook run this command is, when it is one.
+    run_step: Option<(u64, usize)>,
     /// The terminals asked, with their names.
     tabs: Vec<(TabId, String)>,
     /// Asked to several terminals at once.
     broadcast: bool,
     /// Whether it is run or only typed at the prompt.
     delivery: Delivery,
+}
+
+/// What a press on a step of a run asks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunStep {
+    /// Write it into the terminal and submit it, after the question.
+    Send,
+    /// Type it at the prompt.
+    Insert,
+    /// Copy it.
+    Copy,
 }
 
 /// What the session the library was opened for gives it.
@@ -521,6 +537,7 @@ impl CommandLibraryPane {
             // The key is the library's own only while no editor has the keyboard.
             CommandLibraryMessage::InsertSelected => {
                 if self.editor.is_none()
+                    && !self.runbooks.is_open()
                     && let Some(command) = self.selected.clone()
                 {
                     return self.insert(&command);
@@ -537,10 +554,11 @@ impl CommandLibraryPane {
                 self.selected = Some(command.clone());
                 return self.broadcast_outcome(&command);
             }
-            CommandLibraryMessage::Target(tab) => self.target = Some(tab),
-            CommandLibraryMessage::Runbooks(message) => {
-                self.runbooks.update(message, &self.library);
+            CommandLibraryMessage::Target(tab) => {
+                self.target = Some(tab);
+                self.runbooks.repin(tab);
             }
+            CommandLibraryMessage::Runbooks(message) => return self.runbooks_message(message),
             CommandLibraryMessage::Import if self.can_edit() => return Outcome::Import,
             CommandLibraryMessage::Export if !self.library.commands().is_empty() => {
                 return Outcome::Export(self.library.export());
@@ -582,6 +600,9 @@ impl CommandLibraryPane {
             CommandLibraryMessage::ToggleHistory => {
                 self.history_open = !self.history_open;
                 self.clearing_history = false;
+                if self.history_open {
+                    self.runbooks.close();
+                }
             }
             CommandLibraryMessage::AskClearHistory => self.clearing_history = true,
             CommandLibraryMessage::CancelClearHistory => self.clearing_history = false,
@@ -715,6 +736,7 @@ impl CommandLibraryPane {
         };
         if let Some(draft) = draft {
             self.editor = Some(Editor::on(draft));
+            self.history_open = false;
         }
     }
 
@@ -741,19 +763,32 @@ impl CommandLibraryPane {
                 self.awaited.push(awaited);
                 continue;
             }
-            let mut entry = awaited.entry.clone();
-            entry.target = reached
-                .iter()
-                .map(|(_, name)| name.as_str())
-                .collect::<Vec<_>>()
-                .join(NAME_SEPARATOR);
-            entry.at = now_unix();
-            entry.mode = match awaited.delivery {
-                Delivery::Run => HistoryMode::Sent,
-                Delivery::Inserted => HistoryMode::Inserted,
-            };
-            self.activity.record(entry);
-            self.keep_activity();
+            if let Some(mut entry) = awaited.entry.clone() {
+                entry.target = reached
+                    .iter()
+                    .map(|(_, name)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(NAME_SEPARATOR);
+                entry.at = now_unix();
+                entry.mode = match awaited.delivery {
+                    Delivery::Run => HistoryMode::Sent,
+                    Delivery::Inserted => HistoryMode::Inserted,
+                };
+                self.activity.record(entry);
+                self.keep_activity();
+            }
+            // The run goes on only once the terminal has the step: a question answered no
+            // leaves it where it is.
+            if let Some((run_id, index)) = awaited.run_step {
+                self.runbooks.step_delivered(
+                    run_id,
+                    index,
+                    match awaited.delivery {
+                        Delivery::Run => Delivered::Sent,
+                        Delivery::Inserted => Delivered::Inserted,
+                    },
+                );
+            }
             if awaited.delivery == Delivery::Inserted {
                 self.notice = Some(Notice::Inserted(
                     reached
@@ -803,6 +838,9 @@ impl CommandLibraryPane {
             host: given(host),
             user: given(user),
         };
+        self.runbooks.session_changed();
+        self.runbooks
+            .set_session(session.host.clone(), session.user.clone(), platform);
         self.history_this_host_only = session.host.is_some();
         self.session = (session != Session::default()).then_some(session);
         self.platform = command_library::session_platform_filter(platform);
@@ -852,6 +890,7 @@ impl CommandLibraryPane {
         match message {
             CommandLibraryMessage::New if self.can_edit() => {
                 self.editor = Some(Editor::default());
+                self.history_open = false;
             }
             // An editor with changes in it is never replaced by a capture: said, nothing lost.
             CommandLibraryMessage::Capture(_)
@@ -861,6 +900,7 @@ impl CommandLibraryPane {
             }
             CommandLibraryMessage::Capture(capture) if self.can_edit() => {
                 self.notice = None;
+                self.history_open = false;
                 self.editor = Some(Editor::on(captured_draft(
                     &capture,
                     self.last_category.as_deref(),
@@ -869,10 +909,12 @@ impl CommandLibraryPane {
             CommandLibraryMessage::Edit(id) if self.can_edit() => {
                 if let Some(command) = self.library.get(&id) {
                     self.editor = Some(Editor::on(Draft::of(command)));
+                    self.history_open = false;
                 }
             }
             CommandLibraryMessage::Field(field, value) => {
                 if let Some(editor) = &mut self.editor {
+                    editor.problem = None;
                     let draft = &mut editor.draft;
                     match field {
                         Field::Title => draft.title = value,
@@ -886,11 +928,13 @@ impl CommandLibraryPane {
             }
             CommandLibraryMessage::EditPlatform(platform) => {
                 if let Some(editor) = &mut self.editor {
+                    editor.problem = None;
                     editor.draft.platform = platform;
                 }
             }
             CommandLibraryMessage::EditLevel(level) => {
                 if let Some(editor) = &mut self.editor {
+                    editor.problem = None;
                     editor.draft.level = level;
                 }
             }
@@ -1058,16 +1102,156 @@ impl CommandLibraryPane {
         let Some(entry) = self.history_entry(command) else {
             return;
         };
+        // A command asked from a card supersedes the question of a run step still open: only
+        // one question is ever on screen, so the run's was closed without sending, and its
+        // text must not be taken for this one's receipt.
+        self.awaited.retain(|each| each.run_step.is_none());
         if self.awaited.len() >= MAX_AWAITED {
             self.awaited.remove(0);
         }
         self.awaited.push(Awaited {
             command: text.to_owned(),
-            entry,
+            entry: Some(entry),
+            run_step: None,
             tabs,
             broadcast,
             delivery,
         });
+    }
+
+    /// Applies a message of the runbooks panel. The steps of a run reach a terminal through
+    /// the very path a command of the library takes: the same refusal of a control
+    /// character, the same paste encoding, the same targets (the session's own terminal
+    /// first, never a remote desktop, a file transfer or a web view). Nothing here sends
+    /// without the press of a button, and nothing sends twice for one.
+    fn runbooks_message(&mut self, message: RunbookMessage) -> Outcome {
+        match message {
+            RunbookMessage::RunSend => self.run_step(RunStep::Send),
+            RunbookMessage::RunInsert => self.run_step(RunStep::Insert),
+            RunbookMessage::RunCopy => self.run_step(RunStep::Copy),
+            other => {
+                // What an earlier send said is not about the run, and the history is not the
+                // view any more.
+                if matches!(other, RunbookMessage::Toggle | RunbookMessage::Run(_)) {
+                    self.notice = None;
+                }
+                if matches!(other, RunbookMessage::Toggle) {
+                    self.history_open = false;
+                }
+                if matches!(other, RunbookMessage::RunStop | RunbookMessage::RunSkip) {
+                    self.awaited.retain(|each| each.run_step.is_none());
+                }
+                self.runbooks.update(other, &self.library);
+                // The terminal is pinned when the run starts.
+                let tab = self.effective_target().map(|target| target.tab);
+                self.runbooks.pin(tab);
+                Outcome::None
+            }
+        }
+    }
+
+    /// What to tell about where the run's steps go, when they cannot go anywhere.
+    fn run_warning(&self) -> Option<String> {
+        match self.run_target() {
+            RunTarget::Gone => Some(fl!("ui-tool-cmdlib-runbooks-run-target-gone")),
+            RunTarget::Changed => Some(fl!("ui-tool-cmdlib-runbooks-run-session-changed")),
+            // Terminals are open but none was there when the run began: it has to be told.
+            RunTarget::NoTerminal if !self.targets.is_empty() => {
+                Some(fl!("ui-tool-cmdlib-runbooks-run-pick-terminal"))
+            }
+            RunTarget::Ready(_) | RunTarget::NoTerminal => None,
+        }
+    }
+
+    /// Where the steps of the run go: its pinned terminal while it is offered.
+    fn run_target(&self) -> RunTarget {
+        if self.runbooks.is_stale() {
+            return RunTarget::Changed;
+        }
+        match self.runbooks.pinned() {
+            Some(tab) if self.targets.iter().any(|each| each.tab == tab) => RunTarget::Ready(tab),
+            Some(_) => RunTarget::Gone,
+            None => RunTarget::NoTerminal,
+        }
+    }
+
+    /// Sends, inserts or copies the current step of the run. The step is made and judged
+    /// again now, from the variables and the library as they are: a step the generator refuses
+    /// gives nothing.
+    fn run_step(&mut self, how: RunStep) -> Outcome {
+        // A press just after a delivery is a double click, not a wish to send the next step.
+        if self.runbooks.is_guarded() {
+            return Outcome::None;
+        }
+        let Some(ready) = self.runbooks.ready_step(&self.library) else {
+            return Outcome::None;
+        };
+        let text = ready.step.command.clone();
+        let host = self.session_host().unwrap_or_default().to_owned();
+        let entry = |mode: HistoryMode, ready: &Ready| {
+            ready.action.as_ref().map(|action| HistoryEntry {
+                command: if command_library::shipped().get(&action.id).is_some() {
+                    command_activity::catalog_key(&action.id)
+                } else {
+                    command_activity::user_key(&action.id)
+                },
+                title: action.title.clone(),
+                pattern: action.pattern.clone(),
+                parameters: action.parameters.clone(),
+                target: String::new(),
+                host: host.clone(),
+                mode,
+                at: now_unix(),
+            })
+        };
+        if how == RunStep::Copy {
+            if let Some(copied) = entry(HistoryMode::Copied, &ready) {
+                self.activity.record(copied);
+                self.keep_activity();
+            }
+            self.runbooks
+                .step_delivered(ready.run_id, ready.index, Delivered::Copied);
+            return Outcome::Copy(CopySlot::CmdLibRunbookStep, text);
+        }
+        // Always the terminal the run was pinned to, never the first one offered.
+        let RunTarget::Ready(pinned) = self.run_target() else {
+            return Outcome::None;
+        };
+        let Some(target) = self.targets.iter().find(|each| each.tab == pinned).cloned() else {
+            return Outcome::None;
+        };
+        let delivery = if how == RunStep::Send {
+            Delivery::Run
+        } else {
+            Delivery::Inserted
+        };
+        // One step is waited for at a time: an earlier question left unanswered is dropped.
+        self.awaited.retain(|each| each.run_step.is_none());
+        if self.awaited.len() >= MAX_AWAITED {
+            self.awaited.remove(0);
+        }
+        let tab = target.tab;
+        self.awaited.push(Awaited {
+            command: text.clone(),
+            entry: entry(HistoryMode::Sent, &ready),
+            run_step: Some((ready.run_id, ready.index)),
+            tabs: vec![(target.tab, target.name)],
+            broadcast: false,
+            delivery,
+        });
+        if how == RunStep::Send {
+            Outcome::Send {
+                target: tab,
+                command: text,
+                dangerous: ready.is_dangerous(),
+                typed_as_is: ready.step.literal,
+            }
+        } else {
+            Outcome::Insert {
+                target: tab,
+                command: text,
+            }
+        }
     }
 
     /// Asks the application to question the user about sending `command`.
@@ -1089,6 +1273,7 @@ impl CommandLibraryPane {
             target: target.tab,
             command: text,
             dangerous,
+            typed_as_is: false,
         }
     }
 
@@ -1359,6 +1544,28 @@ impl CommandLibraryPane {
             ),
         ]
         .spacing(spacing::SM);
+        // The runbooks have the whole view, as the C#: a panel squeezed in above the list of
+        // commands left room for a few lines of it.
+        if self.runbooks.is_open() {
+            let mut page = column![tools].spacing(spacing::SM);
+            if let Some(notice) = &self.notice {
+                page = page.push(notice_view(notice));
+            }
+            page = page.push(self.target_row(tab));
+            let run_target = self.run_target();
+            let warning = self.run_warning();
+            let can_send = if self.runbooks.is_bound() {
+                matches!(run_target, RunTarget::Ready(_))
+            } else {
+                self.effective_target().is_some()
+            };
+            let panel = self.runbooks.view(tab, &self.library, can_send, warning);
+            return super::tool_body(
+                page.push(
+                    scrollable(panel.unwrap_or_else(|| column![].into())).height(Length::Fill),
+                ),
+            );
+        }
         let shown = self.shown();
         let mine = self.shown_user();
         let count = shown.len() + mine.len();
@@ -1400,13 +1607,10 @@ impl CommandLibraryPane {
         if self.history_open {
             cards = cards.push(self.history_view(tab, state));
         }
-        if let Some(panel) = self.runbooks.view(tab, &self.library) {
-            cards = cards.push(panel);
-        }
         if let Some(editor) = &self.editor {
             cards = cards.push(editor_view(tab, editor));
         }
-        if count == 0 && self.editor.is_none() && !self.history_open && !self.runbooks.is_open() {
+        if count == 0 && self.editor.is_none() && !self.history_open {
             return super::tool_body(page.push(super::empty_state(fl!("ui-tool-cmdlib-empty"))));
         }
         if !mine.is_empty() {
@@ -2463,7 +2667,7 @@ fn issue_text(issue: &CommandIssue) -> String {
 }
 
 /// Why a command of the user cannot be made from the values typed.
-fn generate_error(error: &GenerateError) -> String {
+pub(super) fn generate_error(error: &GenerateError) -> String {
     match error {
         GenerateError::EmptyPattern => fl!("ui-tool-cmdlib-error-empty-pattern"),
         GenerateError::TooManyParameters => fl!("ui-tool-cmdlib-error-too-many-parameters"),
@@ -2513,6 +2717,11 @@ pub(super) fn value_error(error: &ValueError) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use heimdall_core::tools::runbooks::{RUNBOOKS_FILE, Runbook, RunbookStore, Step};
+
+    use super::super::command_library_runbooks::{RunTarget, StepStatus};
     use super::*;
 
     /// Three tab identifiers, made by opening three tools in an application.
@@ -2965,6 +3174,7 @@ mod tests {
                 target: terminal,
                 command: "ping -c 3 web.lab".to_owned(),
                 dangerous: false,
+                typed_as_is: false,
             }
         );
         // A value that would run more is refused: nothing to copy, nothing to send.
@@ -3933,5 +4143,531 @@ mod tests {
             pane.update(CommandLibraryMessage::Insert(ping)),
             Outcome::Insert { target, .. } if target == first
         ));
+    }
+
+    /// A pane over a folder holding `runbooks`.
+    fn run_pane(folder: &Path, runbooks: Vec<Runbook>) -> CommandLibraryPane {
+        let mut store = RunbookStore::default();
+        for runbook in runbooks {
+            store.keep(runbook, &|_: &str| None).expect("kept");
+        }
+        store.save(&folder.join(RUNBOOKS_FILE)).expect("saved");
+        pane(folder)
+    }
+
+    /// Two actions of the user: one that runs, one marked dangerous.
+    const TWO_ACTIONS: &str = r#"{"actions": [
+        {"id": "calm", "title": "Calm", "category": "mine", "platform": 1, "level": 0,
+         "linuxCommandTemplate": {"platform": 1, "commandPattern": "echo calm", "parameters": []}},
+        {"id": "grave", "title": "Grave", "category": "mine", "platform": 1, "level": 2,
+         "linuxCommandTemplate": {"platform": 1, "commandPattern": "echo grave", "parameters": []}}
+    ]}"#;
+
+    fn action_step(id: &str) -> Step {
+        Step::action(id, id, BTreeMap::new())
+    }
+
+    /// An action, a literal command and a dangerous action.
+    fn three_step_runbook() -> Runbook {
+        let mut runbook = Runbook::new("Three");
+        runbook.steps = vec![
+            action_step("calm"),
+            Step::literal("uptime", TemplatePlatform::Linux),
+            action_step("grave"),
+        ];
+        runbook
+    }
+
+    /// Imports the two actions and starts a run of the first runbook of the pane.
+    fn start_run(pane: &mut CommandLibraryPane) {
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(
+            TWO_ACTIONS.to_owned()
+        ))));
+        let id = pane.runbooks.first_id().expect("a runbook");
+        pane.update(CommandLibraryMessage::Runbooks(RunbookMessage::Toggle));
+        pane.update(CommandLibraryMessage::Runbooks(RunbookMessage::Run(id)));
+        // A press right after a delivery is ignored for a while; the tests that press twice
+        // on purpose say so.
+        pane.runbooks.set_guard(std::time::Duration::ZERO);
+    }
+
+    fn run_message(pane: &mut CommandLibraryPane, message: RunbookMessage) -> Outcome {
+        pane.update(CommandLibraryMessage::Runbooks(message))
+    }
+
+    #[test]
+    fn a_run_sends_nothing_by_itself_and_a_step_moves_on_only_when_the_terminal_has_it() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        open_for(&mut pane, "web.lab", None, RemoteOs::Linux);
+        start_run(&mut pane);
+
+        // Starting, looking and waiting write nothing and ask nothing.
+        assert!(pane.awaited.is_empty());
+        assert!(pane.activity.history().is_empty());
+        assert_eq!(pane.runbooks.status_of(0), Some(StepStatus::Pending));
+
+        // The press asks; the question is still to be answered, so the step stays where it is.
+        let Outcome::Send {
+            target: asked,
+            command,
+            dangerous,
+            typed_as_is,
+        } = run_message(&mut pane, RunbookMessage::RunSend)
+        else {
+            panic!("asked");
+        };
+        assert_eq!(
+            (asked, command.as_str(), dangerous, typed_as_is),
+            (terminal, "echo calm", false, false)
+        );
+        assert_eq!(pane.runbooks.current_index(), Some(0));
+        assert!(
+            pane.activity.history().is_empty(),
+            "not recorded before it is written"
+        );
+
+        // The terminal has it: recorded like a send of the library, and the run goes on to
+        // the next step, which is not sent.
+        pane.record_sent(&[receipt(terminal, "web-1", &command)]);
+        assert_eq!(pane.runbooks.status_of(0), Some(StepStatus::Sent));
+        assert_eq!(pane.runbooks.current_index(), Some(1));
+        let [entry] = pane.activity.history() else {
+            panic!("one row");
+        };
+        assert_eq!(
+            (entry.mode, entry.host.as_str(), entry.target.as_str()),
+            (HistoryMode::Sent, "web.lab", "web-1")
+        );
+        assert_eq!(entry.pattern, "echo calm");
+        assert_eq!(entry.command, command_activity::user_key("calm"));
+        assert!(pane.awaited.is_empty(), "nothing waits for the next step");
+    }
+
+    #[test]
+    fn one_step_is_waited_for_at_a_time_and_a_stop_forgets_it() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        start_run(&mut pane);
+
+        // A question answered no leaves the step to be sent again.
+        for _ in 0..3 {
+            assert!(matches!(
+                run_message(&mut pane, RunbookMessage::RunSend),
+                Outcome::Send { .. }
+            ));
+        }
+        assert_eq!(pane.awaited.len(), 1);
+        assert_eq!(pane.runbooks.current_index(), Some(0));
+
+        // A late receipt after a stop moves nothing and records nothing.
+        run_message(&mut pane, RunbookMessage::RunStop);
+        assert!(pane.awaited.is_empty());
+        pane.record_sent(&[receipt(terminal, "web-1", "echo calm")]);
+        assert!(pane.activity.history().is_empty());
+    }
+
+    #[test]
+    fn the_dangerous_question_is_asked_for_a_dangerous_action_and_always_for_a_literal_step() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        start_run(&mut pane);
+
+        let mut asked = Vec::new();
+        for _ in 0..3 {
+            let Outcome::Send {
+                command,
+                dangerous,
+                typed_as_is,
+                ..
+            } = run_message(&mut pane, RunbookMessage::RunSend)
+            else {
+                panic!("asked");
+            };
+            asked.push((command.clone(), dangerous, typed_as_is));
+            pane.record_sent(&[receipt(terminal, "web-1", &command)]);
+        }
+        assert_eq!(
+            asked,
+            [
+                ("echo calm".to_owned(), false, false),
+                // Always asked, and said to be typed as is, not called dangerous for that.
+                ("uptime".to_owned(), false, true),
+                ("echo grave".to_owned(), true, false),
+            ]
+        );
+        assert!(pane.runbooks.is_finished());
+        // A literal step leaves no row of the history, as the C#: a row belongs to an action.
+        let titles: Vec<&str> = pane
+            .activity
+            .history()
+            .iter()
+            .map(|entry| entry.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Grave", "Calm"]);
+    }
+
+    #[test]
+    fn an_insert_types_the_step_with_no_question_and_is_recorded_as_inserted() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        start_run(&mut pane);
+        run_message(&mut pane, RunbookMessage::RunSkip);
+        run_message(&mut pane, RunbookMessage::RunSkip);
+
+        // The last step is the dangerous one: Insert still asks nothing, as the library's.
+        let Outcome::Insert {
+            target: typed,
+            command,
+        } = run_message(&mut pane, RunbookMessage::RunInsert)
+        else {
+            panic!("typed");
+        };
+        assert_eq!((typed, command.as_str()), (terminal, "echo grave"));
+        let mut inserted = receipt(terminal, "web-1", &command);
+        inserted.delivery = Delivery::Inserted;
+        pane.record_sent(&[inserted]);
+        assert_eq!(pane.runbooks.status_of(2), Some(StepStatus::Inserted));
+        let [entry] = pane.activity.history() else {
+            panic!("one row");
+        };
+        assert_eq!(entry.mode, HistoryMode::Inserted);
+    }
+
+    #[test]
+    fn a_copy_marks_the_step_copied_and_is_recorded_for_an_action() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        start_run(&mut pane);
+        // No terminal needed to copy.
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunCopy),
+            Outcome::Copy(CopySlot::CmdLibRunbookStep, "echo calm".to_owned())
+        );
+        assert_eq!(pane.runbooks.status_of(0), Some(StepStatus::Copied));
+        assert_eq!(pane.activity.history()[0].mode, HistoryMode::Copied);
+        // The literal step: copied, no row.
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunCopy),
+            Outcome::Copy(CopySlot::CmdLibRunbookStep, text) if text == "uptime"
+        ));
+        assert_eq!(pane.activity.history().len(), 1);
+    }
+
+    #[test]
+    fn skip_and_stop_send_nothing_and_leave_no_row() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        start_run(&mut pane);
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSkip),
+            Outcome::None
+        );
+        assert_eq!(pane.runbooks.status_of(0), Some(StepStatus::Skipped));
+        assert_eq!(pane.runbooks.current_index(), Some(1));
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunStop),
+            Outcome::None
+        );
+        assert!(!pane.runbooks.is_running());
+        assert!(pane.awaited.is_empty());
+        assert!(pane.activity.history().is_empty());
+        // Nothing is sent by a stopped run.
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::None
+        );
+    }
+
+    #[test]
+    fn a_step_goes_to_the_terminal_of_the_session_first_and_to_none_without_one() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let [first, second, _] = tab_ids();
+        start_run(&mut pane);
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::None,
+            "no terminal: nothing asked, nothing awaited"
+        );
+        assert!(pane.awaited.is_empty());
+        assert_eq!(pane.runbooks.current_index(), Some(0));
+        pane.runbooks.stop_for_test();
+
+        pane.set_targets(vec![target(first, "A"), target(second, "B")]);
+        pane.update(CommandLibraryMessage::Session {
+            host: None,
+            user: None,
+            platform: RemoteOs::Linux,
+            tab: Some(second),
+        });
+        start_run(&mut pane);
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::Send { target, .. } if target == second
+        ));
+        // The user's own pick moves the run, and nothing else does.
+        pane.update(CommandLibraryMessage::Target(first));
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunInsert),
+            Outcome::Insert { target, .. } if target == first
+        ));
+    }
+
+    #[test]
+    fn a_run_stays_on_its_terminal_and_waits_when_it_is_gone_or_the_session_changes() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let [first, second, _] = tab_ids();
+        pane.set_targets(vec![target(first, "A"), target(second, "B")]);
+        start_run(&mut pane);
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::Send { target, .. } if target == first
+        ));
+        run_message(&mut pane, RunbookMessage::RunSkip);
+
+        // The pinned terminal closes: never the first one left.
+        pane.set_targets(vec![target(second, "B")]);
+        assert_eq!(pane.run_target(), RunTarget::Gone);
+        for message in [RunbookMessage::RunSend, RunbookMessage::RunInsert] {
+            assert_eq!(run_message(&mut pane, message), Outcome::None);
+        }
+        assert!(pane.awaited.is_empty());
+        // Picking a terminal is the user's decision.
+        pane.update(CommandLibraryMessage::Target(second));
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::Send { target, .. } if target == second
+        ));
+
+        // A session that changes mid-run blocks it the same way.
+        run_message(&mut pane, RunbookMessage::RunStop);
+        pane.set_targets(vec![target(first, "A"), target(second, "B")]);
+        start_run(&mut pane);
+        open_for(&mut pane, "other.lab", None, RemoteOs::Windows);
+        assert_eq!(pane.run_target(), RunTarget::Changed);
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::None
+        );
+        pane.update(CommandLibraryMessage::Target(first));
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::Send { target, .. } if target == first
+        ));
+    }
+
+    #[test]
+    fn a_double_press_cannot_deliver_the_step_after() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "A")]);
+        start_run(&mut pane);
+        pane.runbooks
+            .set_guard(std::time::Duration::from_secs(3600));
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunCopy),
+            Outcome::Copy(..)
+        ));
+        for message in [
+            RunbookMessage::RunCopy,
+            RunbookMessage::RunSend,
+            RunbookMessage::RunInsert,
+        ] {
+            assert_eq!(run_message(&mut pane, message), Outcome::None);
+        }
+        assert_eq!(pane.runbooks.status_of(1), Some(StepStatus::Pending));
+        assert!(pane.awaited.is_empty());
+    }
+
+    #[test]
+    fn a_text_sent_from_a_card_after_a_question_closed_is_not_the_run_step() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "A")]);
+        start_run(&mut pane);
+        // The question of the step is closed without sending.
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::Send { .. }
+        ));
+        // The same text from the card of the action.
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Send(CommandRef::User(
+                "calm".to_owned()
+            ))),
+            Outcome::Send { .. }
+        ));
+        pane.record_sent(&[receipt(terminal, "A", "echo calm")]);
+        assert_eq!(
+            pane.runbooks.current_index(),
+            Some(0),
+            "the run did not move"
+        );
+        assert_eq!(pane.activity.history().len(), 1, "one row");
+
+        // A skip forgets a step still waited for.
+        run_message(&mut pane, RunbookMessage::RunSend);
+        run_message(&mut pane, RunbookMessage::RunSkip);
+        assert!(pane.awaited.is_empty());
+    }
+
+    #[test]
+    fn the_key_that_inserts_the_command_last_used_is_not_the_runbooks() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "A")]);
+        let mtr = trace(&mut pane, "10.0.0.1");
+        pane.update(CommandLibraryMessage::Copy(mtr));
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::InsertSelected),
+            Outcome::Insert { .. }
+        ));
+        pane.update(CommandLibraryMessage::Runbooks(RunbookMessage::Toggle));
+        assert_eq!(
+            pane.update(CommandLibraryMessage::InsertSelected),
+            Outcome::None
+        );
+    }
+
+    #[test]
+    fn a_step_the_generator_refuses_at_the_run_gives_nothing_to_send_insert_or_copy() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut runbook = Runbook::new("Trace");
+        runbook
+            .variables
+            .insert("target".to_owned(), "web.lab".to_owned());
+        runbook.steps = vec![Step::action(
+            TRACE,
+            "Trace",
+            BTreeMap::from([("target".to_owned(), "{{target}}".to_owned())]),
+        )];
+        let mut pane = run_pane(folder.path(), vec![runbook]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        // The session host fills the variable, and the generator judges it at the run.
+        open_for(&mut pane, "web.lab; reboot", None, RemoteOs::Linux);
+        let id = pane.runbooks.first_id().expect("a runbook");
+        pane.update(CommandLibraryMessage::Runbooks(RunbookMessage::Toggle));
+        run_message(&mut pane, RunbookMessage::Run(id));
+        run_message(&mut pane, RunbookMessage::RunBegin);
+        for message in [
+            RunbookMessage::RunSend,
+            RunbookMessage::RunInsert,
+            RunbookMessage::RunCopy,
+        ] {
+            assert_eq!(run_message(&mut pane, message), Outcome::None);
+        }
+        assert!(pane.awaited.is_empty());
+        assert!(pane.activity.history().is_empty());
+        assert_eq!(pane.runbooks.status_of(0), Some(StepStatus::Pending));
+    }
+
+    #[test]
+    fn a_session_opened_between_the_start_and_the_variables_being_confirmed_blocks_the_run() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut runbook = Runbook::new("Trace");
+        runbook
+            .variables
+            .insert("target".to_owned(), "web.lab".to_owned());
+        runbook.steps = vec![Step::action(
+            TRACE,
+            "Trace",
+            BTreeMap::from([("target".to_owned(), "{{target}}".to_owned())]),
+        )];
+        let mut pane = run_pane(folder.path(), vec![runbook]);
+        let [first, second, _] = tab_ids();
+        pane.set_targets(vec![target(first, "A"), target(second, "B")]);
+        open_for(&mut pane, "first.lab", None, RemoteOs::Linux);
+        let id = pane.runbooks.first_id().expect("a runbook");
+        run_message(&mut pane, RunbookMessage::Run(id));
+        pane.runbooks.set_guard(std::time::Duration::ZERO);
+
+        // A new session while the values are being confirmed.
+        open_for(&mut pane, "second.lab", None, RemoteOs::Windows);
+        run_message(&mut pane, RunbookMessage::RunBegin);
+        assert_eq!(pane.run_target(), RunTarget::Changed);
+        assert!(pane.run_warning().is_some());
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::None
+        );
+
+        // Picking a terminal takes the system of the session now open, not the first one's.
+        pane.update(CommandLibraryMessage::Target(second));
+        let Outcome::Send { command, .. } = run_message(&mut pane, RunbookMessage::RunSend) else {
+            panic!("asked");
+        };
+        assert_eq!(
+            command, "tracert first.lab",
+            "first session's value, new system"
+        );
+    }
+
+    #[test]
+    fn terminals_opened_after_a_run_began_without_one_are_to_be_picked() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        start_run(&mut pane);
+        assert_eq!(
+            pane.run_warning(),
+            None,
+            "no terminal at all: the usual hint"
+        );
+        pane.set_targets(vec![target(tab_ids()[0], "A")]);
+        assert_eq!(pane.run_target(), RunTarget::NoTerminal);
+        assert!(pane.run_warning().is_some());
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::None
+        );
+    }
+
+    #[test]
+    fn opening_the_runbooks_clears_an_old_notice_and_leaves_the_history_and_the_editor_alone() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        pane.notice = Some(Notice::Inserted("A".to_owned()));
+        pane.update(CommandLibraryMessage::ToggleHistory);
+        assert!(pane.history_open);
+        pane.update(CommandLibraryMessage::Runbooks(RunbookMessage::Toggle));
+        assert_eq!(pane.notice, None);
+        assert!(!pane.history_open, "the history is not the view any more");
+
+        // And the other way round: the history takes the view back.
+        pane.update(CommandLibraryMessage::ToggleHistory);
+        assert!(pane.history_open);
+        assert!(!pane.runbooks.is_open());
+
+        // The editor takes the view from the history too.
+        pane.update(CommandLibraryMessage::New);
+        assert!(pane.editor.is_some());
+        assert!(!pane.history_open);
+    }
+
+    #[test]
+    fn a_run_started_clears_the_notice_of_an_insert() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        start_run(&mut pane);
+        pane.notice = Some(Notice::Inserted("A".to_owned()));
+        let id = pane.runbooks.first_id().expect("a runbook");
+        run_message(&mut pane, RunbookMessage::RunStop);
+        run_message(&mut pane, RunbookMessage::Run(id));
+        assert_eq!(pane.notice, None);
     }
 }

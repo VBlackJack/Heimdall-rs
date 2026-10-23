@@ -70,6 +70,8 @@ pub enum ToolsMessage {
         command: String,
         /// Marked dangerous.
         dangerous: bool,
+        /// A command typed as is, which no library action stands for.
+        typed_as_is: bool,
     },
     /// Type `command` at the prompt of terminal tab `target`, without Enter and without a
     /// question: nothing runs until the user presses Enter themselves, as the C# Insert.
@@ -272,8 +274,9 @@ impl App {
                 target,
                 command,
                 dangerous,
+                typed_as_is,
             } => {
-                self.ask_send(target, command, dangerous);
+                self.ask_send(target, command, dangerous, typed_as_is);
                 Vec::new()
             }
             ToolsMessage::InsertCommand { target, command } => {

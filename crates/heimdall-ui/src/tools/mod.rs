@@ -663,6 +663,8 @@ pub enum CopySlot {
     CmdLibUserCommand(usize),
     /// The command of the history entry at this place.
     CmdLibHistory(usize),
+    /// The command of the step a runbook run is at.
+    CmdLibRunbookStep,
 }
 
 /// What a tool's tab is asked.
@@ -1644,11 +1646,13 @@ impl ToolPanes {
                         target,
                         command,
                         dangerous,
+                        typed_as_is,
                     } => Task::done(Message::App(heimdall_app::Message::Tools(
                         heimdall_app::ToolsMessage::SendCommand {
                             target,
                             command,
                             dangerous,
+                            typed_as_is,
                         },
                     ))),
                     // Typed at the prompt, no Enter: nothing to agree to.

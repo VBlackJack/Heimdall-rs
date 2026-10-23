@@ -130,6 +130,7 @@ fn send(app: &mut App, target: TabId, command: &str) {
         target,
         command: command.to_owned(),
         dangerous: false,
+        typed_as_is: false,
     }));
 }
 
