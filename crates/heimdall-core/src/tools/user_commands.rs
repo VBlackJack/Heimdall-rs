@@ -1375,6 +1375,23 @@ pub struct ImportReport {
     pub touched: Vec<String>,
 }
 
+/// What merging the actions a Git synchronization pulled did.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SyncReport {
+    /// Commands added.
+    pub imported: usize,
+    /// Commands of the library replaced by a newer copy of the file.
+    pub updated: usize,
+    /// Commands of the file left out: they break a rule of an untrusted file.
+    pub skipped: usize,
+    /// The title of the first command left out and the rule it broke.
+    pub first_skipped: Option<(String, command_library::CommandIssue)>,
+    /// The identities of the commands added or replaced.
+    pub touched: Vec<String>,
+    /// The titles of the commands whose copy in the library is newer than the file's: kept.
+    pub kept_local: Vec<String>,
+}
+
 /// The user's commands.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct UserLibrary {
@@ -1456,58 +1473,84 @@ impl UserLibrary {
         self.merge(json, true)
     }
 
-    /// [`UserLibrary::import`], with the rules of an untrusted file applied or not.
-    fn merge(&mut self, json: &str, untrusted: bool) -> Result<ImportReport, LibraryError> {
+    /// The actions of an envelope or of a single action in `json`.
+    fn parse_actions(json: &str) -> Result<Vec<UserCommand>, LibraryError> {
         let root: Value = serde_json::from_str(json).map_err(|_| LibraryError::Format)?;
-        let actions: Vec<UserCommand> = if let Some(Value::Array(list)) = root.get("actions") {
+        if let Some(Value::Array(list)) = root.get("actions") {
             list.iter()
                 .map(|each| serde_json::from_value(each.clone()))
                 .collect::<Result<_, _>>()
-                .map_err(|_| LibraryError::Format)?
+                .map_err(|_| LibraryError::Format)
         } else if root.get("id").is_some() && root.get("title").is_some() {
-            vec![serde_json::from_value(root).map_err(|_| LibraryError::Format)?]
+            Ok(vec![
+                serde_json::from_value(root).map_err(|_| LibraryError::Format)?,
+            ])
         } else if matches!(root.get("runbooks"), Some(Value::Array(_))) {
             // A file of runbooks alone: their import is `library_transfer`'s.
-            Vec::new()
+            Ok(Vec::new())
         } else {
-            return Err(LibraryError::Format);
+            Err(LibraryError::Format)
+        }
+    }
+
+    /// Whether a file's `actions` hold more than an import takes; the shipped actions of an
+    /// export of everything do not count: it always re-imports.
+    fn too_many_actions(actions: &[UserCommand]) -> bool {
+        actions
+            .iter()
+            .filter(|action| !in_catalogue(action))
+            .count()
+            > MAX_IMPORT_ACTIONS
+    }
+
+    /// Why `action` of a file cannot be kept, when it cannot; normalizes its quoting. The rules
+    /// of an untrusted file are applied when `untrusted`.
+    fn issue_of(
+        action: &mut UserCommand,
+        untrusted: bool,
+    ) -> Option<command_library::CommandIssue> {
+        let basic = if action.title.trim().is_empty() {
+            Some(command_library::CommandIssue::MissingTitle)
+        } else if action.category.trim().is_empty() {
+            Some(command_library::CommandIssue::MissingCategory)
+        } else if action.title.chars().count() > MAX_TITLE_LENGTH {
+            Some(command_library::CommandIssue::TitleTooLong)
+        } else if action.category.chars().count() > MAX_CATEGORY_LENGTH {
+            Some(command_library::CommandIssue::CategoryTooLong)
+        } else {
+            None
         };
-        // The shipped actions of an export of everything do not count: it always re-imports.
-        if untrusted
-            && actions
-                .iter()
-                .filter(|action| !in_catalogue(action))
-                .count()
-                > MAX_IMPORT_ACTIONS
-        {
+        normalize_quoting(action);
+        // The C# keeps the shipped actions as they are (`existing.IsUserCreated` is false:
+        // skipped), so an export of everything imports without copying the catalogue.
+        let basic = basic.or_else(|| {
+            (untrusted && in_catalogue(action))
+                .then_some(command_library::CommandIssue::InCatalogue)
+        });
+        basic.or_else(|| {
+            untrusted
+                .then(|| command_library::validate_import(action))
+                .flatten()
+        })
+    }
+
+    /// The place in the library of the command a file's `action` stands for.
+    fn position_of(&self, action: &UserCommand) -> Option<usize> {
+        self.commands.iter().position(|known| {
+            (!action.public_id.is_empty() && known.public_id == action.public_id)
+                || (!action.id.is_empty() && known.id == action.id)
+        })
+    }
+
+    /// [`UserLibrary::import`], with the rules of an untrusted file applied or not.
+    fn merge(&mut self, json: &str, untrusted: bool) -> Result<ImportReport, LibraryError> {
+        let actions = Self::parse_actions(json)?;
+        if untrusted && Self::too_many_actions(&actions) {
             return Err(LibraryError::TooManyActions);
         }
         let mut report = ImportReport::default();
         for mut action in actions {
-            let basic = if action.title.trim().is_empty() {
-                Some(command_library::CommandIssue::MissingTitle)
-            } else if action.category.trim().is_empty() {
-                Some(command_library::CommandIssue::MissingCategory)
-            } else if action.title.chars().count() > MAX_TITLE_LENGTH {
-                Some(command_library::CommandIssue::TitleTooLong)
-            } else if action.category.chars().count() > MAX_CATEGORY_LENGTH {
-                Some(command_library::CommandIssue::CategoryTooLong)
-            } else {
-                None
-            };
-            normalize_quoting(&mut action);
-            // The C# keeps the shipped actions as they are (`existing.IsUserCreated` is false:
-            // skipped), so an export of everything imports without copying the catalogue.
-            let basic = basic.or_else(|| {
-                (untrusted && in_catalogue(&action))
-                    .then_some(command_library::CommandIssue::InCatalogue)
-            });
-            let issue = basic.or_else(|| {
-                untrusted
-                    .then(|| command_library::validate_import(&action))
-                    .flatten()
-            });
-            if let Some(issue) = issue {
+            if let Some(issue) = Self::issue_of(&mut action, untrusted) {
                 report.skipped += 1;
                 if report.first_skipped.is_none() {
                     report.first_skipped =
@@ -1516,10 +1559,7 @@ impl UserLibrary {
                 continue;
             }
             action.is_user_created = true;
-            let found = self.commands.iter().position(|known| {
-                (!action.public_id.is_empty() && known.public_id == action.public_id)
-                    || (!action.id.is_empty() && known.id == action.id)
-            });
+            let found = self.position_of(&action);
             if action.id.is_empty() {
                 action.id = new_identity();
             }
@@ -1529,18 +1569,84 @@ impl UserLibrary {
             if let Some(index) = found {
                 action.id.clone_from(&self.commands[index].id);
                 action.public_id.clone_from(&self.commands[index].public_id);
-                action.updated_at = Some(now_text());
+                stamp(&mut action, untrusted);
                 report.touched.push(action.id.clone());
                 self.commands[index] = action;
                 report.updated += 1;
             } else {
                 let now = now_text();
                 action.created_at.get_or_insert_with(|| now.clone());
-                action.updated_at = Some(now);
+                stamp(&mut action, untrusted);
                 report.touched.push(action.id.clone());
                 self.commands.push(action);
                 report.imported += 1;
             }
+        }
+        Ok(report)
+    }
+
+    /// Merges the actions of `json`, the file a Git synchronization pulled, as the C# sync
+    /// import does (`JsonSyncService.cs:680-715`): it is held to the rules of an untrusted
+    /// file like an import, but an action of the library whose `updatedAt` is newer than the
+    /// file's is kept as it is and named in [`SyncReport::kept_local`], and the timestamp of
+    /// an action taken from the file stays the file's, never the time of the merge (stamped
+    /// now it would look like a local edit at the next sync, `BatchRepository.cs:83`).
+    /// Nothing is run; the commands are only kept.
+    ///
+    /// # Errors
+    ///
+    /// [`LibraryError::Format`] or [`LibraryError::TooManyActions`]; the library is untouched.
+    pub fn sync_merge(&mut self, json: &str) -> Result<SyncReport, LibraryError> {
+        let actions = Self::parse_actions(json)?;
+        if Self::too_many_actions(&actions) {
+            return Err(LibraryError::TooManyActions);
+        }
+        let mut report = SyncReport::default();
+        for mut action in actions {
+            if let Some(issue) = Self::issue_of(&mut action, true) {
+                report.skipped += 1;
+                if report.first_skipped.is_none() {
+                    report.first_skipped =
+                        Some((library_transfer::shown_text(&action.title), issue));
+                }
+                continue;
+            }
+            action.is_user_created = true;
+            let now = now_text();
+            let Some(index) = self.position_of(&action) else {
+                if action.id.is_empty() {
+                    action.id = new_identity();
+                }
+                if action.public_id.is_empty() {
+                    action.public_id = new_identity();
+                }
+                action.created_at.get_or_insert_with(|| now.clone());
+                action.updated_at.get_or_insert(now);
+                report.touched.push(action.id.clone());
+                self.commands.push(action);
+                report.imported += 1;
+                continue;
+            };
+            let local = &self.commands[index];
+            action.id.clone_from(&local.id);
+            action.public_id.clone_from(&local.public_id);
+            if action.created_at.is_none() {
+                action.created_at.clone_from(&local.created_at);
+            }
+            if same_content(local, &action) {
+                continue;
+            }
+            // A missing timestamp reads as the oldest, as the C# `DateTime.MinValue`.
+            if stamp_of(local.updated_at.as_deref()) > stamp_of(action.updated_at.as_deref()) {
+                report
+                    .kept_local
+                    .push(library_transfer::shown_text(&local.title));
+                continue;
+            }
+            action.updated_at.get_or_insert(now);
+            report.touched.push(action.id.clone());
+            self.commands[index] = action;
+            report.updated += 1;
         }
         Ok(report)
     }
@@ -1755,6 +1861,36 @@ fn new_identity() -> String {
         |_| format!("user-{}", now_seconds()),
         |uuid| uuid_generator::format(uuid, UuidFormat::default()),
     )
+}
+
+/// Dates an action of a file. An import is an edit and is stamped now; our own file read back is
+/// not, and keeps the dates it was written with: Git synchronization keeps the copy that is
+/// newer, so a library re-dated at every start would always look newer than the repository's.
+fn stamp(action: &mut UserCommand, untrusted: bool) {
+    if untrusted {
+        action.updated_at = Some(now_text());
+    } else {
+        action.updated_at.get_or_insert_with(now_text);
+    }
+}
+
+/// When a timestamp of a file names; `None` for a missing or unreadable one, which reads as
+/// older than any.
+fn stamp_of(text: Option<&str>) -> Option<super::date_time::Instant> {
+    text.and_then(|text| super::date_time::parse_written(text, &|_| 0))
+        .map(|(instant, _)| instant)
+}
+
+/// Whether two copies of a command say the same, their timestamps apart: a copy edited and
+/// edited back is not a conflict.
+fn same_content(left: &UserCommand, right: &UserCommand) -> bool {
+    let plain = |command: &UserCommand| {
+        let mut command = command.clone();
+        command.updated_at = None;
+        command.created_at = None;
+        serde_json::to_value(&command).unwrap_or_default()
+    };
+    plain(left) == plain(right)
 }
 
 /// The seconds since the epoch.
