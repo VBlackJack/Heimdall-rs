@@ -355,8 +355,15 @@ fn a_level_in_a_file_is_raised_when_the_pattern_is_destructive_and_never_lowered
     ]}"#;
     let mut library = UserLibrary::default();
     library.import(json).expect("imported");
+    let ids = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
     assert_eq!(
-        library.raise_dangerous(|pattern| pattern.contains("rm -rf")),
+        library.raise_dangerous(&ids[1..], |pattern| pattern.contains("rm -rf")),
+        0,
+        "only the commands named"
+    );
+    assert_eq!(library.get("a").expect("a").level, Criticality::Info);
+    assert_eq!(
+        library.raise_dangerous(&ids, |pattern| pattern.contains("rm -rf")),
         1
     );
     assert_eq!(library.get("a").expect("a").level, Criticality::Dangerous);

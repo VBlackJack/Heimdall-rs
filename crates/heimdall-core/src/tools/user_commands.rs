@@ -760,12 +760,26 @@ fn check_value(
     // A value that parsed under the strict number shape (digits, one point, an exponent,
     // signs) cannot be syntax: `AddHours(-{hours})` with 24 is a number, whatever stands
     // around it. A string in the same place gets no such pass.
-    let is_number = matches!(kind.as_str(), "int" | "integer" | "number");
+    // On Linux a word that starts with a dash (`cmd -{n}`) is an option: there only plain
+    // digits pass (`1e5` would read as `-1e5`, an option's name).
+    let is_number = matches!(kind.as_str(), "int" | "integer" | "number")
+        && (platform != TemplatePlatform::Linux
+            || !dash_leads_slot(pattern, &parameter.name)
+            || judged.chars().all(|c| c.is_ascii_digit()));
     ensure(
         !holds_refused_characters(pattern, parameter, judged, platform)
             && (!typed || is_number || typed_fits_around(pattern, parameter, judged, platform)),
         || ValueError::Dangerous(label()),
     )
+}
+
+/// Whether the white-space delimited word of `pattern` around the placeholder of `name`
+/// starts with a dash.
+fn dash_leads_slot(pattern: &str, name: &str) -> bool {
+    let placeholder = placeholder_text(name);
+    pattern
+        .split_whitespace()
+        .any(|word| word.contains(&placeholder) && word.starts_with(OPTION_LEADING))
 }
 
 /// Whether `value` holds a `/` right after white space.
@@ -1347,6 +1361,8 @@ pub struct ImportReport {
     pub skipped: usize,
     /// The title of the first command left out and the rule it broke, to say why.
     pub first_skipped: Option<(String, command_library::CommandIssue)>,
+    /// The identities of the commands added or replaced.
+    pub touched: Vec<String>,
 }
 
 /// The user's commands.
@@ -1490,12 +1506,14 @@ impl UserLibrary {
                 action.id.clone_from(&self.commands[index].id);
                 action.public_id.clone_from(&self.commands[index].public_id);
                 action.updated_at = Some(now_text());
+                report.touched.push(action.id.clone());
                 self.commands[index] = action;
                 report.updated += 1;
             } else {
                 let now = now_text();
                 action.created_at.get_or_insert_with(|| now.clone());
                 action.updated_at = Some(now);
+                report.touched.push(action.id.clone());
                 self.commands.push(action);
                 report.imported += 1;
             }
@@ -1503,12 +1521,13 @@ impl UserLibrary {
         Ok(report)
     }
 
-    /// Raises to [`Criticality::Dangerous`] every command with a pattern `destructive` says
+    /// Raises to [`Criticality::Dangerous`] every command of `ids` with a pattern `destructive` says
     /// destroys data or stops a machine, whatever level a file gave it: a level in an imported
-    /// file is the file's claim, not a fact. Never lowers one. How many were raised.
-    pub fn raise_dangerous(&mut self, destructive: impl Fn(&str) -> bool) -> usize {
+    /// file is the file's claim, not a fact. Never lowers one, and leaves the other commands
+    /// of the library as their owner set them. How many were raised.
+    pub fn raise_dangerous(&mut self, ids: &[String], destructive: impl Fn(&str) -> bool) -> usize {
         let mut raised = 0;
-        for command in &mut self.commands {
+        for command in self.commands.iter_mut().filter(|c| ids.contains(&c.id)) {
             let hit = [
                 &command.windows_command_template,
                 &command.linux_command_template,

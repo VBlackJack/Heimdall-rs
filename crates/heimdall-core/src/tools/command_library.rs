@@ -45,9 +45,6 @@ use super::user_commands::{
 /// The files of the catalogue, in the order of their names; written by `build.rs`.
 const CATALOGUE_FILES: &[&str] = include!(concat!(env!("OUT_DIR"), "/command_catalogue_files.rs"));
 
-/// The one control character a pattern may hold.
-const TAB: char = '\t';
-
 /// The language the pivot text of a file is written in.
 pub const PIVOT_LANGUAGE: &str = "en";
 
@@ -536,11 +533,7 @@ pub fn validate_import(command: &UserCommand) -> Option<CommandIssue> {
         return Some(issue);
     }
     for (platform, template) in templates(command) {
-        if template
-            .command_pattern
-            .chars()
-            .any(|c| c != TAB && c.is_control())
-        {
+        if template.command_pattern.chars().any(|c| c.is_control()) {
             return Some(CommandIssue::PatternMultiline(platform));
         }
     }

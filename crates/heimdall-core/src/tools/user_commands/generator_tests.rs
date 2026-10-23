@@ -1726,3 +1726,16 @@ fn a_number_in_an_expression_slot_generates_and_a_string_there_does_not() {
         "a string cannot use the slot of a number: {result:?}"
     );
 }
+
+#[test]
+fn a_number_in_a_word_that_starts_with_a_dash_on_linux_takes_digits_only() {
+    let mut n = of_kind("n", "number");
+    n.default_value = Some("5".to_owned());
+    assert!(render(LINUX, "cmd -{n}", vec![n.clone()], &[]).is_ok());
+    let result = render(LINUX, "cmd -{n}", vec![n.clone()], &[("n", "1e5")]);
+    assert!(
+        matches!(result, Err(GenerateError::Values(_))),
+        "{result:?}"
+    );
+    assert!(render(LINUX, "cmd {n}", vec![n], &[("n", "1e5")]).is_ok());
+}

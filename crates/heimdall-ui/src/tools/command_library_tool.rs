@@ -59,9 +59,6 @@ const MAX_AWAITED: usize = 8;
 /// The separator of several terminal names in one line.
 const NAME_SEPARATOR: &str = ", ";
 
-/// The one control character a command may hold.
-const TAB: char = '\t';
-
 /// What joins the tags of a command in the editor's field.
 const TAG_JOINER: &str = ", ";
 
@@ -521,8 +518,9 @@ impl CommandLibraryPane {
             Ok(report) => {
                 // A level in a file is its author's claim: a destructive pattern is
                 // dangerous whatever the file says.
-                self.library
-                    .raise_dangerous(|pattern| heimdall_app::dangerous_command(pattern).is_some());
+                self.library.raise_dangerous(&report.touched, |pattern| {
+                    heimdall_app::dangerous_command(pattern).is_some()
+                });
                 if self.keep(&before) {
                     self.notice = Some(Notice::Imported(report));
                 }
@@ -975,7 +973,7 @@ impl CommandLibraryPane {
             user_commands::generate(template, platform, |name| self.typed(reference, name))?;
         // A line break would submit the first line before the rest is read, whatever the
         // pattern's author meant: no copy, no send, no receipt for such a command.
-        if command.chars().any(|c| c != TAB && c.is_control()) {
+        if command.chars().any(|c| c.is_control()) {
             return Err(GenerateError::Multiline);
         }
         Ok(command)
