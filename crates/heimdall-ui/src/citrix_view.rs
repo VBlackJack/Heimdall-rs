@@ -188,15 +188,20 @@ pub fn view<'a>(
         .fold(Column::new().spacing(spacing::XS), |lines, line| {
             lines.push(text(line).size(font_size::BODY).style(text::secondary))
         });
-    card = card.push(details).push(
-        text(client_text(client))
-            .size(font_size::BODY)
-            .style(if failed { text::danger } else { text::default }),
-    );
+    card =
+        card.push(details).push(
+            text(client_text(client))
+                .size(font_size::BODY)
+                .style(if failed {
+                    styles::error_text
+                } else {
+                    text::default
+                }),
+        );
     if let Some(said) = terminate_text(offer) {
         let refused = matches!(offer, TerminateOffer::Force(result) if !result.accepted());
         card = card.push(text(said).size(font_size::BODY).style(if refused {
-            text::danger
+            styles::error_text
         } else {
             text::secondary
         }));

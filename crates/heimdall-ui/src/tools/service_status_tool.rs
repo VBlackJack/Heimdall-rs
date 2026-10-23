@@ -270,7 +270,7 @@ impl ServiceStatusPane {
             text(running_count.to_string())
                 .size(font_size::CAPTION)
                 .font(styles::SEMIBOLD)
-                .style(text::primary),
+                .style(styles::accent_text),
             text("|").size(font_size::CAPTION).style(text::secondary),
             text(fl!("ui-tool-services-stopped-label"))
                 .size(font_size::CAPTION)
@@ -278,7 +278,7 @@ impl ServiceStatusPane {
             text(stopped_count.to_string())
                 .size(font_size::CAPTION)
                 .font(styles::SEMIBOLD)
-                .style(text::danger),
+                .style(styles::error_text),
         ]
         .spacing(spacing::SM)
         .align_y(Alignment::Center);
@@ -287,9 +287,13 @@ impl ServiceStatusPane {
 
         if let Some(err) = &self.error {
             body = body.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
 
@@ -336,9 +340,9 @@ impl ServiceStatusPane {
             for s in matching.iter().take(MAX_DISPLAY_SERVICES) {
                 let is_running = s.status.eq_ignore_ascii_case("Running");
                 let status_style = if is_running {
-                    text::primary
+                    styles::accent_text
                 } else {
-                    text::danger
+                    styles::error_text
                 };
 
                 let name_clone = s.name.clone();

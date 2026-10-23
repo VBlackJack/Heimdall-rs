@@ -2155,7 +2155,11 @@ fn status_line<'a>(said: Option<(String, bool)>) -> Element<'a, Message> {
     match said {
         Some((said, error)) => text(said)
             .size(font_size::CAPTION)
-            .style(if error { text::danger } else { text::secondary })
+            .style(if error {
+                styles::error_text
+            } else {
+                text::secondary
+            })
             .into(),
         None => column![].into(),
     }
@@ -2219,7 +2223,7 @@ fn value_box<'a>(value: String) -> Element<'a, Message> {
             .font(BOX_FONT)
             .size(font_size::BODY_LARGE)
             .style(|theme: &iced::Theme| text::Style {
-                color: Some(theme.palette().primary),
+                color: Some(styles::accent_text_color(theme)),
             }),
     )
     .padding(INPUT_PADDING)

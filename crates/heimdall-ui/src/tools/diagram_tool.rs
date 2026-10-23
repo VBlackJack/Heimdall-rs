@@ -439,7 +439,7 @@ impl DiagramPane {
             row![
                 text(fl!("ui-tool-diagram-confirm-replace"))
                     .size(font_size::BODY)
-                    .style(text::danger),
+                    .style(styles::error_text),
                 super::action_button(
                     fl!("ui-tool-diagram-replace"),
                     true,

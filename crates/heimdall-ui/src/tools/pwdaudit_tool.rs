@@ -195,10 +195,10 @@ impl PwdAuditPane {
     fn score_color(label: ScoreLabel, theme: &Theme) -> Color {
         let palette = theme.extended_palette();
         match label {
-            ScoreLabel::Weak => palette.danger.base.color,
+            ScoreLabel::Weak => styles::error_text_color(theme),
             ScoreLabel::Fair => palette.warning.strong.color,
-            ScoreLabel::Good => palette.warning.base.color,
-            ScoreLabel::Strong => palette.success.base.color,
+            ScoreLabel::Good => styles::warning_text_color(theme),
+            ScoreLabel::Strong => styles::success_text_color(theme),
         }
     }
 
@@ -298,12 +298,11 @@ impl PwdAuditPane {
                     .size(font_size::BODY)
                     .width(MARK_WIDTH)
                     .style(move |theme: &Theme| {
-                        let palette = theme.extended_palette();
                         text::Style {
                             color: Some(if passed {
-                                palette.success.base.color
+                                styles::success_text_color(theme)
                             } else {
-                                palette.danger.base.color
+                                styles::error_text_color(theme)
                             }),
                         }
                     }),

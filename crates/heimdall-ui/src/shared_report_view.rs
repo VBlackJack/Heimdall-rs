@@ -24,7 +24,7 @@
 use heimdall_app::shared_report::{ImportReport, ReportCheck, ReportEntry, SkipReason};
 use heimdall_app::shared_sessions::SourceState;
 use iced::widget::{Column, button, column, container, row, scrollable, text};
-use iced::{Color, Element, Length, Theme};
+use iced::{Element, Length, Theme};
 
 use crate::i18n::fl;
 use crate::shared_view::{source_label, source_notes};
@@ -37,9 +37,6 @@ const REPORT_WIDTH: f32 = 640.0;
 
 /// Tallest the list of findings grows before it scrolls.
 const LIST_HEIGHT: f32 = 360.0;
-
-/// Opacity of the veil under the report, as the other dialogs'.
-const VEIL_ALPHA: f32 = 0.7;
 
 /// The checks in the order a report lists them.
 const CHECKS: [ReportCheck; 5] = [
@@ -190,7 +187,7 @@ pub fn layer<'a>(
         .push(text(fl!("ui-shared-report-taken", count = state.sessions)).size(font_size::CAPTION));
     for (note, warning) in source_notes(state) {
         summary = summary.push(text(note).size(font_size::CAPTION).style(if warning {
-            text::warning
+            styles::warning_text
         } else {
             text::secondary
         }));
@@ -262,14 +259,8 @@ pub fn layer<'a>(
         container(card)
             .center(Length::Fill)
             .padding(spacing::LG)
-            .style(|_: &Theme| container::Style {
-                background: Some(
-                    Color {
-                        a: VEIL_ALPHA,
-                        ..Color::BLACK
-                    }
-                    .into(),
-                ),
+            .style(|theme: &Theme| container::Style {
+                background: Some(styles::scrim(theme).into()),
                 ..container::Style::default()
             }),
     )

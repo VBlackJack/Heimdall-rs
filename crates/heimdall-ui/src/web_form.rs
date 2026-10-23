@@ -63,7 +63,7 @@ pub fn address<'a>(
         card = card.push(
             text(fl!("ui-profile-web-http-warning"))
                 .size(font_size::CAPTION)
-                .style(text::warning),
+                .style(styles::warning_text),
         );
     }
     card.into()
@@ -92,6 +92,6 @@ pub fn opening<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
 pub fn gateway_hint<'a>() -> Element<'a, Message> {
     text(fl!("ui-profile-web-gateway-hint"))
         .size(font_size::CAPTION)
-        .style(text::warning)
+        .style(styles::warning_text)
         .into()
 }

@@ -148,7 +148,7 @@ impl Value {
             Self::Text { said, warning } => text(said)
                 .size(font_size::CAPTION)
                 .style(if warning {
-                    text::warning
+                    styles::warning_text
                 } else {
                     text::default
                 })
@@ -223,7 +223,7 @@ pub(crate) fn card_style(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(palette.background.weak.color.into()),
         border: iced::Border {
-            color: palette.background.strong.color,
+            color: crate::themes::derived(theme, crate::themes::Derived::BorderStrong),
             width: BORDER_WIDTH,
             radius: radius::SM.into(),
         },

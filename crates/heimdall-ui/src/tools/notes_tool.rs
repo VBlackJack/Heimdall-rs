@@ -496,7 +496,7 @@ impl NotesPane {
                 row![
                     text(fl!("ui-tool-notes-unsaved-blocked"))
                         .size(font_size::BODY)
-                        .style(text::danger),
+                        .style(styles::error_text),
                     super::action_button(
                         fl!("ui-tool-notes-retry"),
                         true,
@@ -518,7 +518,7 @@ impl NotesPane {
                 row![
                     text(fl!("ui-tool-notes-delete-confirm", title = title))
                         .size(font_size::BODY)
-                        .style(text::danger),
+                        .style(styles::error_text),
                     super::action_button(
                         fl!("ui-tool-notes-delete"),
                         true,

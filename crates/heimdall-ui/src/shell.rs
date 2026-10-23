@@ -271,9 +271,6 @@ const PALETTE_TOP: f32 = 80.0;
 /// hover time, WPF's default for the C# box.
 const SEARCH_TOOLTIP_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
-/// Opacity of the veil behind a dialog, as the C# `OverlayBackground` (`#B3000000`).
-const VEIL_ALPHA: f32 = 0.7;
-
 /// Widest the settings' cards grow, as the C# `SettingsContentMaxWidth`.
 const SETTINGS_WIDTH: f32 = 900.0;
 
@@ -412,14 +409,8 @@ fn tour_layer<'a>(tour: &crate::onboarding::Tour) -> Element<'a, Message> {
         container(crate::onboarding::card(tour))
             .center(Length::Fill)
             .padding(spacing::LG)
-            .style(|_: &Theme| container::Style {
-                background: Some(
-                    Color {
-                        a: VEIL_ALPHA,
-                        ..Color::BLACK
-                    }
-                    .into(),
-                ),
+            .style(|theme: &Theme| container::Style {
+                background: Some(styles::scrim(theme).into()),
                 ..container::Style::default()
             }),
     )
@@ -1485,7 +1476,7 @@ fn tab_badges<'a>(tab: &Tab, active: bool) -> Vec<Element<'a, Message>> {
         badges.push(
             text(fl!("ui-tab-recording-badge"))
                 .size(font_size::CAPTION)
-                .style(text::danger)
+                .style(styles::error_text)
                 .into(),
         );
     } else if tab.macro_playing.is_some() {
@@ -5289,11 +5280,7 @@ impl Shell {
                 background: Some(if locked {
                     theme.palette().background.into()
                 } else {
-                    Color {
-                        a: VEIL_ALPHA,
-                        ..Color::BLACK
-                    }
-                    .into()
+                    styles::scrim(theme).into()
                 }),
                 ..container::Style::default()
             }),
@@ -5900,7 +5887,7 @@ impl Shell {
                     .size(font_size::LARGE)
                     .font(styles::BOLD)
                     .style(|theme: &Theme| text::Style {
-                        color: Some(theme.extended_palette().primary.base.color),
+                        color: Some(styles::accent_text_color(theme)),
                     })
             )
             .padding(NAV_TITLE_PADDING),
@@ -6458,7 +6445,11 @@ impl Shell {
                 .on_input(on_input)
                 .on_submit(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .push(error.map(|error| text(error).size(font_size::CAPTION).style(text::danger)))
+        .push(error.map(|error| {
+            text(error)
+                .size(font_size::CAPTION)
+                .style(styles::error_text)
+        }))
         .spacing(2.0);
         Some(tree_view::indented(editor.into(), depth))
     }
@@ -8370,7 +8361,7 @@ impl Shell {
                 // What PowerShell's error meant, as the C# says it under the session.
                 if let Some(found) = tab.winrm_diagnostic {
                     ended = ended.push(
-                        container(text(texts::winrm_diagnostic(found)).style(text::danger))
+                        container(text(texts::winrm_diagnostic(found)).style(styles::error_text))
                             .padding(spacing::MD),
                     );
                 }
@@ -8429,7 +8420,7 @@ impl Shell {
         let badge = container(
             text(fl!("ui-local-admin-badge"))
                 .size(font_size::BADGE)
-                .style(text::danger)
+                .style(styles::error_text)
                 .wrapping(text::Wrapping::None),
         )
         .padding([0.0, spacing::XS])
@@ -8439,7 +8430,7 @@ impl Shell {
                 .spacing(spacing::SM)
                 .align_y(iced::Alignment::Center),
             if failed {
-                text(said).style(text::danger)
+                text(said).style(styles::error_text)
             } else {
                 text(said)
             },
@@ -8488,7 +8479,7 @@ impl Shell {
         let bar = match tab.retry {
             Some(retry) => countdown_bar(tab.id, retry),
             None => column![
-                text(texts::error(error)).style(text::danger),
+                text(texts::error(error)).style(styles::error_text),
                 self.failure_actions(tab, error)
                     .wrap()
                     .vertical_spacing(spacing::SM),
@@ -9053,10 +9044,10 @@ impl Shell {
                 match pane.tls {
                     Some(version) => text(fl!("ui-session-vnc-encrypted", version = version))
                         .size(font_size::CAPTION)
-                        .style(text::success),
+                        .style(styles::success_text),
                     None => text(fl!("ui-session-vnc-unencrypted"))
                         .size(font_size::CAPTION)
-                        .style(text::danger),
+                        .style(styles::error_text),
                 }
                 .into(),
             );
@@ -10364,7 +10355,7 @@ fn migration_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a,
                 detail = detail.as_str()
             ))
             .size(font_size::CAPTION)
-            .style(text::danger)
+            .style(styles::error_text)
             .into(),
         ),
         _ => {}
@@ -10384,7 +10375,7 @@ fn migration_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a,
                 detail = detail.as_str()
             ))
             .size(font_size::CAPTION)
-            .style(text::danger)
+            .style(styles::error_text)
             .into(),
         ),
         None => {}
@@ -10432,7 +10423,7 @@ fn settings_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, 
                 "ui-dialog-import-settings-unreadable",
                 detail = detail.as_str()
             ),
-            text::danger,
+            styles::error_text,
         ));
     }
     match &summary.preferences {
@@ -10459,7 +10450,7 @@ fn settings_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, 
                 "ui-dialog-import-preferences-failed",
                 detail = detail.as_str()
             ),
-            text::danger,
+            styles::error_text,
         )),
         None => {}
     }
@@ -10474,7 +10465,7 @@ fn settings_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, 
                     invalid = carried.invalid
                 ),
                 if carried.invalid > 0 {
-                    text::warning
+                    styles::warning_text
                 } else {
                     text::default
                 },
@@ -10485,7 +10476,7 @@ fn settings_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, 
                 "ui-dialog-import-certificates-failed",
                 detail = detail.as_str()
             ),
-            text::danger,
+            styles::error_text,
         )),
         _ => {}
     }
@@ -10521,7 +10512,7 @@ fn import_report_titled<'a>(
         content = content.push(
             text(fl!("ui-dialog-import-gateways-orphans-action"))
                 .size(font_size::CAPTION)
-                .style(text::warning),
+                .style(styles::warning_text),
         );
     }
     if !summary.skipped.is_empty() {
@@ -11254,7 +11245,7 @@ fn network_section<'a>(
             section_column = section_column.push(
                 text(fl!("ui-profile-winrm-https-off-by-gateway"))
                     .size(font_size::CAPTION)
-                    .style(text::warning),
+                    .style(styles::warning_text),
             );
         }
     }
@@ -11793,6 +11784,13 @@ fn options_section<'a>(
     tab
 }
 
+/// A line of caption size in the error colour: what a form says is wrong with an option.
+fn error_caption<'a>(said: String) -> iced::widget::Text<'a> {
+    text(said)
+        .size(font_size::CAPTION)
+        .style(styles::error_text)
+}
+
 /// The protocol's options, as its C# card; an RDP form's monitors among `monitors`, its
 /// wait after connecting left empty taking the settings' `resize_delay`.
 fn protocol_options<'a>(
@@ -11892,7 +11890,7 @@ fn protocol_options<'a>(
         }
     }
     for warning in option_warnings(draft) {
-        form = form.push(text(warning).size(font_size::CAPTION).style(text::danger));
+        form = form.push(error_caption(warning));
     }
     if draft.protocol == DraftProtocol::Local {
         form = form.push(crate::local_form::advanced(draft, |field| {
@@ -11900,11 +11898,7 @@ fn protocol_options<'a>(
         }));
     }
     if draft.protocol == DraftProtocol::Telnet {
-        form = form.push(
-            text(fl!("ui-profile-telnet-warning"))
-                .size(font_size::CAPTION)
-                .style(text::danger),
-        );
+        form = form.push(error_caption(fl!("ui-profile-telnet-warning")));
     }
 
     form
@@ -12065,7 +12059,7 @@ fn form_footer<'a>(draft: &ProfileDraft, error: Option<DraftError>) -> Element<'
         );
     }
     if let Some(error) = error {
-        footer = footer.push(text(texts::draft_error(error)).style(text::danger));
+        footer = footer.push(text(texts::draft_error(error)).style(styles::error_text));
     }
     // As in C#: Cancel, then Save; a profile is deleted from its menu.
     footer
@@ -12146,7 +12140,7 @@ fn winrm_transport<'a>(draft: &ProfileDraft) -> Column<'a, Message> {
                 https = heimdall_core::profile::DEFAULT_WINRM_HTTPS_PORT
             ))
             .size(font_size::CAPTION)
-            .style(text::danger),
+            .style(styles::error_text),
         );
     }
     transport
@@ -12597,7 +12591,7 @@ fn paste_dialog<'a>(
     let (severity, title, body, action, style) = match command {
         Some(command) => (
             Severity::Error,
-            dialog_parts::title(fl!("ui-dialog-paste-dangerous-title")).style(text::danger),
+            dialog_parts::title(fl!("ui-dialog-paste-dangerous-title")).style(styles::error_text),
             fl!(
                 "ui-dialog-paste-dangerous-body",
                 command = command.to_string()

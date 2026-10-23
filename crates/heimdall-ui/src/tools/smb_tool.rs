@@ -397,9 +397,9 @@ impl SmbPane {
 
         for finding in &res.findings {
             let (icon, color) = match finding.severity {
-                SmbFindingSeverity::Success => ("[OK]", palette.success.base.color),
-                SmbFindingSeverity::Warning => ("[WARN]", palette.warning.base.color),
-                SmbFindingSeverity::Critical => ("[CRIT]", palette.danger.base.color),
+                SmbFindingSeverity::Success => ("[OK]", styles::success_text_color(theme)),
+                SmbFindingSeverity::Warning => ("[WARN]", styles::warning_text_color(theme)),
+                SmbFindingSeverity::Critical => ("[CRIT]", styles::error_text_color(theme)),
                 SmbFindingSeverity::Info => ("[INFO]", palette.secondary.base.color),
             };
 

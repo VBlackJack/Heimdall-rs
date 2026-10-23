@@ -191,7 +191,7 @@ impl SshAuditPane {
             input_col = input_col.push(
                 text(err.as_str())
                     .size(font_size::CAPTION)
-                    .style(text::danger),
+                    .style(styles::error_text),
             );
         }
 
@@ -210,7 +210,7 @@ impl SshAuditPane {
             container(
                 text(fl!("ui-tool-sshaudit-parse-error"))
                     .size(font_size::BODY)
-                    .style(text::danger),
+                    .style(styles::error_text),
             )
             .padding(spacing::MD)
             .into()
@@ -224,7 +224,7 @@ impl SshAuditPane {
             text(&res.algorithm)
                 .size(font_size::BODY)
                 .font(styles::SEMIBOLD)
-                .style(text::primary),
+                .style(styles::accent_text),
         )
         .padding([4.0, 12.0])
         .style(move |t: &Theme| {
@@ -252,19 +252,16 @@ impl SshAuditPane {
             text(rating_text)
                 .size(font_size::BODY)
                 .font(styles::SEMIBOLD)
-                .style(move |t: &Theme| {
-                    let palette = t.extended_palette();
-                    match rating {
-                        SecurityRating::Strong => text::Style {
-                            color: Some(palette.success.base.color),
-                        },
-                        SecurityRating::Acceptable => text::Style {
-                            color: Some(palette.warning.base.color),
-                        },
-                        SecurityRating::Weak | SecurityRating::Deprecated => text::Style {
-                            color: Some(palette.danger.base.color),
-                        },
-                    }
+                .style(move |t: &Theme| match rating {
+                    SecurityRating::Strong => text::Style {
+                        color: Some(styles::success_text_color(t)),
+                    },
+                    SecurityRating::Acceptable => text::Style {
+                        color: Some(styles::warning_text_color(t)),
+                    },
+                    SecurityRating::Weak | SecurityRating::Deprecated => text::Style {
+                        color: Some(styles::error_text_color(t)),
+                    },
                 }),
         )
         .padding([4.0, 12.0])
@@ -367,11 +364,9 @@ impl SshAuditPane {
 
         for finding in &res.findings {
             let (mark, mark_color) = match finding.severity {
-                FindingSeverity::Pass => (PASS_MARK, theme.extended_palette().success.base.color),
-                FindingSeverity::Warning => {
-                    (WARN_MARK, theme.extended_palette().warning.base.color)
-                }
-                FindingSeverity::Fail => (FAIL_MARK, theme.extended_palette().danger.base.color),
+                FindingSeverity::Pass => (PASS_MARK, styles::success_text_color(theme)),
+                FindingSeverity::Warning => (WARN_MARK, styles::warning_text_color(theme)),
+                FindingSeverity::Fail => (FAIL_MARK, styles::error_text_color(theme)),
             };
 
             let finding_text = match finding.kind {

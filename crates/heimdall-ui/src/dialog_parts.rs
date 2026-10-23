@@ -202,13 +202,17 @@ pub fn note<'a>(note: String) -> Text<'a> {
 
 /// Why what was typed is refused, as the C# dialogs' `ErrorMessage`: in the error colour.
 pub fn error<'a>(error: String) -> Text<'a> {
-    text(error).size(font_size::BODY).style(text::danger)
+    text(error).size(font_size::BODY).style(styles::error_text)
 }
 
 /// What holds a dialog back, as the C# vault and PIN dialogs show a lockout or what
 /// disabling the master password does: in the warning colour, on a card.
 pub fn warning_card<'a>(warning: String) -> Element<'a, Message> {
-    warning_panel(text(warning).size(font_size::BODY).style(text::warning))
+    warning_panel(
+        text(warning)
+            .size(font_size::BODY)
+            .style(styles::warning_text),
+    )
 }
 
 /// `content` on the card of [`warning_card`], for a warning with more than one line.

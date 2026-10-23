@@ -275,9 +275,13 @@ impl DnsBatchPane {
 
         if let Some(err) = &self.error {
             body = body.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
 
@@ -344,11 +348,11 @@ impl DnsBatchPane {
                 let status_cell = match r.status {
                     DnsBatchItemStatus::Resolved => text(fl!("ui-tool-dnsbatch-status-resolved"))
                         .size(font_size::BODY)
-                        .style(text::success)
+                        .style(styles::success_text)
                         .width(Length::Fixed(90.0)),
                     DnsBatchItemStatus::Failed => text(fl!("ui-tool-dnsbatch-status-failed"))
                         .size(font_size::BODY)
-                        .style(text::danger)
+                        .style(styles::error_text)
                         .width(Length::Fixed(90.0)),
                     DnsBatchItemStatus::Pending => text(fl!("ui-tool-dnsbatch-status-pending"))
                         .size(font_size::BODY)

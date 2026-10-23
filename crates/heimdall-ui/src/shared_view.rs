@@ -170,7 +170,7 @@ pub fn section(app: &heimdall_app::App) -> Option<Element<'_, Message>> {
         );
         for (note, warning) in source_notes(state) {
             list = list.push(text(note).size(font_size::SMALL_CAPTION).style(if warning {
-                text::warning
+                styles::warning_text
             } else {
                 text::secondary
             }));

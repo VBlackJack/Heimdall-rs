@@ -268,10 +268,10 @@ impl Shell {
         {
             heimdall_app::tunnel::TunnelBadge::Hidden => return None,
             heimdall_app::tunnel::TunnelBadge::Healthy => {
-                (fl!("ui-tab-route-badge-healthy"), text::success)
+                (fl!("ui-tab-route-badge-healthy"), styles::success_text)
             }
             heimdall_app::tunnel::TunnelBadge::Unhealthy => {
-                (fl!("ui-tab-route-badge-unhealthy"), text::warning)
+                (fl!("ui-tab-route-badge-unhealthy"), styles::warning_text)
             }
         };
         Some(

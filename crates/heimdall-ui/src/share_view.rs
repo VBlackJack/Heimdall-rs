@@ -173,7 +173,7 @@ pub fn dialog(form: &ShareForm) -> Element<'_, Message> {
     let problem = form.problem();
     let mut content = column![
         dialog_parts::note(fl!("ui-share-description")),
-        text(fl!("ui-share-warning")).style(text::warning),
+        text(fl!("ui-share-warning")).style(styles::warning_text),
         column![
             dialog_parts::dialog_label(fl!("ui-share-folder-label")),
             row![
@@ -245,7 +245,7 @@ pub fn started(info: &ShareInfo) -> Element<'_, Message> {
             minutes = minutes
         )),
         text(info.address_text()).font(Font::MONOSPACE),
-        text(fl!("ui-share-warning")).style(text::warning),
+        text(fl!("ui-share-warning")).style(styles::warning_text),
     ]
     .spacing(spacing::SM);
     dialog_parts::form(

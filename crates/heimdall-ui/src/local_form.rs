@@ -94,7 +94,7 @@ fn run_as_administrator<'a>(draft: &ProfileDraft) -> Option<Element<'a, Message>
     } else {
         text(fl!("ui-profile-local-run-as-admin-windows-only"))
             .size(font_size::CAPTION)
-            .style(text::danger)
+            .style(styles::error_text)
     };
     Some(
         column![

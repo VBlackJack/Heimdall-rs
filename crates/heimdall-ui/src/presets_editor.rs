@@ -122,7 +122,7 @@ impl PresetsEditor {
                     height = FIXED_HEIGHT_MAX
                 ))
                 .size(font_size::CAPTION)
-                .style(text::danger),
+                .style(styles::error_text),
             );
         }
         card.push(row![

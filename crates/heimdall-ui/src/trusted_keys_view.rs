@@ -623,7 +623,7 @@ pub fn unreadable<'a>(keys: &heimdall_app::TrustedKeys) -> Option<Element<'a, Me
     Some(
         text(fl!("ui-trusted-keys-unreadable", detail = detail))
             .size(font_size::CAPTION)
-            .style(text::danger)
+            .style(styles::error_text)
             .into(),
     )
 }
