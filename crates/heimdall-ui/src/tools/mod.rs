@@ -116,7 +116,7 @@ pub use certgen_tool::{
 };
 pub use chmod_tool::ChmodMessage;
 pub use command_library_tool::CommandLibraryMessage;
-pub use context::{inherited_context, inherited_host, tab_title, titled};
+pub use context::{inherited_context, inherited_host, session_message, tab_title, titled};
 pub use cron_job_tool::CronJobMessage;
 pub use crontab_tool::{CronOption, CrontabMessage};
 pub use cve_tool::{CveMessage, Outcome as CveOutcome};
@@ -1650,6 +1650,12 @@ impl ToolPanes {
                             dangerous,
                         },
                     ))),
+                    // Typed at the prompt, no Enter: nothing to agree to.
+                    command_library_tool::Outcome::Insert { target, command } => {
+                        Task::done(Message::App(heimdall_app::Message::Tools(
+                            heimdall_app::ToolsMessage::InsertCommand { target, command },
+                        )))
+                    }
                     command_library_tool::Outcome::Broadcast {
                         targets,
                         command,

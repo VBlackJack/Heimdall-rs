@@ -564,6 +564,7 @@ fn audit_message(host: &str, port: u16) -> Message {
         host: Some(host.to_owned()),
         port: Some(port),
         argument: None,
+        ..ToolContext::default()
     };
     Message::App(AppMessage::Tools(ToolsMessage::Open {
         tool: ToolId::TlsAudit,

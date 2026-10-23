@@ -52,6 +52,7 @@ fn profile(id: &str, mode: SshMode, sftp: bool) -> SshProfile {
         session_logging: None,
         ssh_mode: mode,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }
 }
 

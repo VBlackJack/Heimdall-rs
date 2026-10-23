@@ -41,6 +41,7 @@ fn app(dir: &Path) -> App {
         host: "sw1.lab".to_owned(),
         port: 2323,
         session_logging: None,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

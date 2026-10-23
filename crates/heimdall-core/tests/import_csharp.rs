@@ -2381,3 +2381,41 @@ fn a_web_console_without_a_host_or_with_a_port_too_large_is_left_out() {
         ]
     );
 }
+
+#[test]
+fn the_far_end_os_of_a_profile_is_read_by_name_or_number_and_defaults_to_auto() {
+    use heimdall_core::profile::RemoteOs;
+    let read = |extra: &str| {
+        only_profile(
+            &servers(&format!(
+                r#"{{"id": "a", "remoteServer": "h", "connectionType": "SSH"{extra}}}"#
+            )),
+            None,
+        )
+        .remote_os
+    };
+    assert_eq!(read(""), RemoteOs::Auto, "a file that omits the key");
+    assert_eq!(read(r#", "remoteOs": "Windows""#), RemoteOs::Windows);
+    assert_eq!(read(r#", "remoteOs": "linux""#), RemoteOs::Linux);
+    assert_eq!(read(r#", "remoteOs": 1"#), RemoteOs::Windows);
+    assert_eq!(read(r#", "remoteOs": 2"#), RemoteOs::Linux);
+    assert_eq!(read(r#", "remoteOs": "Auto""#), RemoteOs::Auto);
+    assert_eq!(read(r#", "remoteOs": null"#), RemoteOs::Auto);
+    assert_eq!(read(r#", "remoteOs": "Plan9""#), RemoteOs::Auto);
+    assert_eq!(read(r#", "remoteOs": 7"#), RemoteOs::Auto);
+}
+
+#[test]
+fn a_telnet_profile_keeps_its_far_end_os_and_an_sftp_one_has_none() {
+    use heimdall_core::profile::RemoteOs;
+    let report = import(
+        &servers(
+            r#"{"id": "t", "remoteServer": "sw", "connectionType": "Telnet", "remoteOs": "Linux"},
+               {"id": "f", "remoteServer": "fs", "connectionType": "SFTP", "remoteOs": "Linux"}"#,
+        ),
+        None,
+    )
+    .expect("valid JSON");
+    assert_eq!(report.telnet[0].remote_os, RemoteOs::Linux);
+    assert_eq!(report.profiles[0].remote_os, RemoteOs::Auto);
+}

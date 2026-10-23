@@ -28,9 +28,9 @@ use crate::metadata::ProfileOrigin;
 use crate::post_connect::{OnFailure, PostConnectStep};
 use crate::profile::{
     Aspect, AudioPlayback, CitrixProfile, Forwards, FtpProfile, LocalArguments, LocalProfile,
-    RdpDefaults, RdpProfile, Resolution, SUGGESTED_RDP_TUNNEL_PORT, SUGGESTED_SSH_TUNNEL_PORT,
-    SUGGESTED_WINRM_TUNNEL_PORT, SshGateway, SshMode, SshProfile, TelnetProfile, ToolProfile,
-    VncProfile, WebProfile, WinRmProfile,
+    RdpDefaults, RdpProfile, RemoteOs, Resolution, SUGGESTED_RDP_TUNNEL_PORT,
+    SUGGESTED_SSH_TUNNEL_PORT, SUGGESTED_WINRM_TUNNEL_PORT, SshGateway, SshMode, SshProfile,
+    TelnetProfile, ToolProfile, VncProfile, WebProfile, WinRmProfile,
 };
 use crate::store::ProfileStore;
 
@@ -138,6 +138,9 @@ struct Entry {
     ssh_mode: Option<&'static str>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     ssh_x11_forwarding: bool,
+    /// The C# `RemoteOs` by name, written only when declared: absent is `Auto`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remote_os: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     socks_proxy_port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -415,6 +418,7 @@ fn ssh(profile: &SshProfile) -> Entry {
         ssh_compression: profile.compression,
         ssh_mode: (profile.ssh_mode == SshMode::External).then_some("External"),
         ssh_x11_forwarding: profile.x11_forwarding,
+        remote_os: remote_os_name(profile.remote_os),
         session_logging_override: profile.session_logging,
         post_connect_steps: profile.post_connect.steps.iter().map(step).collect(),
         ..server(
@@ -519,10 +523,17 @@ fn rdp(profile: &RdpProfile) -> Entry {
     with_forwards(server, &profile.forwards)
 }
 
+/// The name the C# JSON holds for a declared `RemoteOs`; nothing for `Auto`, which a C# file
+/// that omits the key reads as.
+fn remote_os_name(remote_os: RemoteOs) -> Option<&'static str> {
+    (!remote_os.is_auto()).then(|| remote_os.name())
+}
+
 fn telnet(profile: &TelnetProfile) -> Entry {
     Entry {
         telnet_port: Some(profile.port),
         session_logging_override: profile.session_logging,
+        remote_os: remote_os_name(profile.remote_os),
         ..server(
             &profile.id,
             &profile.name,

@@ -1207,6 +1207,7 @@ fn build_session(
             host: host.to_owned(),
             port,
             session_logging: None,
+            remote_os: heimdall_core::profile::RemoteOs::Auto,
         }),
         Protocol::Vnc => SharedTarget::Vnc(vnc_profile(&id, name, host, port)),
     };
@@ -1259,6 +1260,7 @@ fn ssh_profile(
         session_logging: None,
         ssh_mode: SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }
 }
 

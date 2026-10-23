@@ -38,9 +38,10 @@ use serde_json::Value;
 
 use super::user_commands::{
     CHOICE_TYPE, GenerateError, MAX_CATEGORY_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_PARAMETERS,
-    MAX_PATTERN_LENGTH, MAX_TAGS, MAX_TITLE_LENGTH, TemplatePlatform, UserCommand, UserPlatform,
-    UserTemplate, ValueError, generate,
+    MAX_PATTERN_LENGTH, MAX_TAGS, MAX_TITLE_LENGTH, TemplatePlatform, UserCommand, UserParameter,
+    UserPlatform, UserTemplate, ValueError, generate,
 };
+use crate::profile::RemoteOs;
 
 /// The files of the catalogue, in the order of their names; written by `build.rs`.
 const CATALOGUE_FILES: &[&str] = include!(concat!(env!("OUT_DIR"), "/command_catalogue_files.rs"));
@@ -367,6 +368,104 @@ pub fn on_platform(platform: UserPlatform, chosen: Option<UserPlatform>) -> bool
         UserPlatform::Linux => platform != UserPlatform::Windows,
         UserPlatform::Both => platform == UserPlatform::Both,
     })
+}
+
+/// The platform filter a session starts the library on, as the C# `AutoSelectPlatform`: the
+/// platform its far end runs, `None` (every platform) when it cannot be told.
+#[must_use]
+pub fn session_platform_filter(platform: RemoteOs) -> Option<UserPlatform> {
+    match platform {
+        RemoteOs::Linux => Some(UserPlatform::Linux),
+        RemoteOs::Windows => Some(UserPlatform::Windows),
+        RemoteOs::Auto => None,
+    }
+}
+
+/// The names that make a parameter take a host, as the C# `IsHostParameter`.
+const HOST_PARAMETER_NAMES: [&str; 10] = [
+    "host",
+    "hostname",
+    "target",
+    "targethost",
+    "computername",
+    "server",
+    "ip",
+    "ipaddress",
+    "remotehost",
+    "remotecomputer",
+];
+
+/// The names that make a parameter take the account a command acts as, as the C#
+/// `IsUserParameter`.
+const USER_PARAMETER_NAMES: [&str; 5] = ["user", "username", "login", "account", "samaccountname"];
+
+/// The types that take a host whatever their name is called.
+const HOST_PARAMETER_TYPES: [&str; 2] = ["hostname", "ipaddress"];
+
+/// Whether `parameter` is one a session's host can fill: of a host type, or named as a host.
+/// An `ipaddress` one is only filled by an address, never a name (the C# `CanPrefillTargetHost`).
+#[must_use]
+pub fn is_host_parameter(parameter: &UserParameter) -> bool {
+    let kind = parameter.kind.trim().to_lowercase();
+    let name = parameter.name.trim().to_lowercase();
+    HOST_PARAMETER_TYPES.contains(&kind.as_str()) || HOST_PARAMETER_NAMES.contains(&name.as_str())
+}
+
+/// Whether `parameter` is one a session's user name can fill, by its name alone: no
+/// parameter type says "user" (the C# `IsUserParameter`).
+#[must_use]
+pub fn is_user_parameter(parameter: &UserParameter) -> bool {
+    USER_PARAMETER_NAMES.contains(&parameter.name.trim().to_lowercase().as_str())
+}
+
+/// What the session the library was opened for gives `parameter` to start with, as the C#
+/// `GetInitialParameterValue`: its host for a host parameter (an address only, for one of type
+/// `ipaddress`), else its user name for a user parameter; nothing otherwise, and nothing for
+/// a value that is blank. It only supplies a value: the generator still quotes and checks it as
+/// it checks one typed.
+#[must_use]
+pub fn session_value(
+    parameter: &UserParameter,
+    host: Option<&str>,
+    user: Option<&str>,
+) -> Option<String> {
+    let given = |value: Option<&str>| {
+        value
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    if let Some(host) = given(host)
+        && is_host_parameter(parameter)
+        && (!parameter.kind.trim().eq_ignore_ascii_case("ipaddress")
+            || host.parse::<std::net::IpAddr>().is_ok())
+    {
+        return Some(host);
+    }
+    if is_user_parameter(parameter) {
+        return given(user);
+    }
+    None
+}
+
+/// The most characters of a command a row shows under its title, as the C#
+/// `CommandPreviewText.MaxLength`.
+pub const PREVIEW_MAX_CHARS: usize = 96;
+
+/// What a row shows of a command it was cut after.
+const PREVIEW_ELLIPSIS: &str = "...";
+
+/// The command on one line for a row, cut at [`PREVIEW_MAX_CHARS`] with an ellipsis when it
+/// was longer, as the C# `CommandPreviewText.ToPreview`.
+#[must_use]
+pub fn command_preview(command: &str) -> String {
+    let line = command.replace("\r\n", " ").replace(['\r', '\n'], " ");
+    if line.chars().count() > PREVIEW_MAX_CHARS {
+        let cut: String = line.chars().take(PREVIEW_MAX_CHARS).collect();
+        format!("{cut}{PREVIEW_ELLIPSIS}")
+    } else {
+        line
+    }
 }
 
 /// Whether `query` is in the command's title, description, tags, `category` (as the window

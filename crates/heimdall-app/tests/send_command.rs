@@ -22,10 +22,10 @@ use std::sync::{Arc, Mutex};
 
 use heimdall_app::tools::{ToolContext, ToolId};
 use heimdall_app::{
-    App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, InputSink, Message, TabId,
-    ToolsMessage,
+    App, AppConfig, AttemptId, ConnectionEvent, Delivery, Dialog, Effect, InputSink, Message,
+    Phase, TabId, ToolsMessage,
 };
-use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_core::profile::{ProfileId, SshProfile, VncProfile};
 use heimdall_core::store::ProfileStore;
 use heimdall_ssh::{AgentSource, SessionClosed, TerminalSize};
 use heimdall_term::GridSize;
@@ -77,6 +77,19 @@ fn app(dir: &Path) -> App {
         session_logging: None,
         ssh_mode: heimdall_core::profile::SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
+    }]);
+    store.merge_vnc([VncProfile {
+        id: ProfileId::new("screen"),
+        name: "Screen".to_owned(),
+        group: None,
+        host: "screen.lab".to_owned(),
+        port: 5900,
+        view_only: false,
+        allow_no_password: true,
+        require_tls: false,
+        username: None,
+        vault_entry: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -310,4 +323,133 @@ fn a_command_sent_leaves_one_receipt_for_the_history() {
         (receipts[0].tab, receipts[0].command.as_str()),
         (tab, "uptime")
     );
+}
+
+fn insert(app: &mut App, target: TabId, command: &str) {
+    app.update(Message::Tools(ToolsMessage::InsertCommand {
+        target,
+        command: command.to_owned(),
+    }));
+}
+
+#[test]
+fn an_inserted_command_is_typed_at_the_prompt_with_no_enter_and_no_question() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, sink) = session(&mut app, true);
+    insert(&mut app, tab, "uptime");
+    assert_eq!(app.dialog, None, "nothing runs, so nothing is asked");
+    assert_eq!(sink.taken(), "uptime", "no Enter after it");
+    let receipts = app.take_sent_commands();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(
+        (
+            receipts[0].tab,
+            receipts[0].command.as_str(),
+            receipts[0].delivery
+        ),
+        (tab, "uptime", Delivery::Inserted)
+    );
+    // A send of the same text is told apart: it submits, and its receipt says so.
+    send(&mut app, tab, "uptime");
+    app.update(Message::ConfirmDialog);
+    assert_eq!(sink.taken(), "uptime\r");
+    assert_eq!(app.take_sent_commands()[0].delivery, Delivery::Run);
+}
+
+#[test]
+fn a_destructive_command_is_inserted_without_the_dangerous_question() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, sink) = session(&mut app, true);
+    insert(&mut app, tab, "rm -rf /var/tmp/cache");
+    assert_eq!(app.dialog, None);
+    assert_eq!(sink.taken(), "rm -rf /var/tmp/cache");
+}
+
+#[test]
+fn an_insert_goes_through_the_same_paste_encoding_as_a_send() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt): (TabId, AttemptId) = match app
+        .update(Message::OpenProfile(ProfileId::new("web")))
+        .as_slice()
+    {
+        [Effect::Connect { tab, attempt, .. }] => (*tab, *attempt),
+        other => panic!("{other:?}"),
+    };
+    let sink = Arc::new(RecordingSink::default());
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Connected {
+            input: sink.clone(),
+        },
+    });
+    // The shell asked for bracketed paste: the command is wrapped, and still has no Enter.
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Output(b"[?2004h".to_vec()),
+    });
+    insert(&mut app, tab, "ls -l");
+    assert_eq!(sink.taken(), "\x1b[200~ls -l\x1b[201~");
+}
+
+#[test]
+fn an_insert_refuses_what_a_send_refuses() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, sink) = session(&mut app, true);
+    for command in [
+        "ls\nrm -rf x",
+        "ls\r",
+        "  ",
+        "",
+        "a\u{1b}[2Jb",
+        "a\tb",
+        "a\u{7f}b",
+    ] {
+        insert(&mut app, tab, command);
+        assert_eq!(sink.taken(), "", "{command:?}");
+    }
+    assert!(app.take_sent_commands().is_empty());
+}
+
+#[test]
+fn an_insert_reaches_only_a_terminal_that_takes_input() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (connecting, connecting_sink) = session(&mut app, false);
+    insert(&mut app, connecting, "uptime");
+    assert_eq!(connecting_sink.taken(), "", "not connected");
+    app.update(Message::Tools(ToolsMessage::Open {
+        tool: ToolId::CmdLib,
+        title: "CMDLIB".to_owned(),
+        context: ToolContext::default(),
+    }));
+    let tool = app.tabs.last().expect("the tool's tab").id;
+    insert(&mut app, tool, "uptime");
+    assert!(app.take_sent_commands().is_empty(), "a tool is no terminal");
+    // A closed terminal is not replaced by another.
+    let (closed, sink) = session(&mut app, true);
+    app.tabs.retain(|each| each.id != closed);
+    insert(&mut app, closed, "uptime");
+    assert_eq!(sink.taken(), "");
+    assert!(app.take_sent_commands().is_empty());
+}
+
+#[test]
+fn an_insert_never_reaches_a_remote_desktop() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::OpenVnc(ProfileId::new("screen")));
+    let id = app.tabs.last().expect("the desktop's tab").id;
+    // Even once connected, a desktop is no terminal: it is not offered, and refused.
+    app.tabs.last_mut().expect("tab").phase = Phase::Connected;
+    assert!(app.send_targets().iter().all(|each| each.tab != id));
+    insert(&mut app, id, "uptime");
+    assert!(app.take_sent_commands().is_empty());
+    send(&mut app, id, "uptime");
+    assert_eq!(app.dialog, None);
 }

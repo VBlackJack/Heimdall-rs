@@ -96,6 +96,7 @@ fn app(dir: &Path, ftp_port: u16) -> App {
         session_logging: None,
         ssh_mode: heimdall_core::profile::SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.merge_ftp([FtpProfile {
         id: ProfileId::new("files"),

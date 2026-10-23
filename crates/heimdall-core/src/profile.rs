@@ -155,6 +155,11 @@ pub struct SshProfile {
     /// forwards them in a tab as in `PuTTY`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub x11_forwarding: bool,
+    /// The operating system of the far end, as the C# `RemoteOs`: `Auto` keeps the guess from
+    /// the protocol (SSH reads as Linux); written down only when declared. An SFTP profile
+    /// opens no prompt and keeps `Auto`.
+    #[serde(default, skip_serializing_if = "RemoteOs::is_auto")]
+    pub remote_os: RemoteOs,
 }
 
 /// Where an SSH profile's shell opens, as the C# `SshMode`.
@@ -194,6 +199,62 @@ impl SshMode {
             .into_iter()
             .find(|mode| mode.name().eq_ignore_ascii_case(name.trim()))
             .unwrap_or_default()
+    }
+}
+
+/// The operating system a profile declares for the far end of its connection, as the C#
+/// `RemoteOs` (`Heimdall.Core/Configuration/RemoteOs.cs`).
+///
+/// [`RemoteOs::Auto`] is the default and means "not declared": a profile saved before the field
+/// existed, and every profile an importer builds, reads as `Auto` and keeps the guess made from
+/// the protocol.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteOs {
+    /// Not declared: the platform is guessed from the protocol.
+    #[default]
+    Auto,
+    /// The far end runs Windows.
+    Windows,
+    /// The far end runs Linux or another POSIX system.
+    Linux,
+}
+
+impl RemoteOs {
+    /// Every choice, in the order of the C# list.
+    pub const ALL: [Self; 3] = [Self::Auto, Self::Windows, Self::Linux];
+
+    /// Whether it is [`RemoteOs::Auto`], the default.
+    #[must_use]
+    pub fn is_auto(&self) -> bool {
+        *self == Self::Auto
+    }
+
+    /// The name the C# JSON holds (`JsonStringEnumConverter`).
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Windows => "Windows",
+            Self::Linux => "Linux",
+        }
+    }
+
+    /// The choice named `name`, whatever its case; `Auto` for a name not known, as a C# file
+    /// that omits the key reads.
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|choice| choice.name().eq_ignore_ascii_case(name.trim()))
+            .unwrap_or_default()
+    }
+
+    /// The platform that fits a session: what is declared when it is, else `guess`, the one
+    /// the protocol suggests (`RemoteOsResolver.Resolve`). `Auto` when neither says.
+    #[must_use]
+    pub fn or(self, guess: Self) -> Self {
+        if self.is_auto() { guess } else { self }
     }
 }
 
@@ -325,6 +386,7 @@ impl SshGateway {
             session_logging: None,
             ssh_mode: SshMode::Embedded,
             x11_forwarding: false,
+            remote_os: RemoteOs::Auto,
         }
     }
 }
@@ -1252,6 +1314,10 @@ pub struct TelnetProfile {
     /// follows the Settings page's session logging, `Some` decides for this profile alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_logging: Option<bool>,
+    /// The operating system of the far end, as the C# `RemoteOs`: `Auto` leaves the platform
+    /// undetermined, a Telnet server being anything; written down only when declared.
+    #[serde(default, skip_serializing_if = "RemoteOs::is_auto")]
+    pub remote_os: RemoteOs,
 }
 
 /// A saved `WinRM` destination: a remote `PowerShell` session on a Windows server.
