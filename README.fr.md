@@ -33,6 +33,7 @@ embarqué.
 Vous venez du Heimdall C# ? Voir [Passer de Heimdall (C#) à Heimdall-rs](docs/fr/migration-from-csharp.md).
 Une équipe sur MobaXterm ? Voir [Sources de sessions partagées MobaXterm](docs/fr/MOBAXTERM-SHARED-SESSIONS.md).
 Partager la bibliothèque de commandes par Git ? Voir [Bibliothèque de commandes : synchronisation Git](docs/fr/command-library-git-sync.md).
+Alléger un poste Windows personnel ? Voir [Pack de nettoyage d'un poste Windows](docs/fr/windows-debloat-pack.md).
 
 ## Organisation
 
