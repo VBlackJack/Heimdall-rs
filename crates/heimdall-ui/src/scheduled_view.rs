@@ -34,6 +34,8 @@ use iced::{Alignment, Element, Length};
 
 use crate::dialog_parts::{self, Severity};
 use crate::i18n::fl;
+use crate::icons::Icon;
+use crate::launchpad;
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
@@ -89,22 +91,17 @@ pub fn page(app: &App) -> Element<'_, Message> {
     .align_y(Alignment::Center);
     let tasks = app.scheduled_tasks();
     let body: Element<'_, Message> = if tasks.is_empty() {
-        // As the C# empty state: a sentence and its own Add.
-        container(
-            column![
-                text(fl!("ui-scheduled-empty"))
-                    .size(font_size::LARGE)
-                    .style(text::secondary),
-                button(text(fl!("ui-scheduled-empty-add")))
-                    .padding(crate::tokens::BUTTON_PADDING)
-                    .style(styles::primary)
-                    .on_press(scheduled(ScheduledMessage::Add)),
-            ]
-            .spacing(spacing::SM)
-            .align_x(Alignment::Center),
+        // As the C# empty state (`5b97e7b7`): the shared card, its icon, its title, its Add.
+        launchpad::tab_empty(
+            Icon::ToolCrontab,
+            fl!("ui-scheduled-empty"),
+            None,
+            button(text(fl!("ui-scheduled-empty-add")))
+                .padding(crate::tokens::BUTTON_PADDING)
+                .style(styles::primary)
+                .on_press(scheduled(ScheduledMessage::Add))
+                .into(),
         )
-        .center(Length::Fill)
-        .into()
     } else {
         let rows = Column::new()
             .spacing(spacing::XS)

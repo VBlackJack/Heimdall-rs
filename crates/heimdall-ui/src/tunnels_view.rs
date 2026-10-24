@@ -31,6 +31,8 @@ use iced::{Alignment, Border, Element, Font, Length, Theme};
 
 use crate::ellipsis::{self, Ellipsis};
 use crate::i18n::fl;
+use crate::icons::Icon;
+use crate::launchpad;
 use crate::shell::Message;
 use crate::styles;
 use crate::texts;
@@ -327,21 +329,52 @@ pub fn page<'a>(
     ]
     .spacing(spacing::SM)
     .align_y(Alignment::Center);
-    let body = rows(tunnels, routes, Place::Page { selected });
-    // As the C# page's link under the grid.
-    let manage = button(text(fl!("ui-tunnels-manage-gateways")))
-        .style(styles::subtle)
-        .on_press(Message::ManageGateways);
-    container(
-        column![header, columns(true), rule::horizontal(1), body, manage]
+    let manage = || {
+        button(text(fl!("ui-tunnels-manage-gateways")))
+            .style(styles::subtle)
+            .on_press(Message::ManageGateways)
+    };
+    let content: Element<'a, Message> = if page_is_empty(tunnels, routes) {
+        // As the C# page (`5b97e7b7`): the shared card, the gateways link as its hint, New as
+        // its action; no header row over nothing.
+        column![
+            header,
+            launchpad::tab_empty(
+                Icon::Lightning,
+                fl!("ui-tunnels-empty"),
+                Some(manage().into()),
+                button(text(fl!("ui-tunnels-new")))
+                    .padding(crate::tokens::BUTTON_PADDING)
+                    .style(styles::primary)
+                    .on_press(tunnel(TunnelMessage::New))
+                    .into(),
+            ),
+        ]
+        .spacing(spacing::SM)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    } else {
+        let body = rows(tunnels, routes, Place::Page { selected });
+        // As the C# page's link under the grid.
+        column![header, columns(true), rule::horizontal(1), body, manage()]
             .spacing(spacing::SM)
             .width(Length::Fill)
-            .height(Length::Fill),
-    )
-    .padding(PAGE_PADDING)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+            .height(Length::Fill)
+            .into()
+    };
+    container(content)
+        .padding(PAGE_PADDING)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+/// Whether the Tunnels page has nothing to list: no tunnel opened by hand and no session
+/// route, which the page lists under its own title.
+#[must_use]
+pub fn page_is_empty(tunnels: &[Tunnel], routes: &[SessionRoute]) -> bool {
+    tunnels.is_empty() && routes.is_empty()
 }
 
 /// Width of the "Started" column, as the C# grid's.

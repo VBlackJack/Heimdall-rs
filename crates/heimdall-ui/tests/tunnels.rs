@@ -315,6 +315,39 @@ fn the_tunnels_page_says_when_each_started_and_leads_to_the_gateways() {
 }
 
 #[test]
+fn an_empty_tunnels_page_is_the_shared_card_with_the_gateways_link_and_new() {
+    use heimdall_ui::shell::Destination;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path(), vec![bastion()]);
+    let _ = shell.update(Message::Navigate(Destination::Tunnels));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("No active tunnels").expect("the card's title");
+        // The grid's header means nothing over no row: the card stands alone.
+        assert!(ui.find("Started").is_err(), "no column header");
+        ui.click("Manage gateways in Settings...")
+            .expect("the card's hint, the gateways link");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::ManageGateways))
+        );
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("+ New")
+            .expect("the card's action, beside the header's");
+    }
+    opened_tunnel(&mut shell);
+    let mut ui = simulator(&shell);
+    assert!(
+        ui.find("No active tunnels").is_err(),
+        "a tunnel replaces the card"
+    );
+    ui.find("Started").expect("the grid is back");
+}
+
+#[test]
 fn a_session_through_a_gateway_says_so_on_its_tab_and_is_a_row_of_its_own_in_the_panel() {
     let dir = tempfile::tempdir().expect("dir");
     let profiles_file = dir.path().join("profiles.toml");
