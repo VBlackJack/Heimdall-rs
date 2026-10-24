@@ -6144,6 +6144,12 @@ ui-share-notice-failed-random = Aucun jeton d'accès n'a pu être créé
 ui-share-listing-index-of = Index de
 ui-share-listing-name = Nom
 ui-share-listing-size = Taille (octets)
+ui-share-listing-not-served = non servi : lien Windows ou espace réservé cloud
+ui-share-refused-count = { $count ->
+    [one] { $count } lien refusé
+   *[other] { $count } liens refusés
+}
+ui-share-refused-tooltip = Non servi (lien Windows ou espace réservé cloud), dernier : { $path }
 ui-profile-from-folder = Repris du dossier "{ $folder }".
 
 ## Copy output, secrets masked (Ctrl+Shift+M): the review dialog, its menu entry and its status words.
