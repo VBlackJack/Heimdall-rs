@@ -30,6 +30,7 @@ embedded web engine.
 Coming from the C# Heimdall? See [Moving from Heimdall (C#) to Heimdall-rs](docs/migration-from-csharp.md).
 Team on MobaXterm? See [MobaXterm shared session sources](docs/MOBAXTERM-SHARED-SESSIONS.md).
 Sharing the Command Library through Git? See [Command Library: Git synchronization](docs/command-library-git-sync.md).
+Stripping a personal Windows workstation? See [Windows workstation debloat pack](docs/windows-debloat-pack.md).
 
 ## Layout
 
