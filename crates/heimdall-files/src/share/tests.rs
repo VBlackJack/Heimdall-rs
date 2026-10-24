@@ -359,9 +359,9 @@ async fn a_refused_link_is_reported_as_such_without_the_token() {
         }
     }
     assert_eq!((seen[0].path.as_str(), seen[0].status), ("/alias", 403));
-    assert!(seen[0].link_refused);
+    assert_eq!(seen[0].link_refused.as_deref(), Some("/alias"));
     assert!(
-        !seen[1].link_refused,
+        seen[1].link_refused.is_none(),
         "an ordinary file is not a link refusal"
     );
     assert!(!seen[0].path.contains(&share.token));

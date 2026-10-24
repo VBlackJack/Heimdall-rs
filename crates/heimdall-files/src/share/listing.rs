@@ -23,9 +23,13 @@ use std::path::Path;
 
 use super::paths::{is_link, segment_allowed};
 
-/// Most entries a listing shows: a folder with more is cut, so a huge one cannot make the
-/// server build an unbounded page.
+/// Most servable entries a listing shows (links are capped apart, see [`MAX_LISTING_LINKS`]):
+/// a folder with more is cut, so a huge one cannot make the server build an unbounded page.
 pub const MAX_LISTING_ENTRIES: usize = 10_000;
+
+/// Most links a listing shows, counted apart from the entries: a folder full of links cannot
+/// push the files out of the page, nor make the page unbounded.
+pub const MAX_LISTING_LINKS: usize = 1_000;
 
 /// The words of a listing, in the user's language: the page is read in a browser.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,7 +69,18 @@ pub struct Entry {
 ///
 /// The folder cannot be read.
 pub fn read_entries(dir: &Path) -> std::io::Result<Vec<Entry>> {
+    read_entries_capped(dir, MAX_LISTING_ENTRIES, MAX_LISTING_LINKS)
+}
+
+/// [`read_entries`] with its two caps given: servable entries, then links.
+fn read_entries_capped(
+    dir: &Path,
+    max_served: usize,
+    max_links: usize,
+) -> std::io::Result<Vec<Entry>> {
     let mut entries = Vec::new();
+    let mut links = 0;
+    let mut served = 0;
     for item in std::fs::read_dir(dir)? {
         let Ok(item) = item else { continue };
         let Ok(name) = item.file_name().into_string() else {
@@ -78,6 +93,10 @@ pub fn read_entries(dir: &Path) -> std::io::Result<Vec<Entry>> {
             continue;
         }
         if is_link(&metadata) {
+            if links >= max_links {
+                continue;
+            }
+            links += 1;
             entries.push(Entry {
                 name,
                 is_dir: false,
@@ -85,16 +104,18 @@ pub fn read_entries(dir: &Path) -> std::io::Result<Vec<Entry>> {
                 not_served: true,
             });
         } else if metadata.is_dir() || metadata.is_file() {
+            if served >= max_served {
+                continue;
+            }
+            served += 1;
             entries.push(Entry {
                 name,
                 is_dir: metadata.is_dir(),
                 len: if metadata.is_dir() { 0 } else { metadata.len() },
                 not_served: false,
             });
-        } else {
-            continue;
         }
-        if entries.len() >= MAX_LISTING_ENTRIES {
+        if served >= max_served && links >= max_links {
             break;
         }
     }
@@ -324,5 +345,22 @@ mod tests {
             summary,
             [("b.txt", false), ("target", false), ("a-link", true)]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_do_not_count_toward_the_cap_of_servable_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        for index in 0..4 {
+            std::os::unix::fs::symlink("/nonexistent", dir.path().join(format!("l{index}")))
+                .unwrap();
+        }
+        for index in 0..3 {
+            std::fs::write(dir.path().join(format!("f{index}")), "x").unwrap();
+        }
+        let entries = read_entries_capped(dir.path(), 2, 3).unwrap();
+        let served = entries.iter().filter(|e| !e.not_served).count();
+        let links = entries.iter().filter(|e| e.not_served).count();
+        assert_eq!((served, links), (2, 3));
     }
 }

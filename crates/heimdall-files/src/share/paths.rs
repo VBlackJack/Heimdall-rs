@@ -227,6 +227,23 @@ pub fn resolve(root: &Path, segments: &[String]) -> Result<Resolved, PathError> 
     })
 }
 
+/// How many of `segments` lead to the first link under `root`, that link included: the part
+/// of a path that may be shown when it was refused for a link. All of them when no link is
+/// found (the link was swapped in after the walk), none below it ever.
+#[must_use]
+pub fn link_depth(root: &Path, segments: &[String]) -> usize {
+    let mut current = root.to_path_buf();
+    for (index, segment) in segments.iter().enumerate() {
+        current.push(segment);
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if is_link(&metadata) => return index + 1,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    segments.len()
+}
+
 /// `O_NOFOLLOW` of the platforms std gives no portable name for: opening a final component
 /// that is a symbolic link then fails instead of following it.
 #[cfg(all(
@@ -478,6 +495,21 @@ mod tests {
         assert_eq!(
             resolve(&root, &["out".to_owned(), "secret".to_owned()]).unwrap_err(),
             PathError::Link
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_depth_of_a_link_stops_at_the_link() {
+        let (_dir, root) = tree();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.join("out")).unwrap();
+        let path = ["out".to_owned(), "secret".to_owned(), "deeper".to_owned()];
+        assert_eq!(link_depth(&root, &path), 1);
+        assert_eq!(
+            link_depth(&root, &["a.txt".to_owned()]),
+            1,
+            "no link: all of it"
         );
     }
 

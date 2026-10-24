@@ -80,7 +80,8 @@ pub(super) struct ShareRun {
     /// Requests refused because their path goes through a link (symbolic link, junction,
     /// cloud placeholder), so that the bar can say so.
     link_refusals: u64,
-    /// The path of the last such request, as logged: no query, no content.
+    /// The path of the last such request up to the link, as logged: no query, nothing below
+    /// the link. The count is a lower bound: reports dropped from a full queue are not seen.
     last_link_refusal: Option<String>,
 }
 
@@ -223,9 +224,9 @@ impl App {
             }
             Some(ShareUpdate::Event(ShareEvent::Request(record))) => {
                 current.requests += 1;
-                if record.link_refused {
+                if let Some(link) = record.link_refused {
                     current.link_refusals += 1;
-                    current.last_link_refusal = Some(record.path);
+                    current.last_link_refusal = Some(link);
                 }
             }
             Some(ShareUpdate::Event(ShareEvent::Dropped(lost))) => current.requests += lost,
@@ -284,7 +285,8 @@ impl App {
     }
 
     /// How many requests the running share refused because their path goes through a link,
-    /// and the path of the last one (a name only, never a query or content).
+    /// and the path of the last one up to the link (never a query, content or what lies below
+    /// the link). The count is a lower bound when request reports were dropped.
     #[must_use]
     pub fn share_link_refusals(&self) -> Option<(u64, &str)> {
         let share = self.share.as_ref()?;

@@ -63,7 +63,7 @@ fn link_refusal() -> ShareUpdate {
         method: "GET".to_owned(),
         path: "/onedrive/report.docx".to_owned(),
         status: 403,
-        link_refused: true,
+        link_refused: Some("/onedrive".to_owned()),
     }))
 }
 
@@ -74,10 +74,7 @@ fn a_link_refusal_is_counted_with_its_path_only(app: &mut App, run: u64) {
     let update = Some(link_refusal());
     share(app, ShareMessage::Update { run, update });
     assert_eq!(app.share_requests(), before + 1);
-    assert_eq!(
-        app.share_link_refusals(),
-        Some((1, "/onedrive/report.docx"))
-    );
+    assert_eq!(app.share_link_refusals(), Some((1, "/onedrive")));
 }
 
 fn share(app: &mut App, message: ShareMessage) -> Vec<Effect> {
