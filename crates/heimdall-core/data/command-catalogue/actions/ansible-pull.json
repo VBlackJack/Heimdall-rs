@@ -1,0 +1,111 @@
+{
+  "id": "ansible-pull",
+  "title": "Run Ansible in pull mode",
+  "description": "Set up a system to fetch and run playbooks automatically from a Git repository",
+  "category": "services-automation",
+  "platform": 2,
+  "level": 2,
+  "tags": [
+    "ansible",
+    "pull",
+    "git",
+    "automation"
+  ],
+  "windowsCommandTemplateId": "ansible-pull-win",
+  "windowsCommandTemplate": {
+    "id": "ansible-pull-win",
+    "platform": 0,
+    "name": "ansible-pull",
+    "commandPattern": "ansible-pull -U {repoUrl} {playbookPath}",
+    "parameters": [
+      {
+        "name": "repoUrl",
+        "label": "Git repository URL",
+        "type": "string",
+        "defaultValue": "https://github.com/user/ansible-repo.git",
+        "required": true,
+        "description": "URL of the Git repository that holds the playbooks"
+      },
+      {
+        "name": "playbookPath",
+        "label": "Playbook",
+        "type": "string",
+        "defaultValue": "local.yml",
+        "required": true,
+        "description": "Name of the playbook to run"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "ansible-pull-linux",
+  "linuxCommandTemplate": {
+    "id": "ansible-pull-linux",
+    "platform": 1,
+    "name": "ansible-pull",
+    "commandPattern": "ansible-pull -U {repoUrl} {playbookPath}",
+    "parameters": [
+      {
+        "name": "repoUrl",
+        "label": "Git repository URL",
+        "type": "string",
+        "defaultValue": "https://github.com/user/ansible-repo.git",
+        "required": true,
+        "description": "URL of the Git repository"
+      },
+      {
+        "name": "playbookPath",
+        "label": "Playbook",
+        "type": "string",
+        "defaultValue": "local.yml",
+        "required": true,
+        "description": "Name of the playbook"
+      }
+    ]
+  },
+  "examples": [],
+  "notes": "Reverse pull mode: the servers fetch their configuration instead of being configured remotely. Ideal for large-scale environments.",
+  "links": [
+    {
+      "title": "Ansible Pull",
+      "url": "https://docs.ansible.com/ansible/latest/cli/ansible-pull.html"
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "ansible-pull -U https://github.com/user/repo.git",
+      "description": "Pull and run",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Exécuter Ansible en mode pull",
+      "description": "Configure un système pour récupérer et exécuter automatiquement des playbooks depuis un dépôt Git",
+      "notes": "Mode pull inversé : les serveurs récupèrent leur configuration au lieu d'être configurés à distance. Idéal pour les environnements à grande échelle.",
+      "parameters": {
+        "windows": {
+          "repoUrl": {
+            "label": "URL du dépôt Git",
+            "description": "URL du dépôt Git contenant les playbooks"
+          },
+          "playbookPath": {
+            "label": "Playbook",
+            "description": "Nom du playbook à exécuter"
+          }
+        },
+        "linux": {
+          "repoUrl": {
+            "label": "URL du dépôt Git",
+            "description": "URL du dépôt Git"
+          },
+          "playbookPath": {
+            "label": "Playbook",
+            "description": "Nom du playbook"
+          }
+        }
+      },
+      "examples": {
+        "ansible-pull -U https://github.com/user/repo.git": "Pull et exécuter"
+      }
+    }
+  }
+}

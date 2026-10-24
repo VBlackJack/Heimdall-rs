@@ -1,0 +1,77 @@
+{
+  "id": "unregister-scheduledtask",
+  "title": "Delete a scheduled task",
+  "description": "Delete a scheduled task from the Windows Task Scheduler",
+  "category": "services-automation",
+  "platform": 0,
+  "level": 1,
+  "tags": [
+    "taskscheduler",
+    "delete",
+    "remove",
+    "automation",
+    "windows"
+  ],
+  "windowsCommandTemplateId": "unregister-scheduledtask-cmd",
+  "windowsCommandTemplate": {
+    "id": "unregister-scheduledtask-cmd",
+    "platform": 0,
+    "name": "Unregister-ScheduledTask",
+    "commandPattern": "Unregister-ScheduledTask -TaskName '{taskname}' -Confirm:$false",
+    "parameters": [
+      {
+        "name": "taskname",
+        "label": "Task name",
+        "type": "string",
+        "quoting": "InlineInQuotes",
+        "defaultValue": "MyTask",
+        "required": true,
+        "description": "Name of the task to delete"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "Unregister-ScheduledTask -TaskName 'MyBackup' -Confirm:$false",
+      "description": "Delete the task without confirmation",
+      "platform": 0
+    },
+    {
+      "command": "Get-ScheduledTask -TaskPath '\\CustomTasks\\' | Unregister-ScheduledTask -Confirm:$false",
+      "description": "Delete every task of a folder",
+      "platform": 0
+    },
+    {
+      "command": "Unregister-ScheduledTask -TaskName 'OldTask'",
+      "description": "Delete with an interactive confirmation",
+      "platform": 0
+    }
+  ],
+  "notes": "Requires administrator rights. Use -Confirm:$false to automate. The deletion cannot be undone.",
+  "links": [
+    {
+      "title": "Unregister-ScheduledTask Documentation",
+      "url": "https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/unregister-scheduledtask"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Supprimer une tâche planifiée",
+      "description": "Supprime une tâche planifiée du Planificateur de tâches Windows",
+      "notes": "Nécessite des privilèges administrateur. Utilisez -Confirm:$false pour automatiser. La suppression est irréversible.",
+      "parameters": {
+        "windows": {
+          "taskname": {
+            "label": "Nom de la tâche",
+            "description": "Nom de la tâche à supprimer"
+          }
+        }
+      },
+      "examples": {
+        "Unregister-ScheduledTask -TaskName 'MyBackup' -Confirm:$false": "Supprime la tâche sans confirmation",
+        "Get-ScheduledTask -TaskPath '\\CustomTasks\\' | Unregister-ScheduledTask -Confirm:$false": "Supprime toutes les tâches d'un dossier",
+        "Unregister-ScheduledTask -TaskName 'OldTask'": "Supprime avec confirmation interactive"
+      }
+    }
+  }
+}

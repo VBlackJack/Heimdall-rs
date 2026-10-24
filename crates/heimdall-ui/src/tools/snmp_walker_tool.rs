@@ -502,9 +502,13 @@ impl SnmpWalkerPane {
 
         if let Some(err) = &self.error {
             body = body.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
         if let Some(notice) = &self.notice {
@@ -623,7 +627,10 @@ impl SnmpWalkerPane {
         .spacing(spacing::XS);
         for result in &self.communities {
             let (status, style): (String, fn(&Theme) -> text::Style) = if result.accepted {
-                (fl!("ui-tool-snmpwalk-community-accepted"), text::success)
+                (
+                    fl!("ui-tool-snmpwalk-community-accepted"),
+                    styles::success_text,
+                )
             } else {
                 (fl!("ui-tool-snmpwalk-community-rejected"), text::secondary)
             };

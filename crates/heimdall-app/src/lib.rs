@@ -106,32 +106,35 @@ pub use app::{ANNOUNCEMENTS_KEPT, Announced, Announcement};
 pub use app::{
     AgentChip, App, AppConfig, BroadcastConfirmation, BroadcastMessage, BulkField,
     BulkPasswordRefusal, BulkPasswordSkips, BulkRefusal, CertificateContext, CitrixImportOutcome,
-    ClosedTab, ConflictRow, ConnectAs, Dialog, DropTarget, Effect, ElevatedPane, ElevatedState,
-    ExportOutcome, FileKind, FilesMessage, FilterMessage, FloatMessage, Floating, FolderMessage,
-    FolderNaming, GatewayBadge, HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview,
-    IDLE_POLL, ImportFile, ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation,
-    MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice,
-    OpenedVault, OrganizationChange, PendingImport, Phase, PinDialog, PinFailure, PinMessage,
-    PinMode, PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
-    ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickGroup,
-    QuickResult, QuickRow, RDP_EXTENSION, RECENTLY_CLOSED_CAPACITY, RdpMessage, RdpNames,
-    RdpOutcome, RdpPreview, RdpRow, RecentlyClosed, ResolutionChoice, RestoreDialog, RestoreRow,
-    Retry, ScriptConfirmation, SelectionMessage, SendConfirmation, SendTarget, SentCommand,
-    SessionState, SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow,
-    SessionsSource, SettingsMessage, ShareMessage, ShareStatus, SudoAction, SystemCredentials, Tab,
-    TabGroup, TabMenuMessage, TabProfile, ToolWords, TreeFilter, TreeRow, TrustedKey, TrustedKeys,
-    TrustedKeysMessage, TunnelMessage, UNLOCK_SECRET_ENTRY, UpdateMessage, UpdateStatus,
-    VAULT_FILE_NAME, VaultDialog, VaultHelloCard, VaultHelloMessage, VaultHelloStatus, VaultJob,
-    VaultMode, VaultProblem, VaultStatus, VaultTicket, WHEEL_LINES, bulk_password_refusal,
-    folder_label, local_date_time, master_password_problem, open_vault, search_folded,
-    should_auto_lock,
+    ClosedTab, ConflictRow, ConnectAs, Delivery, Dialog, DropTarget, Effect, ElevatedPane,
+    ElevatedState, ExportOutcome, FileKind, FilesMessage, FilterMessage, FloatMessage, Floating,
+    FolderMessage, FolderNaming, GatewayBadge, HostKeyRow, HostKeysMessage, HostKeysOutcome,
+    HostKeysPreview, IDLE_POLL, ImportFile, ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS,
+    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER,
+    NameAction, Notice, OpenedVault, OrganizationChange, PendingImport, Phase, PinDialog,
+    PinFailure, PinMessage, PinMode, PointerInput, PostConnectConfirmation, ProfileCopy,
+    ProfileKind, ProfileMenuMessage, ProfileSummary, Prompt, ProviderAnswer, ProviderMessage,
+    ProviderRequest, QuickGroup, QuickResult, QuickRow, RDP_EXTENSION, RECENTLY_CLOSED_CAPACITY,
+    RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow, RecentlyClosed, ResolutionChoice,
+    RestoreDialog, RestoreRow, Retry, ScriptConfirmation, SelectionMessage, SendConfirmation,
+    SendTarget, SentCommand, SessionState, SessionStatus, SessionsCounts, SessionsMessage,
+    SessionsPreview, SessionsRow, SessionsSource, SettingsMessage, ShareMessage, ShareStatus,
+    SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, ToolWords,
+    TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage,
+    UNLOCK_SECRET_ENTRY, UpdateMessage, UpdateStatus, VAULT_FILE_NAME, VaultDialog, VaultHelloCard,
+    VaultHelloMessage, VaultHelloStatus, VaultJob, VaultMode, VaultProblem, VaultStatus,
+    VaultTicket, WHEEL_LINES, bulk_password_refusal, folder_label, local_date_time,
+    master_password_problem, open_vault, search_folded, should_auto_lock,
 };
+pub use app::{CapturedCommand, capture_platform, clean_selection, to_command_line};
 pub use app::{CarriedCertificates, ImportedPreferences};
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};
 pub use app::{ImportActions, ProfileImportMessage, ProfileImportPreview, ProfileImportRow};
+pub use app::{LINUX_LINE_SEPARATOR, WINDOWS_LINE_SEPARATOR};
 pub use app::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use app::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
+pub use app::{MaskedCopy, MaskedCopyMessage, MaskedView};
 pub use app::{NetworkScan, NetworkScanMessage, NetworkScanRow};
 pub use app::{
     SCHEDULED_TICK, ScheduledChoice, ScheduledMessage, ScheduledNotice, local_time_text,
@@ -149,7 +152,7 @@ pub use event::{
 /// The quality a VNC desktop is asked at, from its toolbar's "Quality" menu.
 pub use heimdall_remote::vnc::Quality as VncQuality;
 pub use ids::{AttemptId, EditorId, FloatId, QuestionId, TabId};
-pub use paste_guard::PastePreview;
+pub use paste_guard::{PastePreview, dangerous_command};
 pub use sink::InputSink;
 pub use text::visible_line;
 pub use text::{MAX_SERVER_TEXT_CHARS, server_report_text, server_text, visible_text};

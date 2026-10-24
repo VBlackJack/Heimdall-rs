@@ -1,0 +1,111 @@
+{
+  "id": "usermod-modify-user",
+  "title": "Modify an existing user",
+  "description": "Modify the properties of a user account (groups, shell, home, etc.)",
+  "category": "security",
+  "platform": 1,
+  "level": 1,
+  "tags": [
+    "usermod",
+    "user",
+    "modify",
+    "groups"
+  ],
+  "linuxCommandTemplateId": "usermod-cmd",
+  "linuxCommandTemplate": {
+    "id": "usermod-cmd",
+    "platform": 1,
+    "name": "usermod",
+    "commandPattern": "sudo usermod -aG {group} {username}",
+    "parameters": [
+      {
+        "name": "group",
+        "label": "Group",
+        "type": "string",
+        "defaultValue": "sudo",
+        "required": true,
+        "description": "Supplementary group to add the user to"
+      },
+      {
+        "name": "username",
+        "label": "User name",
+        "type": "string",
+        "defaultValue": "john",
+        "required": true,
+        "description": "User to modify"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "sudo usermod -aG sudo john",
+      "description": "Add john to the sudo group",
+      "platform": 1
+    },
+    {
+      "command": "sudo usermod -s /bin/zsh john",
+      "description": "Change john's shell",
+      "platform": 1
+    },
+    {
+      "command": "sudo usermod -L john",
+      "description": "Lock john's account",
+      "platform": 1
+    },
+    {
+      "command": "sudo usermod -L baduser",
+      "description": "Lock the user account",
+      "platform": 1
+    },
+    {
+      "command": "sudo usermod -U baduser",
+      "description": "Unlock the user account",
+      "platform": 1
+    },
+    {
+      "command": "sudo usermod -s /bin/zsh jdupont",
+      "description": "Change the user's shell",
+      "platform": 1
+    },
+    {
+      "command": "sudo usermod -d /new/home -m user",
+      "description": "Move the home directory",
+      "platform": 1
+    }
+  ],
+  "notes": "Requires sudo. -aG adds to a group without removing the others. -L locks, -U unlocks.",
+  "links": [
+    {
+      "title": "usermod documentation",
+      "url": "https://man7.org/linux/man-pages/man8/usermod.8.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Modifier un utilisateur existant",
+      "description": "Modifie les propriétés d'un compte utilisateur (groupes, shell, home, etc.)",
+      "notes": "Nécessite sudo. -aG pour ajouter à un groupe sans supprimer les autres. -L verrouille, -U déverrouille.",
+      "parameters": {
+        "linux": {
+          "group": {
+            "label": "Groupe",
+            "description": "Groupe supplémentaire auquel ajouter l'utilisateur"
+          },
+          "username": {
+            "label": "Nom d'utilisateur",
+            "description": "Utilisateur à modifier"
+          }
+        }
+      },
+      "examples": {
+        "sudo usermod -aG sudo john": "Ajoute john au groupe sudo",
+        "sudo usermod -s /bin/zsh john": "Change le shell de john",
+        "sudo usermod -L john": "Verrouille le compte de john",
+        "sudo usermod -L baduser": "Verrouiller le compte utilisateur",
+        "sudo usermod -U baduser": "Déverrouiller le compte utilisateur",
+        "sudo usermod -s /bin/zsh jdupont": "Changer le shell de l'utilisateur",
+        "sudo usermod -d /new/home -m user": "Déplacer le home directory"
+      }
+    }
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "id": "lsblk-list-disks",
+  "title": "List disks and partitions",
+  "description": "Show every block device (disks, partitions) as a tree.",
+  "category": "files-storage",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "lsblk",
+    "disk",
+    "partition",
+    "storage",
+    "block",
+    "mount",
+    "linux"
+  ],
+  "linuxCommandTemplateId": "lsblk-cmd",
+  "linuxCommandTemplate": {
+    "id": "lsblk-cmd",
+    "platform": 1,
+    "name": "lsblk",
+    "commandPattern": "lsblk -f",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "lsblk",
+      "description": "List the disks as a tree",
+      "platform": 1
+    },
+    {
+      "command": "lsblk -f",
+      "description": "Show the filesystems and UUIDs",
+      "platform": 1
+    },
+    {
+      "command": "lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT",
+      "description": "Custom columns",
+      "platform": 1
+    },
+    {
+      "command": "lsblk -o NAME,SIZE,TYPE,MOUNTPOINT",
+      "description": "Custom columns",
+      "platform": 1
+    },
+    {
+      "command": "lsblk -d",
+      "description": "Show only the disks (not the partitions)",
+      "platform": 1
+    },
+    {
+      "command": "lsblk -J",
+      "description": "JSON output",
+      "platform": 1
+    },
+    {
+      "command": "lsblk -o NAME,FSTYPE,SIZE,MOUNTPOINT,STATE",
+      "description": "Custom output to see the state of the disks",
+      "platform": 1
+    }
+  ],
+  "notes": "Does not require sudo. Very useful to identify the disks before partitioning.",
+  "links": [
+    {
+      "title": "lsblk documentation",
+      "url": "https://man7.org/linux/man-pages/man8/lsblk.8.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Lister les disques et partitions",
+      "description": "Affiche tous les périphériques de bloc (disques, partitions) en arborescence",
+      "notes": "Ne nécessite pas sudo. Très utile pour identifier les disques avant partitionnement.",
+      "examples": {
+        "lsblk": "Liste les disques en arborescence",
+        "lsblk -f": "Affiche les systèmes de fichiers et UUID",
+        "lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT": "Colonnes personnalisées",
+        "lsblk -o NAME,SIZE,TYPE,MOUNTPOINT": "Colonnes personnalisées",
+        "lsblk -d": "Afficher uniquement les disques (pas les partitions)",
+        "lsblk -J": "Sortie en format JSON",
+        "lsblk -o NAME,FSTYPE,SIZE,MOUNTPOINT,STATE": "Affichage personnalisé pour voir l'état des disques"
+      }
+    }
+  }
+}

@@ -35,6 +35,7 @@ pub mod catalog;
 mod cert_inspector_tool;
 mod certgen_tool;
 mod chmod_tool;
+mod command_library_runbooks;
 mod command_library_tool;
 mod context;
 mod cron_job_tool;
@@ -101,7 +102,6 @@ use std::time::Duration;
 use heimdall_app::tool_route::RouteSupport;
 use heimdall_app::tools::{ToolCategory, ToolGroup, ToolId};
 use heimdall_app::{App, TabId};
-use heimdall_core::tools::command_library::SnippetId;
 use heimdall_core::tools::hash_computer::HashAlgorithm;
 use iced::advanced::text::highlighter::PlainText;
 use iced::widget::text_editor::{self, Action, Content};
@@ -117,7 +117,7 @@ pub use certgen_tool::{
 };
 pub use chmod_tool::ChmodMessage;
 pub use command_library_tool::CommandLibraryMessage;
-pub use context::{inherited_context, inherited_host, tab_title, titled};
+pub use context::{inherited_context, inherited_host, session_message, tab_title, titled};
 pub use cron_job_tool::CronJobMessage;
 pub use crontab_tool::{CronOption, CrontabMessage};
 pub use cve_tool::{CveMessage, Outcome as CveOutcome};
@@ -657,12 +657,14 @@ pub enum CopySlot {
     NotesHtml,
     /// The diagram's source.
     DiagramSource,
-    /// The command of a snippet of the command library.
-    CmdLibCommand(SnippetId),
+    /// The command of the catalogue at this place.
+    CmdLibCommand(usize),
     /// The command of the user's command at this place of the library.
     CmdLibUserCommand(usize),
     /// The command of the history entry at this place.
     CmdLibHistory(usize),
+    /// The command of the step a runbook run is at.
+    CmdLibRunbookStep,
 }
 
 /// What a tool's tab is asked.
@@ -1644,13 +1646,21 @@ impl ToolPanes {
                         target,
                         command,
                         dangerous,
+                        typed_as_is,
                     } => Task::done(Message::App(heimdall_app::Message::Tools(
                         heimdall_app::ToolsMessage::SendCommand {
                             target,
                             command,
                             dangerous,
+                            typed_as_is,
                         },
                     ))),
+                    // Typed at the prompt, no Enter: nothing to agree to.
+                    command_library_tool::Outcome::Insert { target, command } => {
+                        Task::done(Message::App(heimdall_app::Message::Tools(
+                            heimdall_app::ToolsMessage::InsertCommand { target, command },
+                        )))
+                    }
                     command_library_tool::Outcome::Broadcast {
                         targets,
                         command,
@@ -2156,7 +2166,11 @@ fn status_line<'a>(said: Option<(String, bool)>) -> Element<'a, Message> {
     match said {
         Some((said, error)) => text(said)
             .size(font_size::CAPTION)
-            .style(if error { text::danger } else { text::secondary })
+            .style(if error {
+                styles::error_text
+            } else {
+                text::secondary
+            })
             .into(),
         None => column![].into(),
     }
@@ -2220,7 +2234,7 @@ fn value_box<'a>(value: String) -> Element<'a, Message> {
             .font(BOX_FONT)
             .size(font_size::BODY_LARGE)
             .style(|theme: &iced::Theme| text::Style {
-                color: Some(theme.palette().primary),
+                color: Some(styles::accent_text_color(theme)),
             }),
     )
     .padding(INPUT_PADDING)

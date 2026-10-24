@@ -1,0 +1,71 @@
+{
+  "id": "file-directory-size-linux",
+  "title": "Directory size",
+  "description": "Compute the total size of a directory and its content.",
+  "category": "files-storage",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "size",
+    "folder",
+    "du",
+    "linux",
+    "disk"
+  ],
+  "linuxCommandTemplateId": "file-directory-size-linux-cmd",
+  "linuxCommandTemplate": {
+    "id": "file-directory-size-linux-cmd",
+    "platform": 1,
+    "name": "du",
+    "commandPattern": "du -sh {path}",
+    "parameters": [
+      {
+        "name": "path",
+        "label": "Path",
+        "type": "string",
+        "defaultValue": ".",
+        "required": false,
+        "description": "Path of the folder to analyze"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "du -h --max-depth=1 /home | sort -h",
+      "description": "List folders by size",
+      "platform": 1
+    },
+    {
+      "command": "du -sh /home/*",
+      "description": "Size of each home directory",
+      "platform": 1
+    },
+    {
+      "command": "du -sh * | sort -rh | head -10",
+      "description": "Show the 10 largest folders or files of the current directory, largest first, to find what fills the disk",
+      "platform": 1
+    }
+  ],
+  "notes": "-s for a sum, -h for a human-readable format. --max-depth limits the depth.",
+  "links": [],
+  "translations": {
+    "fr": {
+      "title": "Taille d'un répertoire",
+      "description": "Calcule la taille totale d'un répertoire et de son contenu.",
+      "notes": "-s pour somme, -h pour format lisible. --max-depth limite la profondeur.",
+      "parameters": {
+        "linux": {
+          "path": {
+            "label": "Chemin",
+            "description": "Chemin du dossier à analyser"
+          }
+        }
+      },
+      "examples": {
+        "du -h --max-depth=1 /home | sort -h": "Liste les dossiers par taille",
+        "du -sh /home/*": "Taille de chaque home",
+        "du -sh * | sort -rh | head -10": "Affiche les 10 plus gros dossiers ou fichiers du répertoire courant, du plus gros au plus petit, pour trouver ce qui remplit le disque"
+      }
+    }
+  }
+}

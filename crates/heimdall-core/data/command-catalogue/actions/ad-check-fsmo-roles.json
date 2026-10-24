@@ -1,0 +1,46 @@
+{
+  "id": "ad-check-fsmo-roles",
+  "title": "Check the FSMO roles",
+  "description": "Show the domain controllers that hold the FSMO (Flexible Single Master Operations) roles.",
+  "category": "active-directory",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "ad",
+    "fsmo",
+    "roles",
+    "diagnostic"
+  ],
+  "windowsCommandTemplateId": "ad-check-fsmo-roles-cmd",
+  "windowsCommandTemplate": {
+    "id": "ad-check-fsmo-roles-cmd",
+    "platform": 0,
+    "name": "netdom",
+    "commandPattern": "netdom query fsmo",
+    "parameters": []
+  },
+  "examples": [
+    {
+      "command": "netdom query fsmo",
+      "description": "Show all FSMO role holders",
+      "platform": 0
+    }
+  ],
+  "notes": "The 5 FSMO roles: Schema Master, Domain Naming Master, RID Master, PDC Emulator, Infrastructure Master.",
+  "links": [
+    {
+      "title": "Documentation netdom query fsmo",
+      "url": "https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/cc835085(v=ws.11)"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Vérifier les rôles FSMO",
+      "description": "Affiche les contrôleurs de domaine détenant les rôles FSMO (Flexible Single Master Operations).",
+      "notes": "Les 5 rôles FSMO: Schema Master, Domain Naming Master, RID Master, PDC Emulator, Infrastructure Master.",
+      "examples": {
+        "netdom query fsmo": "Affiche tous les détenteurs de rôles FSMO"
+      }
+    }
+  }
+}

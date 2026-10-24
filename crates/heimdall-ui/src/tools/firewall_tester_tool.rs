@@ -416,9 +416,13 @@ impl FirewallTesterPane {
         }
         if let Some(err) = &self.error {
             body = body.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
         if let Some(notice) = &self.notice {
@@ -453,7 +457,7 @@ impl FirewallTesterPane {
                         text(self.summary.open.to_string())
                             .size(font_size::TITLE)
                             .font(super::BOX_FONT)
-                            .style(text::success),
+                            .style(styles::success_text),
                     ]
                     .spacing(spacing::XS)
                 )
@@ -483,7 +487,7 @@ impl FirewallTesterPane {
                         text(self.summary.timeout.to_string())
                             .size(font_size::TITLE)
                             .font(super::BOX_FONT)
-                            .style(text::danger),
+                            .style(styles::error_text),
                     ]
                     .spacing(spacing::XS)
                 )
@@ -501,7 +505,7 @@ impl FirewallTesterPane {
                         count = self.summary.unresolved
                     ))
                     .size(font_size::BODY)
-                    .style(text::warning),
+                    .style(styles::warning_text),
                 );
             }
 
@@ -544,10 +548,10 @@ impl FirewallTesterPane {
 
             for r in &self.results {
                 let style = match r.status {
-                    FwProbeStatus::Open => text::success,
+                    FwProbeStatus::Open => styles::success_text,
                     FwProbeStatus::Closed => text::secondary,
-                    FwProbeStatus::Timeout => text::danger,
-                    FwProbeStatus::Unresolved => text::warning,
+                    FwProbeStatus::Timeout => styles::error_text,
+                    FwProbeStatus::Unresolved => styles::warning_text,
                 };
                 let status_el = text(status_label(r.status))
                     .size(font_size::BODY)

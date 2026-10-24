@@ -418,7 +418,7 @@ impl DateTimePane {
                         .font(super::BOX_FONT)
                         .size(font_size::BODY_LARGE)
                         .style(|theme: &iced::Theme| text::Style {
-                            color: Some(theme.palette().primary),
+                            color: Some(styles::accent_text_color(theme)),
                         }),
                 );
         }

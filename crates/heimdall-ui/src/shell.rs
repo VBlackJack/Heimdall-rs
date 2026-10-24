@@ -39,7 +39,7 @@ use heimdall_app::session_log::{
     transfer_events_recorded,
 };
 use heimdall_app::telnet_driver::telnet_events;
-use heimdall_app::tools::SidebarTab;
+use heimdall_app::tools::{SidebarTab, ToolContext, ToolId};
 use heimdall_app::tunnel_driver::tunnel_events;
 use heimdall_app::type_ahead::TYPE_AHEAD_RESET;
 use heimdall_app::update_check::{Failure as UpdateFailure, GitHubSource, Outcome};
@@ -49,7 +49,7 @@ use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, CertificateContext,
     ConnectionEvent, DesktopPane, Dialog, Effect, ElevatedPane, ElevatedState, FilesMessage,
     FilterMessage, FloatId, FloatMessage, FolderMessage, FolderNaming, LONG_MASTER_PASSWORD_CHARS,
-    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
+    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, MaskedCopyMessage,
     Message as AppMessage, NameAction, PastePreview, Phase, PinDialog, PinFailure, PinMessage,
     PinMode, PostConnectConfirmation, PostConnectProgress, ProfileMenuMessage, Prompt,
     ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SaveState, ScriptConfirmation,
@@ -67,9 +67,10 @@ use heimdall_core::folder_defaults::InheritedField;
 use heimdall_core::import::csharp_settings::PreferenceOutcome;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
-use heimdall_core::profile::{ProfileId, SshGateway, SshMode, display_address};
+use heimdall_core::profile::{ProfileId, RemoteOs, SshGateway, SshMode, display_address};
 use heimdall_core::settings::Language;
 use heimdall_core::settings::{AppTheme, BroadcastScope, ColorScheme};
+use heimdall_core::tools::net_host::checked_host;
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::{FindDirection, GridSize};
 use iced::futures::{Stream, StreamExt as _, stream};
@@ -271,9 +272,6 @@ const PALETTE_TOP: f32 = 80.0;
 /// hover time, WPF's default for the C# box.
 const SEARCH_TOOLTIP_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
-/// Opacity of the veil behind a dialog, as the C# `OverlayBackground` (`#B3000000`).
-const VEIL_ALPHA: f32 = 0.7;
-
 /// Widest the settings' cards grow, as the C# `SettingsContentMaxWidth`.
 const SETTINGS_WIDTH: f32 = 900.0;
 
@@ -412,14 +410,8 @@ fn tour_layer<'a>(tour: &crate::onboarding::Tour) -> Element<'a, Message> {
         container(crate::onboarding::card(tour))
             .center(Length::Fill)
             .padding(spacing::LG)
-            .style(|_: &Theme| container::Style {
-                background: Some(
-                    Color {
-                        a: VEIL_ALPHA,
-                        ..Color::BLACK
-                    }
-                    .into(),
-                ),
+            .style(|theme: &Theme| container::Style {
+                background: Some(styles::scrim(theme).into()),
                 ..container::Style::default()
             }),
     )
@@ -577,6 +569,16 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
         iced::Event::Window(window::Event::Unfocused) => {
             Some(Message::App(AppMessage::WindowFocus(false)))
         }
+        // Shift+Enter first: a command library tab types its command at the prompt, any other
+        // window state reads it as the Enter it is (see `Message::CmdLibInsertKey`).
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            modifiers,
+            repeat: false,
+            ..
+        }) if status == event::Status::Ignored && is_insert_key(&key, modifiers) => {
+            Some(Message::CmdLibInsertKey)
+        }
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key: keyboard::Key::Named(Named::Enter),
             repeat: false,
@@ -717,6 +719,15 @@ fn is_duplicate_key(
         && crate::terminal_view::keys::letter(key, physical) == Some('d')
 }
 
+/// Whether the key is Shift+Enter, as the C# command library's Insert.
+fn is_insert_key(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> bool {
+    matches!(key, keyboard::Key::Named(Named::Enter))
+        && modifiers.shift()
+        && !modifiers.control()
+        && !modifiers.alt()
+        && !modifiers.logo()
+}
+
 /// What the window reacts to.
 #[derive(Clone)]
 pub enum Message {
@@ -762,6 +773,10 @@ pub enum Message {
     /// Ctrl+D, uncaptured by any widget: duplicates the command last used in a command
     /// library tab shown, as the C# `CommandLibraryView` binds it.
     CmdLibDuplicateKey,
+    /// Shift+Enter, uncaptured by any widget: types the command last used at the prompt of the
+    /// terminal chosen, from a command library tab shown, as the C# `CommandLibraryView`
+    /// binds Insert; else the Enter of a dialog, as before.
+    CmdLibInsertKey,
     /// Tab: the next field of a dialog, or the other pane of a Files tab.
     TabKey {
         /// With Shift: the previous field.
@@ -1199,6 +1214,7 @@ impl fmt::Debug for Message {
             Self::FilesKey(key) => write!(f, "FilesKey({key:?})"),
             Self::PasswordCopyKey => f.write_str("PasswordCopyKey"),
             Self::CmdLibDuplicateKey => f.write_str("CmdLibDuplicateKey"),
+            Self::CmdLibInsertKey => f.write_str("CmdLibInsertKey"),
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
@@ -1485,7 +1501,7 @@ fn tab_badges<'a>(tab: &Tab, active: bool) -> Vec<Element<'a, Message>> {
         badges.push(
             text(fl!("ui-tab-recording-badge"))
                 .size(font_size::CAPTION)
-                .style(text::danger)
+                .style(styles::error_text)
                 .into(),
         );
     } else if tab.macro_playing.is_some() {
@@ -2889,6 +2905,17 @@ impl Shell {
                 ),
             ));
         }
+        // Shift+Enter no field took types the command last used at the prompt, from the same
+        // library tab, with the same conditions: nothing is written for a command that cannot
+        // be made, and nothing is run.
+        if let Some(tab) = self.cmdlib_insert_key(&message) {
+            return self.update(Message::Tool(
+                tab,
+                crate::tools::ToolMessage::CmdLib(
+                    crate::tools::CommandLibraryMessage::InsertSelected,
+                ),
+            ));
+        }
         // Escape no widget took leaves full screen when there is nothing else to close, as
         // the C# Heimdall's.
         if matches!(message, Message::EscapeUntaken) {
@@ -2949,6 +2976,8 @@ impl Shell {
             Message::Shortcut(WindowShortcut::Screenshot) => return self.screenshot(),
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
             Message::DialogKey { confirm } => self.dialog_key(confirm),
+            // No command library took it: it is the Enter of a dialog, as it was.
+            Message::CmdLibInsertKey => self.dialog_key(true),
             // Answered above, before the rest; Ctrl+C is taken by no Password Generator
             // shown, and nothing else copies on it.
             Message::EscapeUntaken
@@ -3209,11 +3238,27 @@ impl Shell {
                 self.menu = None;
                 self.page = Page::Tab;
                 let context = crate::tools::inherited_context(&self.app, tool);
-                self.app.update(AppMessage::Tools(ToolsMessage::Open {
+                let tabs_before = self.app.tabs.len();
+                let session = (tool == heimdall_app::tools::ToolId::CmdLib
+                    && context.has_session())
+                .then(|| crate::tools::session_message(&context));
+                let effects = self.app.update(AppMessage::Tools(ToolsMessage::Open {
                     tool,
                     title: crate::tools::tab_title(tool, &context),
                     context,
-                }))
+                }));
+                // A library tab that was already open is shown again, not opened anew: it is
+                // told the session it is now opened from (a new tab is told as it is made).
+                if let Some(session) = session
+                    && self.app.tabs.len() == tabs_before
+                    && let Some(tab) = self.app.active_tab().map(|tab| tab.id)
+                {
+                    let _ = self.update(Message::Tool(
+                        tab,
+                        crate::tools::ToolMessage::CmdLib(session),
+                    ));
+                }
+                effects
             }
             Message::NewNote { id, template } => {
                 self.menu = None;
@@ -3255,8 +3300,14 @@ impl Shell {
         }
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
+        // A command captured from a terminal opens the command library on a new action.
+        if let Some(context) = self.app.take_capture() {
+            tasks.extend(self.open_capture(context));
+        }
         // The tool tabs' states follow their tabs, and those just opened start their work.
         self.tools.sync(&self.app);
+        // A capture is delivered once: the tabs just made have been told, none keeps it.
+        self.app.clear_tool_captures();
         // The commands written into terminals since, for the history of the library that
         // asked.
         let sent = self.app.take_sent_commands();
@@ -3813,6 +3864,110 @@ impl Shell {
             .map(|copied| Message::App(AppMessage::ScreenshotTaken { copied }))
     }
 
+    /// Ctrl+Shift+M: the review of the masked output of the session that has the keyboard,
+    /// as the C# shortcut, only for a session of text (SSH, Telnet, `WinRM`, a local shell);
+    /// nothing for a remote desktop, a Files tab, a web console or a tool, nor over a
+    /// dialog, the settings or the lock screen, which have the keyboard.
+    fn masked_copy_key(&mut self) -> Vec<Effect> {
+        let Some(active) = self.app.active else {
+            return Vec::new();
+        };
+        if self.gated()
+            || self.settings_shown()
+            || self.app.dialog.is_some()
+            || !self
+                .app
+                .tab(active)
+                .is_some_and(|tab| self.app.can_copy_masked(tab))
+        {
+            return Vec::new();
+        }
+        self.menu = None;
+        self.update_app(AppMessage::MaskedCopy(MaskedCopyMessage::Open(active)))
+    }
+
+    /// The shortcuts that read the text of a session: the status copied, the masked copy and
+    /// the capture into the command library; `None` for any other.
+    fn session_text_key(&mut self, shortcut: WindowShortcut) -> Option<Vec<Effect>> {
+        match shortcut {
+            WindowShortcut::CopyStatus => Some(self.copy_status()),
+            WindowShortcut::MaskedCopy => Some(self.masked_copy_key()),
+            WindowShortcut::CaptureCommand => Some(self.capture_key()),
+            _ => None,
+        }
+    }
+
+    /// Ctrl+Shift+L: the selection of the session that has the keyboard kept for the command
+    /// library, as the C# shortcut, only for a session of text (SSH, Telnet, `WinRM`, a local
+    /// shell); nothing for a remote desktop, a Files tab, a web console or a tool, nor over a
+    /// dialog, the settings or the lock screen, which have the keyboard. Nothing is sent to
+    /// the session.
+    fn capture_key(&mut self) -> Vec<Effect> {
+        let Some(active) = self.app.active else {
+            return Vec::new();
+        };
+        if self.gated()
+            || self.settings_shown()
+            || self.app.dialog.is_some()
+            || !self
+                .app
+                .tab(active)
+                .is_some_and(|tab| self.app.can_capture_command(tab))
+        {
+            return Vec::new();
+        }
+        self.menu = None;
+        self.update_app(AppMessage::CaptureCommand(active))
+    }
+
+    /// The command library shown on a command captured from a terminal: the tab already open
+    /// if there is one, else a new one, told the session it is opened from and the capture,
+    /// whose editor then opens on a new action.
+    fn open_capture(&mut self, context: ToolContext) -> Vec<Task<Message>> {
+        let Some(capture) = context.capture.clone() else {
+            return Vec::new();
+        };
+        self.menu = None;
+        self.page = Page::Tab;
+        let context = ToolContext {
+            host: context.host.as_deref().and_then(checked_host),
+            ..context
+        };
+        let open = self
+            .app
+            .tabs
+            .iter()
+            .find(|tab| tab.tool() == Some(ToolId::CmdLib))
+            .map(|tab| tab.id);
+        let Some(library) = open else {
+            let effects = self.app.update(AppMessage::Tools(ToolsMessage::Open {
+                tool: ToolId::CmdLib,
+                title: crate::tools::tab_title(ToolId::CmdLib, &context),
+                context,
+            }));
+            return effects.into_iter().map(|effect| self.run(effect)).collect();
+        };
+        let mut tasks: Vec<Task<Message>> = self
+            .app
+            .update(AppMessage::SelectTab(library))
+            .into_iter()
+            .map(|effect| self.run(effect))
+            .collect();
+        if context.has_session() {
+            tasks.push(self.update(Message::Tool(
+                library,
+                crate::tools::ToolMessage::CmdLib(crate::tools::session_message(&context)),
+            )));
+        }
+        tasks.push(self.update(Message::Tool(
+            library,
+            crate::tools::ToolMessage::CmdLib(crate::tools::CommandLibraryMessage::Capture(
+                capture,
+            )),
+        )));
+        tasks
+    }
+
     /// Ctrl+Shift+A: [`Self::status_report`] put on the clipboard, for a screen reader to
     /// read what the C# live region would have announced. Over a dialog too: it reads
     /// nothing the window does not show.
@@ -3840,8 +3995,8 @@ impl Shell {
             self.quick_connect_key();
             return Vec::new();
         }
-        if shortcut == WindowShortcut::CopyStatus {
-            return self.copy_status();
+        if let Some(effects) = self.session_text_key(shortcut) {
+            return effects;
         }
         // The sidebar's other tab, as the C# Ctrl+Shift+T, tab or no tab.
         if shortcut == WindowShortcut::ToggleToolsPanel {
@@ -3932,6 +4087,8 @@ impl Shell {
                 | WindowShortcut::Screenshot
                 | WindowShortcut::QuickConnect
                 | WindowShortcut::CopyStatus
+                | WindowShortcut::MaskedCopy
+                | WindowShortcut::CaptureCommand
                 | WindowShortcut::ToggleToolsPanel
                 | WindowShortcut::ReopenClosedTab,
                 _,
@@ -4053,14 +4210,21 @@ impl Shell {
     /// every terminal is drawn in, its Ctrl+V as chosen.
     #[must_use]
     pub fn terminal_view<'a>(&self, tab: &'a Tab, interactive: bool) -> TerminalView<'a, Message> {
-        TerminalView::new(&tab.terminal, tab.id, Message::App)
+        let view = TerminalView::new(&tab.terminal, tab.id, Message::App)
             .ctrl_v(self.app.settings().ctrl_v_paste)
             .ctrl_k(self.app.settings().ctrl_k_terminal)
             .interactive(interactive)
             .reduced_motion(self.reduced_motion)
             .font(self.terminal_font())
             .font_size(self.font_size(tab.id))
-            .on_zoom(|zoom| Message::Shortcut(WindowShortcut::Zoom(zoom)))
+            .on_zoom(|zoom| Message::Shortcut(WindowShortcut::Zoom(zoom)));
+        // Shift+right-click offers to save the selection to the command library, in a
+        // session of text drawn in the main window; a plain right-click still pastes.
+        if self.app.can_capture_command(tab) && !self.app.is_floating(tab.id) {
+            view.on_capture_menu(|tab| Message::OpenTreeMenu(TreeMenu::Capture(tab)))
+        } else {
+            view
+        }
     }
 
     /// The font every terminal is drawn in, those open included: the family the settings
@@ -4273,6 +4437,20 @@ impl Shell {
         if !matches!(message, Message::CmdLibDuplicateKey) {
             return None;
         }
+        self.cmdlib_key_tab()
+    }
+
+    /// The command library tab Shift+Enter is for, under the same conditions.
+    fn cmdlib_insert_key(&self, message: &Message) -> Option<TabId> {
+        if !matches!(message, Message::CmdLibInsertKey) {
+            return None;
+        }
+        self.cmdlib_key_tab()
+    }
+
+    /// The command library tab shown, with nothing over it and no field of the tree with the
+    /// keyboard: the one a key of the library is for.
+    fn cmdlib_key_tab(&self) -> Option<TabId> {
         let free = !self.gated()
             && !self.settings_shown()
             && !self.tree_focused
@@ -4817,6 +4995,18 @@ impl Shell {
                 },
             ),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
+            // Off the UI thread: a 4 MiB text takes a moment. The text is neither logged nor
+            // kept past the call; a thread that fails leaves the dialog unable to copy.
+            Effect::Redact { run, text, options } => Task::future(async move {
+                let masked = tokio::task::spawn_blocking(move || {
+                    heimdall_core::redaction::redact(&text, options)
+                })
+                .await;
+                Message::App(AppMessage::MaskedCopy(match masked {
+                    Ok(outcome) => MaskedCopyMessage::Done { run, outcome },
+                    Err(_) => MaskedCopyMessage::Failed { run },
+                }))
+            }),
             Effect::OpenUrl(url) => Task::future(async move {
                 let opened =
                     tokio::task::spawn_blocking(move || heimdall_app::external_url::open_url(&url))
@@ -5236,6 +5426,7 @@ impl Shell {
                         | Dialog::NetworkScan(_)
                         | Dialog::HostKeysPreview(_)
                         | Dialog::FileConflicts { .. }
+                        | Dialog::MaskedCopy(_)
                 ) {
                     wide_card(content)
                 } else if matches!(dialog, Dialog::EditProfile { .. }) {
@@ -5253,11 +5444,7 @@ impl Shell {
                 background: Some(if locked {
                     theme.palette().background.into()
                 } else {
-                    Color {
-                        a: VEIL_ALPHA,
-                        ..Color::BLACK
-                    }
-                    .into()
+                    styles::scrim(theme).into()
                 }),
                 ..container::Style::default()
             }),
@@ -5554,6 +5741,13 @@ impl Shell {
             tree_view::tunnel_menu_entries(id, self.app.tunnel(id)?.interrupted)
         } else if let TreeMenu::Macros(tab) = *menu {
             self.macros_menu(tab)?
+        } else if let TreeMenu::Capture(tab) = *menu {
+            // Only while its terminal can be captured.
+            let found = self
+                .app
+                .tab(tab)
+                .filter(|found| self.app.can_capture_command(found))?;
+            tree_view::capture_entries(tab, found.terminal.has_selection())
         } else if let TreeMenu::Notes(id) = menu {
             // Only while the session is saved.
             self.app.profile_summary(id)?;
@@ -5734,6 +5928,7 @@ impl Shell {
                 | TreeMenu::Resolution(_)
                 | TreeMenu::SendKeys(_)
                 | TreeMenu::Macros(_)
+                | TreeMenu::Capture(_)
                 | TreeMenu::Notes(_)
                 | TreeMenu::ExternalTools(_)
                 | TreeMenu::Tool(_)
@@ -5864,7 +6059,7 @@ impl Shell {
                     .size(font_size::LARGE)
                     .font(styles::BOLD)
                     .style(|theme: &Theme| text::Style {
-                        color: Some(theme.extended_palette().primary.base.color),
+                        color: Some(styles::accent_text_color(theme)),
                     })
             )
             .padding(NAV_TITLE_PADDING),
@@ -6422,7 +6617,11 @@ impl Shell {
                 .on_input(on_input)
                 .on_submit(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .push(error.map(|error| text(error).size(font_size::CAPTION).style(text::danger)))
+        .push(error.map(|error| {
+            text(error)
+                .size(font_size::CAPTION)
+                .style(styles::error_text)
+        }))
         .spacing(2.0);
         Some(tree_view::indented(editor.into(), depth))
     }
@@ -6980,6 +7179,7 @@ impl Shell {
             Message::OpenTreeMenu(
                 TreeMenu::Tab(_)
                 | TreeMenu::Pane(_)
+                | TreeMenu::Capture(_)
                 | TreeMenu::FilesEntry { .. }
                 | TreeMenu::FilesBookmarks(_)
                 | TreeMenu::FilesBookmarksRemove(_),
@@ -8040,6 +8240,7 @@ impl Shell {
             reopen_closed: self.app.reopen_closed_count(),
             saveable: self.app.can_save_as_profile(tab),
             macros: self.app.macro_menu(tab).is_some(),
+            masked_copy: self.app.can_copy_masked(tab),
             external_tools: !self.app.external_tools().is_empty(),
             pane: false,
             docked: self.app.is_docked(id),
@@ -8333,7 +8534,7 @@ impl Shell {
                 // What PowerShell's error meant, as the C# says it under the session.
                 if let Some(found) = tab.winrm_diagnostic {
                     ended = ended.push(
-                        container(text(texts::winrm_diagnostic(found)).style(text::danger))
+                        container(text(texts::winrm_diagnostic(found)).style(styles::error_text))
                             .padding(spacing::MD),
                     );
                 }
@@ -8392,7 +8593,7 @@ impl Shell {
         let badge = container(
             text(fl!("ui-local-admin-badge"))
                 .size(font_size::BADGE)
-                .style(text::danger)
+                .style(styles::error_text)
                 .wrapping(text::Wrapping::None),
         )
         .padding([0.0, spacing::XS])
@@ -8402,7 +8603,7 @@ impl Shell {
                 .spacing(spacing::SM)
                 .align_y(iced::Alignment::Center),
             if failed {
-                text(said).style(text::danger)
+                text(said).style(styles::error_text)
             } else {
                 text(said)
             },
@@ -8451,7 +8652,7 @@ impl Shell {
         let bar = match tab.retry {
             Some(retry) => countdown_bar(tab.id, retry),
             None => column![
-                text(texts::error(error)).style(text::danger),
+                text(texts::error(error)).style(styles::error_text),
                 self.failure_actions(tab, error)
                     .wrap()
                     .vertical_spacing(spacing::SM),
@@ -9016,10 +9217,10 @@ impl Shell {
                 match pane.tls {
                     Some(version) => text(fl!("ui-session-vnc-encrypted", version = version))
                         .size(font_size::CAPTION)
-                        .style(text::success),
+                        .style(styles::success_text),
                     None => text(fl!("ui-session-vnc-unencrypted"))
                         .size(font_size::CAPTION)
-                        .style(text::danger),
+                        .style(styles::error_text),
                 }
                 .into(),
             );
@@ -10359,7 +10560,7 @@ fn migration_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a,
                 detail = detail.as_str()
             ))
             .size(font_size::CAPTION)
-            .style(text::danger)
+            .style(styles::error_text)
             .into(),
         ),
         _ => {}
@@ -10379,7 +10580,7 @@ fn migration_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a,
                 detail = detail.as_str()
             ))
             .size(font_size::CAPTION)
-            .style(text::danger)
+            .style(styles::error_text)
             .into(),
         ),
         None => {}
@@ -10427,7 +10628,7 @@ fn settings_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, 
                 "ui-dialog-import-settings-unreadable",
                 detail = detail.as_str()
             ),
-            text::danger,
+            styles::error_text,
         ));
     }
     match &summary.preferences {
@@ -10454,7 +10655,7 @@ fn settings_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, 
                 "ui-dialog-import-preferences-failed",
                 detail = detail.as_str()
             ),
-            text::danger,
+            styles::error_text,
         )),
         None => {}
     }
@@ -10469,7 +10670,7 @@ fn settings_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, 
                     invalid = carried.invalid
                 ),
                 if carried.invalid > 0 {
-                    text::warning
+                    styles::warning_text
                 } else {
                     text::default
                 },
@@ -10480,7 +10681,7 @@ fn settings_lines<'a>(summary: &heimdall_app::ImportSummary) -> Vec<Element<'a, 
                 "ui-dialog-import-certificates-failed",
                 detail = detail.as_str()
             ),
-            text::danger,
+            styles::error_text,
         )),
         _ => {}
     }
@@ -10516,7 +10717,7 @@ fn import_report_titled<'a>(
         content = content.push(
             text(fl!("ui-dialog-import-gateways-orphans-action"))
                 .size(font_size::CAPTION)
-                .style(text::warning),
+                .style(styles::warning_text),
         );
     }
     if !summary.skipped.is_empty() {
@@ -11249,7 +11450,7 @@ fn network_section<'a>(
             section_column = section_column.push(
                 text(fl!("ui-profile-winrm-https-off-by-gateway"))
                     .size(font_size::CAPTION)
-                    .style(text::warning),
+                    .style(styles::warning_text),
             );
         }
     }
@@ -11788,6 +11989,13 @@ fn options_section<'a>(
     tab
 }
 
+/// A line of caption size in the error colour: what a form says is wrong with an option.
+fn error_caption<'a>(said: String) -> iced::widget::Text<'a> {
+    text(said)
+        .size(font_size::CAPTION)
+        .style(styles::error_text)
+}
+
 /// The protocol's options, as its C# card; an RDP form's monitors among `monitors`, its
 /// wait after connecting left empty taking the settings' `resize_delay`.
 fn protocol_options<'a>(
@@ -11887,7 +12095,7 @@ fn protocol_options<'a>(
         }
     }
     for warning in option_warnings(draft) {
-        form = form.push(text(warning).size(font_size::CAPTION).style(text::danger));
+        form = form.push(error_caption(warning));
     }
     if draft.protocol == DraftProtocol::Local {
         form = form.push(crate::local_form::advanced(draft, |field| {
@@ -11895,11 +12103,7 @@ fn protocol_options<'a>(
         }));
     }
     if draft.protocol == DraftProtocol::Telnet {
-        form = form.push(
-            text(fl!("ui-profile-telnet-warning"))
-                .size(font_size::CAPTION)
-                .style(text::danger),
-        );
+        form = form.push(error_caption(fl!("ui-profile-telnet-warning")));
     }
 
     form
@@ -12060,7 +12264,7 @@ fn form_footer<'a>(draft: &ProfileDraft, error: Option<DraftError>) -> Element<'
         );
     }
     if let Some(error) = error {
-        footer = footer.push(text(texts::draft_error(error)).style(text::danger));
+        footer = footer.push(text(texts::draft_error(error)).style(styles::error_text));
     }
     // As in C#: Cancel, then Save; a profile is deleted from its menu.
     footer
@@ -12100,6 +12304,10 @@ fn general_tab<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column<'a, Mes
             basics = basics.push(winrm_transport(draft));
         }
         basics = basics.push(crate::address_test_view::view(draft, forms.gateways));
+    }
+    // What the far end runs, under the address, as the C# General tab's list.
+    if draft.shows_remote_os() {
+        basics = basics.push(remote_os_choice(draft));
     }
     let mut tab = column![basics].spacing(SECTION_GAP);
     if draft.protocol == DraftProtocol::Citrix {
@@ -12141,7 +12349,7 @@ fn winrm_transport<'a>(draft: &ProfileDraft) -> Column<'a, Message> {
                 https = heimdall_core::profile::DEFAULT_WINRM_HTTPS_PORT
             ))
             .size(font_size::CAPTION)
-            .style(text::danger),
+            .style(styles::error_text),
         );
     }
     transport
@@ -12592,7 +12800,7 @@ fn paste_dialog<'a>(
     let (severity, title, body, action, style) = match command {
         Some(command) => (
             Severity::Error,
-            dialog_parts::title(fl!("ui-dialog-paste-dangerous-title")).style(text::danger),
+            dialog_parts::title(fl!("ui-dialog-paste-dangerous-title")).style(styles::error_text),
             fl!(
                 "ui-dialog-paste-dangerous-body",
                 command = command.to_string()
@@ -12887,6 +13095,10 @@ fn send_command_dialog(confirmation: &SendConfirmation) -> Element<'_, Message> 
     .spacing(spacing::SM);
     if confirmation.dangerous {
         body = body.push(dialog_parts::error(fl!("ui-dialog-send-command-dangerous")));
+    } else if confirmation.typed_as_is {
+        body = body.push(dialog_parts::body(fl!(
+            "ui-dialog-send-command-typed-as-is"
+        )));
     }
     dialog_parts::message(
         Severity::Warning,
@@ -13602,6 +13814,41 @@ fn ssh_mode_choice(draft: &ProfileDraft) -> Element<'_, Message> {
         mode = mode.push(dialog_parts::hint(fl!("ui-profile-ssh-mode-external-desc")));
     }
     mode.into()
+}
+
+/// A profile's operating system of the far end in its form's list, as the C# names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RemoteOsChoice(RemoteOs);
+
+impl fmt::Display for RemoteOsChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self.0 {
+            RemoteOs::Auto => fl!("ui-profile-remote-os-auto"),
+            RemoteOs::Windows => fl!("ui-profile-remote-os-windows"),
+            RemoteOs::Linux => fl!("ui-profile-remote-os-linux"),
+        })
+    }
+}
+
+/// The C# "Operating system of the far end" list of the General tab: Automatic keeps the
+/// guess from the protocol, which is wrong for SSH into a Windows server.
+fn remote_os_choice(draft: &ProfileDraft) -> Element<'_, Message> {
+    column![
+        dialog_parts::label(fl!("ui-profile-remote-os")),
+        pick_list(
+            RemoteOs::ALL.map(RemoteOsChoice).to_vec(),
+            Some(RemoteOsChoice(draft.remote_os)),
+            |RemoteOsChoice(remote_os)| Message::App(AppMessage::ProfileChoice(
+                ProfileChoice::RemoteOs(remote_os)
+            )),
+        )
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
+        .width(Length::Fill),
+        dialog_parts::hint(fl!("ui-profile-remote-os-hint")),
+    ]
+    .spacing(spacing::XS)
+    .into()
 }
 
 /// Whether the profile's sessions keep a transcript, as the C# server dialog's choice.
@@ -14368,6 +14615,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             algorithm,
         } => crate::tunnels_view::host_key(host, *port, fingerprint, algorithm),
         Dialog::ShareFolder(form) => crate::share_view::dialog(form),
+        Dialog::MaskedCopy(state) => crate::masked_copy_view::dialog(state),
         Dialog::ShareStarted => forms
             .share
             .map_or_else(|| iced::widget::space().into(), crate::share_view::started),

@@ -210,7 +210,9 @@ fn flagged_group(
     read.flagged(why).next()?;
     Some(
         column![
-            text(heading).size(font_size::BODY).style(text::warning),
+            text(heading)
+                .size(font_size::BODY)
+                .style(styles::warning_text),
             change_lines(read.flagged(why)),
         ]
         .spacing(spacing::XS),

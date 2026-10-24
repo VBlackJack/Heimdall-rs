@@ -398,9 +398,13 @@ impl SecNumCloudPane {
         // 2. Error banner
         if let Some(err) = &self.error {
             body_col = body_col.push(
-                container(text(err.as_str()).size(font_size::BODY).style(text::danger))
-                    .padding(spacing::MD)
-                    .style(styles::card),
+                container(
+                    text(err.as_str())
+                        .size(font_size::BODY)
+                        .style(styles::error_text),
+                )
+                .padding(spacing::MD)
+                .style(styles::card),
             );
         }
 
@@ -485,15 +489,14 @@ impl SecNumCloudPane {
         report: &'a AuditReport,
         theme: &Theme,
     ) -> Element<'a, Message> {
-        let palette = theme.extended_palette();
         let compliance = report.compliance_percent();
 
         let badge_color = if compliance >= 80 {
-            palette.success.base.color
+            styles::success_text_color(theme)
         } else if compliance >= 50 {
-            palette.warning.base.color
+            styles::warning_text_color(theme)
         } else {
-            palette.danger.base.color
+            styles::error_text_color(theme)
         };
 
         let badge_row = row![
@@ -512,7 +515,7 @@ impl SecNumCloudPane {
                         report.total_pass()
                     ))
                     .size(font_size::BODY)
-                    .color(palette.success.base.color),
+                    .color(styles::success_text_color(theme)),
                     text(" | ").size(font_size::BODY).style(text::secondary),
                     text(format!(
                         "{}: {}",
@@ -520,7 +523,7 @@ impl SecNumCloudPane {
                         report.total_warn()
                     ))
                     .size(font_size::BODY)
-                    .color(palette.warning.base.color),
+                    .color(styles::warning_text_color(theme)),
                     text(" | ").size(font_size::BODY).style(text::secondary),
                     text(format!(
                         "{}: {}",
@@ -528,7 +531,7 @@ impl SecNumCloudPane {
                         report.total_fail()
                     ))
                     .size(font_size::BODY)
-                    .color(palette.danger.base.color),
+                    .color(styles::error_text_color(theme)),
                 ]
                 .spacing(spacing::XS)
                 .align_y(Alignment::Center),
@@ -561,21 +564,21 @@ impl SecNumCloudPane {
                     ch.pass_count()
                 ))
                 .size(font_size::CAPTION)
-                .color(palette.success.base.color),
+                .color(styles::success_text_color(theme)),
                 text(format!(
                     "{}: {}",
                     fl!("ui-tool-secnumcloud-status-warn"),
                     ch.warn_count()
                 ))
                 .size(font_size::CAPTION)
-                .color(palette.warning.base.color),
+                .color(styles::warning_text_color(theme)),
                 text(format!(
                     "{}: {}",
                     fl!("ui-tool-secnumcloud-status-fail"),
                     ch.fail_count()
                 ))
                 .size(font_size::CAPTION)
-                .color(palette.danger.base.color),
+                .color(styles::error_text_color(theme)),
             ]
             .spacing(spacing::SM)
             .align_y(Alignment::Center);
@@ -610,7 +613,7 @@ impl SecNumCloudPane {
                     text(status_text)
                         .size(font_size::CAPTION)
                         .font(styles::SEMIBOLD)
-                        .color(iced::Color::WHITE),
+                        .color(crate::themes::text_on(status_color)),
                 )
                 .padding([2, 8])
                 .style(move |_| container::Style {

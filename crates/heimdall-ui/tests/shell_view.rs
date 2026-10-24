@@ -93,6 +93,7 @@ fn profile(id: &str, group: Option<&str>) -> SshProfile {
         session_logging: None,
         ssh_mode: heimdall_core::profile::SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }
 }
 
@@ -6234,4 +6235,392 @@ fn a_migration_says_how_many_csharp_certificates_it_carried_over_or_why_not() {
     let mut ui = simulator(&shell);
     ui.find("The trusted certificates could not be carried over: disk full")
         .expect("why not");
+}
+
+// ---- Copy output, secrets masked (Ctrl+Shift+M) ------------------------------------------
+
+/// A connected shell that printed a secret, with the masked copy opened on it by the shortcut
+/// and the masking done as the window's task would do it.
+fn masked_copy_open(dir: &Path) -> (Shell, TabId) {
+    let (mut shell, tab, attempt) = connected_shell(dir);
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Output(b"db_password=hunter2-Zq9\r\n".to_vec()),
+    }));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::MaskedCopy));
+    (shell, tab)
+}
+
+fn masking_done(shell: &mut Shell, options: heimdall_core::redaction::RedactionOptions) {
+    let run = 1;
+    let text = "db_password=hunter2-Zq9";
+    let _ = shell.update(Message::App(AppMessage::MaskedCopy(
+        heimdall_app::MaskedCopyMessage::Done {
+            run,
+            outcome: heimdall_core::redaction::redact(text, options),
+        },
+    )));
+}
+
+#[test]
+fn the_masked_copy_shortcut_opens_a_review_that_says_masking_is_best_effort() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _) = masked_copy_open(dir.path());
+    assert!(matches!(
+        shell.app().dialog,
+        Some(heimdall_app::Dialog::MaskedCopy(_))
+    ));
+    masking_done(
+        &mut shell,
+        heimdall_core::redaction::RedactionOptions::default(),
+    );
+    let mut ui = simulator(&shell);
+    ui.find("Copy output, secrets masked").expect("its title");
+    ui.find("db_password=[masked:key-value-secret]")
+        .expect("the masked text, not the secret");
+    assert!(ui.find("hunter2-Zq9").is_err(), "the secret is nowhere");
+    ui.find("Key-value secret: 1 occurrence")
+        .expect("the count per rule");
+    ui.find("Also mask host names and addresses")
+        .expect("the host option");
+    // Best effort, to be read, never a promise.
+    ui.find(
+        "Masking is best effort. A secret of a shape no rule knows is not masked, and a masked copy can still hold one. Read the whole text before you share it.",
+    )
+    .expect("the best-effort wording");
+    assert!(ui.find("safe to share").is_err());
+    ui.click("Copy").expect("the button");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+    );
+}
+
+#[test]
+fn the_review_cannot_copy_while_masking_or_when_the_engine_gave_up() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _) = masked_copy_open(dir.path());
+    // Still masking: the button does nothing.
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Masking the text...").expect("it says so");
+        let _ = ui.click("Copy");
+        assert!(
+            !ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::MaskedCopy(
+        heimdall_app::MaskedCopyMessage::Done {
+            run: 1,
+            outcome: Err(heimdall_core::redaction::RedactionError::Timeout {
+                rule: heimdall_core::redaction::rule_id::KEY_VALUE_SECRET,
+            }),
+        },
+    )));
+    let mut ui = simulator(&shell);
+    ui.find(
+        "Masking stopped: the rule \"Key-value secret\" took too long on this text, so nothing can be copied.",
+    )
+    .expect("the refusal");
+    let _ = ui.click("Copy");
+    assert!(
+        !ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog))),
+        "Copy is greyed out"
+    );
+}
+
+#[test]
+fn the_host_option_asks_to_mask_again() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _) = masked_copy_open(dir.path());
+    masking_done(
+        &mut shell,
+        heimdall_core::redaction::RedactionOptions::default(),
+    );
+    let mut ui = simulator(&shell);
+    ui.click("Also mask host names and addresses")
+        .expect("the option");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::MaskedCopy(
+            heimdall_app::MaskedCopyMessage::HostsChanged(true)
+        ))
+    )));
+}
+
+#[test]
+fn the_tab_menu_offers_the_masked_copy_for_a_session_of_text() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    let mut ui = simulator(&shell);
+    ui.click("Copy output, secrets masked...")
+        .expect("the entry");
+    let chosen: Vec<String> = ui
+        .into_messages()
+        .filter_map(|message| match message {
+            Message::MenuChoice(chosen) => Some(format!("{chosen:?}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        chosen,
+        [format!(
+            "{:?}",
+            AppMessage::MaskedCopy(heimdall_app::MaskedCopyMessage::Open(tab))
+        )]
+    );
+}
+
+#[test]
+fn the_masked_copy_shortcut_does_nothing_without_a_session_of_text() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::MaskedCopy));
+    assert!(shell.app().dialog.is_none());
+}
+
+// ---- Capture a command from the terminal (Ctrl+Shift+L, Shift+right-click) ----------------
+
+/// Selects the first `columns` columns of the first row of `tab`'s terminal with the mouse.
+fn select_first_row(shell: &mut Shell, tab: TabId, columns: usize) {
+    use heimdall_app::PointerInput;
+    use heimdall_term::{CellPoint, Modifiers, MouseAction, MouseButton};
+
+    let at = |col: usize, right_half: bool| CellPoint {
+        row: 0,
+        col,
+        right_half,
+    };
+    let steps = [
+        (MouseAction::Press(MouseButton::Left), at(0, false)),
+        (
+            MouseAction::Motion {
+                held: Some(MouseButton::Left),
+            },
+            at(columns - 1, true),
+        ),
+        (
+            MouseAction::Release(MouseButton::Left),
+            at(columns - 1, true),
+        ),
+    ];
+    for (action, at) in steps {
+        let _ = shell.update(Message::App(AppMessage::Pointer {
+            tab,
+            input: PointerInput {
+                at,
+                action,
+                modifiers: Modifiers::default(),
+                clicks: 1,
+            },
+        }));
+    }
+}
+
+fn library_tabs(shell: &Shell) -> usize {
+    shell
+        .app()
+        .tabs
+        .iter()
+        .filter(|tab| tab.tool() == Some(heimdall_app::tools::ToolId::CmdLib))
+        .count()
+}
+
+#[test]
+fn the_capture_shortcut_opens_the_command_library_and_a_second_one_reuses_its_tab() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = connected_shell(dir.path());
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Output(b"uptime\r\n".to_vec()),
+    }));
+    select_first_row(&mut shell, tab, 6);
+
+    let _ = shell.update(Message::Shortcut(WindowShortcut::CaptureCommand));
+    assert_eq!(library_tabs(&shell), 1, "the library opened");
+    assert_eq!(
+        shell.app().active_tab().and_then(heimdall_app::Tab::tool),
+        Some(heimdall_app::tools::ToolId::CmdLib),
+        "and shown"
+    );
+    assert!(shell.app().dialog.is_none());
+
+    // Back to the shell, capture again: the library tab already open is shown, none is added.
+    let _ = shell.update(Message::App(AppMessage::SelectTab(tab)));
+    select_first_row(&mut shell, tab, 6);
+    let _ = shell.update(Message::Shortcut(WindowShortcut::CaptureCommand));
+    assert_eq!(library_tabs(&shell), 1, "no second library tab");
+    assert_eq!(
+        shell.app().active_tab().and_then(heimdall_app::Tab::tool),
+        Some(heimdall_app::tools::ToolId::CmdLib)
+    );
+}
+
+#[test]
+fn the_capture_shortcut_with_nothing_selected_opens_nothing_and_says_so() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::Shortcut(WindowShortcut::CaptureCommand));
+    assert_eq!(library_tabs(&shell), 0);
+    assert_eq!(
+        shell.app().notice(),
+        Some(&heimdall_app::Notice::CaptureNothingSelected)
+    );
+}
+
+#[test]
+fn the_capture_shortcut_does_nothing_without_a_session_of_text() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::CaptureCommand));
+    assert_eq!(library_tabs(&shell), 0);
+    assert!(shell.app().dialog.is_none());
+}
+
+#[test]
+fn the_capture_menu_offers_one_entry_enabled_only_with_a_selection() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = connected_shell(dir.path());
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Output(b"uptime\r\n".to_vec()),
+    }));
+
+    // Nothing selected: the entry is there and does nothing.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Capture(tab)));
+    let mut ui = simulator(&shell);
+    let _ = ui.click("Save selection to Command Library");
+    assert!(
+        !ui.into_messages()
+            .any(|message| matches!(message, Message::MenuChoice(_))),
+        "disabled without a selection"
+    );
+
+    select_first_row(&mut shell, tab, 6);
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Capture(tab)));
+    let mut ui = simulator(&shell);
+    ui.click("Save selection to Command Library")
+        .expect("the entry");
+    let chosen: Vec<String> = ui
+        .into_messages()
+        .filter_map(|message| match message {
+            Message::MenuChoice(chosen) => Some(format!("{chosen:?}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        chosen,
+        [format!("{:?}", AppMessage::CaptureCommand(tab))],
+        "choosing it asks for the capture of that terminal"
+    );
+}
+
+#[test]
+fn the_capture_menu_is_not_offered_for_a_session_that_is_not_text() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTool(heimdall_app::tools::ToolId::Uuid));
+    let tool = shell.app().active_tab().expect("the tool tab").id;
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Capture(tool)));
+    let mut ui = simulator(&shell);
+    assert!(
+        ui.find("Save selection to Command Library").is_err(),
+        "a tool is no terminal: no menu"
+    );
+}
+
+/// What a Shift+right-click over the terminal produces.
+fn shift_right_click(shell: &Shell) -> Vec<Message> {
+    use iced::keyboard::{self, Modifiers};
+    use iced::{Event, Point, mouse};
+
+    let mut ui = simulator(shell);
+    ui.point_at(Point::new(700.0, 300.0));
+    let _ = ui.simulate([
+        Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::SHIFT)),
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)),
+    ]);
+    ui.into_messages().collect()
+}
+
+fn pastes_or_clicks(messages: &[Message]) -> bool {
+    messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::App(
+                AppMessage::Pointer { .. }
+                    | AppMessage::PasteRequest(_)
+                    | AppMessage::ClipboardText { .. }
+            )
+        )
+    })
+}
+
+#[test]
+fn shift_right_click_opens_the_capture_menu_and_never_pastes() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, tab, _) = connected_shell(dir.path());
+    let messages = shift_right_click(&shell);
+    assert!(!pastes_or_clicks(&messages), "{messages:?}");
+    assert!(
+        messages.iter().any(
+            |message| matches!(message, Message::OpenTreeMenu(TreeMenu::Capture(t)) if *t == tab)
+        ),
+        "the menu is asked for: {messages:?}"
+    );
+}
+
+#[test]
+fn shift_right_click_never_pastes_where_the_capture_is_not_offered() {
+    // A session still connecting offers no capture: the click does nothing at all.
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let _ = open(&mut core, "a");
+    let shell = Shell::with_app(core);
+    let messages = shift_right_click(&shell);
+    assert!(!pastes_or_clicks(&messages), "{messages:?}");
+    assert!(
+        !messages
+            .iter()
+            .any(|message| matches!(message, Message::OpenTreeMenu(_))),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn a_plain_right_click_still_pastes() {
+    use iced::{Event, Point, mouse};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _) = connected_shell(dir.path());
+    let mut ui = simulator(&shell);
+    ui.point_at(Point::new(700.0, 300.0));
+    let _ = ui.simulate([Event::Mouse(mouse::Event::ButtonPressed(
+        mouse::Button::Right,
+    ))]);
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Pointer { input, .. })
+                if input.action
+                    == heimdall_term::MouseAction::Press(heimdall_term::MouseButton::Right)
+        )),
+        "{messages:?}"
+    );
 }

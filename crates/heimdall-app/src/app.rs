@@ -79,6 +79,7 @@ mod bulk_edit;
 mod bulk_password;
 mod citrix_import;
 mod citrix_launch;
+mod command_capture;
 mod connect_as;
 mod connection_history;
 mod credential_guard_gate;
@@ -111,6 +112,7 @@ mod local_menu;
 mod local_tab;
 mod macro_editor;
 mod macros;
+mod masked_copy;
 mod mstsc_launch;
 mod network_scan;
 mod onboarding;
@@ -171,6 +173,10 @@ pub use broadcast::BroadcastMessage;
 pub use bulk_edit::{BulkField, BulkRefusal};
 pub use bulk_password::{BulkPasswordRefusal, BulkPasswordSkips, bulk_password_refusal};
 pub use citrix_import::CitrixImportOutcome;
+pub use command_capture::{
+    CapturedCommand, LINUX_LINE_SEPARATOR, WINDOWS_LINE_SEPARATOR, capture_platform,
+    clean_selection, to_command_line,
+};
 pub use connect_as::ConnectAs;
 pub use csharp_settings_import::{CarriedCertificates, ImportedPreferences};
 pub use detail::SavedCredentials;
@@ -192,6 +198,7 @@ pub use legacy_migration::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use local_tab::{ElevatedPane, ElevatedState, LocalConfirmation};
 pub use macro_editor::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use macros::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
+pub use masked_copy::{MaskedCopy, MaskedCopyMessage, MaskedView};
 pub use network_scan::{NetworkScan, NetworkScanMessage, NetworkScanRow};
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
 pub use post_connect::PostConnectConfirmation;
@@ -210,7 +217,9 @@ pub use run_in_shell::ScriptConfirmation;
 pub use scheduled::{SCHEDULED_TICK, ScheduledNotice};
 pub use scheduled_page::{ScheduledChoice, ScheduledMessage, local_time_text};
 pub use selection::SelectionMessage;
-pub use send_command::{BroadcastConfirmation, SendConfirmation, SendTarget, SentCommand};
+pub use send_command::{
+    BroadcastConfirmation, Delivery, SendConfirmation, SendTarget, SentCommand,
+};
 pub use session_load::SessionLoadNotice;
 pub use session_restore::{RestoreDialog, RestoreRow};
 pub use sessions_import::{
@@ -544,6 +553,11 @@ pub enum Message {
     Tunnel(TunnelMessage),
     /// Something about "Share folder".
     Share(ShareMessage),
+    /// Something about "Copy output, secrets masked".
+    MaskedCopy(MaskedCopyMessage),
+    /// Keep the selection of a session of text for the command library, as the C#
+    /// "Save selection to Command Library": the window then opens the library on it.
+    CaptureCommand(TabId),
     /// The Scheduled page and its dialog.
     Scheduled(ScheduledMessage),
     /// Show a tab.
@@ -1088,6 +1102,8 @@ impl fmt::Debug for Message {
             Self::Files(message) => write!(f, "Files({message:?})"),
             Self::Tunnel(message) => write!(f, "Tunnel({message:?})"),
             Self::Share(message) => write!(f, "Share({message:?})"),
+            Self::MaskedCopy(message) => write!(f, "MaskedCopy({message:?})"),
+            Self::CaptureCommand(tab) => write!(f, "CaptureCommand({})", tab.value()),
             Self::Scheduled(_) => f.write_str("Scheduled"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
             Self::MoveTab { tab, onto } => {
@@ -1440,6 +1456,16 @@ pub enum Effect {
         question: QuestionId,
         /// Answer; `None` cancels.
         answer: Option<Answer>,
+    },
+    /// Mask the secrets of a terminal's text off the UI thread, as [`heimdall_core::redaction`]
+    /// does, and feed the outcome back as [`MaskedCopyMessage::Done`].
+    Redact {
+        /// The masking's number.
+        run: u64,
+        /// The unmasked text.
+        text: std::sync::Arc<zeroize::Zeroizing<String>>,
+        /// What it is asked to do.
+        options: heimdall_core::redaction::RedactionOptions,
     },
     /// Put text on the clipboard.
     WriteClipboard(String),
@@ -2021,6 +2047,7 @@ impl fmt::Debug for Effect {
                 write!(f, "Answer({}, {answer:?})", question.value())
             }
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
+            Self::Redact { run, text, .. } => write!(f, "Redact({run}, {} bytes)", text.len()),
             Self::WriteFileList(paths) => write!(f, "WriteFileList({})", paths.len()),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
             Self::OpenWebConsole { through, .. } => write!(f, "OpenWebConsole({through:?})"),
@@ -2734,6 +2761,18 @@ impl TabProfile {
         }
     }
 
+    /// The platform of the far end: what the profile declares, else the protocol's guess;
+    /// `Auto` when neither tells, as the C# `RemoteOsResolver.Resolve`.
+    #[must_use]
+    pub fn platform(&self) -> heimdall_core::profile::RemoteOs {
+        let declared = match self {
+            Self::Ssh(profile) => profile.remote_os,
+            Self::Telnet(profile) => profile.remote_os,
+            _ => heimdall_core::profile::RemoteOs::Auto,
+        };
+        declared.or(self.kind().platform_guess())
+    }
+
     /// Account, when the profile names one.
     #[must_use]
     pub fn username(&self) -> Option<&str> {
@@ -2826,6 +2865,8 @@ pub enum Dialog {
     NewTunnel(crate::tunnel::TunnelForm),
     /// The "Share folder" dialog, as filled.
     ShareFolder(Box<crate::share::ShareForm>),
+    /// "Copy output, secrets masked": the masked text of a terminal, for review.
+    MaskedCopy(Box<MaskedCopy>),
     /// The share started: its warning, URL and `curl` command.
     ShareStarted,
     /// The dialog adding or editing a scheduled connection, as filled.
@@ -3434,6 +3475,9 @@ pub struct App {
     /// The commands of the command library written into terminals, until the window takes
     /// them for its history.
     sent_commands: Vec<SentCommand>,
+    /// A command captured from a terminal, with the facts of its session, until the window
+    /// opens the command library on it.
+    pending_capture: Option<crate::tools::ToolContext>,
     /// The tabs detached to windows of their own, off the strip.
     floating: Vec<Floating>,
     /// Window-level dialog, if any.
@@ -3515,6 +3559,8 @@ pub struct App {
     share: Option<share::ShareRun>,
     /// The identifier of the last share started.
     next_share: u64,
+    /// The number of the last masking of a terminal's text started for the masked copy.
+    next_masked_copy: u64,
     /// The gateway key the user is asked about for a tunnel.
     pending_tunnel_key: Option<tunnels::PendingTunnelKey>,
     /// Launches of `PuTTY` through gateways, until their forwards are released.
@@ -3637,6 +3683,7 @@ impl App {
     /// The application with the profiles of `config.profiles_file`. A store that cannot
     /// be read starts empty and the problem is shown.
     #[must_use]
+    #[expect(clippy::too_many_lines, reason = "one line per piece of state")]
     pub fn new(config: AppConfig) -> Self {
         let pending_restore = heimdall_core::session_snapshot::load(
             &heimdall_core::session_snapshot::snapshot_path(&config.profiles_file),
@@ -3673,6 +3720,7 @@ impl App {
             active: None,
             closing_pane: None,
             sent_commands: Vec::new(),
+            pending_capture: None,
             floating: Vec::new(),
             dialog,
             route_test: None,
@@ -3710,6 +3758,7 @@ impl App {
             next_tunnel: crate::tunnel::TunnelId::default(),
             share: None,
             next_share: 0,
+            next_masked_copy: 0,
             pending_tunnel_key: None,
             putty_routes: Vec::new(),
             next_putty_route: crate::putty_driver::PuttyRouteId::default(),
@@ -3959,6 +4008,11 @@ impl App {
             Message::Files(message) => self.files(message),
             Message::Tunnel(message) => self.tunnel_message(message),
             Message::Share(message) => self.share_message(message),
+            Message::MaskedCopy(message) => self.masked_copy_message(message),
+            Message::CaptureCommand(tab) => {
+                self.capture_command(tab);
+                Vec::new()
+            }
             Message::Scheduled(message) => {
                 self.scheduled_message(message);
                 Vec::new()
@@ -5221,6 +5275,9 @@ impl App {
         if let Some(Dialog::ShareFolder(_)) = &self.dialog {
             return self.confirm_share_dialog();
         }
+        if let Some(Dialog::MaskedCopy(_)) = &self.dialog {
+            return self.confirm_masked_copy();
+        }
         let effects = self.confirm_open_dialog();
         // A transfer's question waits for any other to be answered.
         self.ask_next_conflicts();
@@ -5459,6 +5516,7 @@ impl App {
                 // Confirmed before: see `confirm_dialog`.
                 | Dialog::NewTunnel(_)
                 | Dialog::ShareFolder(_)
+                | Dialog::MaskedCopy(_)
                 // Its button only closes the dialog: the share goes on.
                 | Dialog::ShareStarted
                 | Dialog::TunnelHostKey { .. },

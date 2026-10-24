@@ -195,6 +195,16 @@ pub enum WindowShortcut {
     /// Copy what the status bar said lately to the clipboard, for a screen reader to read:
     /// Ctrl+Shift+A, bound by no session, no Files tab and no C# shortcut.
     CopyStatus,
+    /// Copy the output of the session shown with its secrets masked, after a review:
+    /// Ctrl+Shift+M, as the C# `MaskedTerminalCopyService`'s shortcut. A terminal leaves it
+    /// to the window; a remote desktop keeps it for its own applications, and the window
+    /// offers it for a session of text only.
+    MaskedCopy,
+    /// Save the selection of the session shown to the command library, for review in the
+    /// editor of a new action: Ctrl+Shift+L, as the C# `TerminalLibraryCapture`. A terminal
+    /// leaves it to the window; a remote desktop keeps it for its own applications, and the
+    /// window offers it for a session of text only.
+    CaptureCommand,
     /// Open Quick Connect: Ctrl+K, as the C# one, wherever the keyboard is, and
     /// Ctrl+Shift+K, which a terminal never keeps.
     QuickConnect,
@@ -388,6 +398,12 @@ pub fn window_shortcut(
         }
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('a') => {
             Some(WindowShortcut::CopyStatus)
+        }
+        keyboard::Key::Character(_) if shift && letter(key, physical) == Some('m') => {
+            Some(WindowShortcut::MaskedCopy)
+        }
+        keyboard::Key::Character(_) if shift && letter(key, physical) == Some('l') => {
+            Some(WindowShortcut::CaptureCommand)
         }
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('o') => {
             Some(WindowShortcut::ToggleSplit)
@@ -878,6 +894,64 @@ mod tests {
             None,
             "Ctrl+S is the session's, or the editor's save"
         );
+    }
+
+    #[test]
+    fn ctrl_shift_m_is_the_masked_copy_on_any_layout_and_a_terminal_leaves_it() {
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        assert_eq!(
+            window_shortcut(&character("M"), ANY_PLACE, ctrl_shift),
+            Some(WindowShortcut::MaskedCopy)
+        );
+        assert_eq!(
+            window_shortcut(
+                &character("\u{044c}"),
+                Physical::Code(Code::KeyM),
+                ctrl_shift
+            ),
+            Some(WindowShortcut::MaskedCopy),
+            "the M key of a Cyrillic keyboard"
+        );
+        assert_eq!(
+            window_shortcut(&character("m"), ANY_PLACE, Modifiers::CTRL),
+            None,
+            "Ctrl+M is Enter, the session's"
+        );
+        assert!(left_to_window(
+            Some(WindowShortcut::MaskedCopy),
+            false,
+            ANY_PLACE,
+            ctrl_shift
+        ));
+    }
+
+    #[test]
+    fn ctrl_shift_l_saves_the_selection_to_the_library_on_any_layout_and_a_terminal_leaves_it() {
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        assert_eq!(
+            window_shortcut(&character("L"), ANY_PLACE, ctrl_shift),
+            Some(WindowShortcut::CaptureCommand)
+        );
+        assert_eq!(
+            window_shortcut(
+                &character("\u{0434}"),
+                Physical::Code(Code::KeyL),
+                ctrl_shift
+            ),
+            Some(WindowShortcut::CaptureCommand),
+            "the L key of a Cyrillic keyboard"
+        );
+        assert_eq!(
+            window_shortcut(&character("l"), ANY_PLACE, Modifiers::CTRL),
+            None,
+            "Ctrl+L locks the workspace and clears a shell: not this"
+        );
+        assert!(left_to_window(
+            Some(WindowShortcut::CaptureCommand),
+            false,
+            ANY_PLACE,
+            ctrl_shift
+        ));
     }
 
     #[test]

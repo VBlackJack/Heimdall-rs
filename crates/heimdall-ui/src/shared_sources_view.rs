@@ -235,7 +235,7 @@ impl SharedSourcesEditor {
                 }
                 for (note, warning) in source_notes(state) {
                     content = content.push(text(note).size(font_size::CAPTION).style(if warning {
-                        text::warning
+                        styles::warning_text
                     } else {
                         text::secondary
                     }));
@@ -247,7 +247,11 @@ impl SharedSourcesEditor {
                 .map(problem_texts)
                 .unwrap_or_default()
             {
-                content = content.push(text(message).size(font_size::CAPTION).style(text::danger));
+                content = content.push(
+                    text(message)
+                        .size(font_size::CAPTION)
+                        .style(styles::error_text),
+                );
             }
         }
         content = content.push(column![

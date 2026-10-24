@@ -397,7 +397,7 @@ pub fn page<'a>(app: &App, search: &str) -> Element<'a, Message> {
     if let Some(recent) = &sections.recent {
         content = content
             .push(section_header(fl!("ui-tools-recent"), |theme| {
-                theme.palette().primary
+                styles::accent_text_color(theme)
             }))
             .push(cards(app, recent, SECTION_GAP));
     }
@@ -490,7 +490,7 @@ fn page_header<'a>(app: &App, search: &str, count: usize) -> Element<'a, Message
                 .size(font_size::CAPTION)
                 .style(move |theme: &Theme| text::Style {
                     color: Some(if has_target {
-                        theme.palette().primary
+                        styles::accent_text_color(theme)
                     } else {
                         theme.extended_palette().secondary.base.color
                     }),

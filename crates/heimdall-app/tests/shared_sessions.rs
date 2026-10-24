@@ -34,9 +34,9 @@ use heimdall_term::GridSize;
 const TEAM: &str = "[Bookmarks]\r\nSubRep=Prod\\Web\r\nImgNum=42\r\n\
 web01= #109#0%web01.example.com%2222%deploy%%-1%-1%%%%%0%0%0%C:\\Keys\\id_rsa%%-1%0%0%0%%1080%%0\r\n\
 desk= #91#4%desk.example.com%3390%admin%0%-1%-1%\r\n\
-files= #130#5%files.example.com%21%bob%\r\n\
+files= #130#6%files.example.com%21%bob%\r\n\
 bad host= #109#0%evil host;rm -rf%22%root%\r\n\
-ftp= #130#1%ftp.example.com%21%%\r\n\
+ftp= #130#6%ftp.example.com%21%%\r\n\
 [Passwords]\r\ndeploy@web01=SECRET-PASSWORD-VALUE\r\n";
 
 fn source(id: &str, path: &Path) -> SharedSource {
@@ -327,11 +327,10 @@ fn a_crafted_folder_cannot_make_the_reader_allocate_without_bound() {
     }
     let dir = tempfile::tempdir().expect("dir");
     let (shared, _) = loaded(dir.path(), &text);
-    // The section whose folder is too long is not taken at all.
-    assert_eq!(
-        shared.sources()[0].status,
-        SourceStatus::Failed(SourceProblem::Empty)
-    );
+    // The section whose folder is too long is not taken at all: the file read, nothing in it
+    // was kept, and nothing earlier is brought back for it.
+    assert_eq!(shared.sources()[0].status, SourceStatus::Loaded);
+    assert_eq!(shared.sources()[0].sessions, 0);
     assert_eq!(shared.sessions().count(), 0);
 
     // A long name is left out on its own, the others are kept and the notice counts it.
@@ -420,7 +419,7 @@ web01= #109#0%web01.example.com%22%[GHOST]%\r\n\
 db= #109#0%db01.example.com%22%admin%\r\n\
 replica= #109#0%db01.example.com%22%admin%\r\n\
 bad host= #109#0%evil host;rm -rf%22%root%\r\n\
-ftp= #130#1%ftp.example.com%21%%\r\n\
+ftp= #130#6%ftp.example.com%21%%\r\n\
 [Passwords]\r\nadmin@db=SECRET-PASSWORD-VALUE\r\n";
 
 fn cached(dir: &Path) -> SharedSessions {
@@ -449,7 +448,7 @@ fn the_report_lists_what_was_not_taken_as_it_stood() {
     assert!(
         skipped
             .iter()
-            .any(|(name, reason, _)| *name == "ftp" && *reason == Some(SkipReason::OtherProtocol))
+            .any(|(name, reason, _)| *name == "ftp" && *reason == Some(SkipReason::FtpNotSupported))
     );
     let unresolved = report
         .entries
@@ -1396,16 +1395,33 @@ fn a_remembered_approval_is_for_the_exact_command_and_its_source() {
     ));
 }
 
-/// A session line of a `MobaXterm` file: the protocol `code`, and each `(index, value)` of
-/// `fields` at its place in the `%` list, the others empty. The indexes are those the C#
-/// `SessionLayouts` documents (`MobaXtermImporter.cs:100-157`).
+/// The session type a `MobaXterm` file gives the session whose usual icon is `icon`: the type
+/// decides the protocol, never the icon (`MobaXtermImporter.cs:515-542`).
+fn session_type_of(icon: u32) -> u32 {
+    match icon {
+        98 => 1,
+        91 => 4,
+        128 => 5,
+        130 => 6,
+        140 => 7,
+        _ => 0,
+    }
+}
+
+/// A session line of a `MobaXterm` file: the usual icon of the protocol (`code`), and each
+/// `(index, value)` of `fields` at its place in the `%` list, the others empty. The indexes are
+/// those the C# `SessionLayouts` documents (`MobaXtermImporter.cs:100-157`).
 fn line(name: &str, code: u32, fields: &[(usize, &str)]) -> String {
     const FIELD_COUNT: usize = 32;
     let mut values = vec![""; FIELD_COUNT];
     for (at, value) in fields {
         values[*at] = value;
     }
-    format!("{name}= #{code}#0%{}\r\n", values.join("%"))
+    format!(
+        "{name}= #{code}#{}%{}\r\n",
+        session_type_of(code),
+        values.join("%")
+    )
 }
 
 /// A file with an SFTP, a Telnet and a VNC session, each with fields that must not come along.
@@ -1598,6 +1614,115 @@ fn a_session_going_around_a_route_heimdall_cannot_take_is_refused_not_taken_dire
         );
     }
     assert_eq!(shared.sources()[0].refused, 6);
+}
+
+#[test]
+fn a_session_of_a_type_heimdall_does_not_take_says_why_and_is_never_taken_as_a_connection() {
+    use heimdall_app::shared_report::{ReportCheck, SkipReason};
+    let dir = tempfile::tempdir().expect("dir");
+    let text = "[Bookmarks]
+        ftp= #130#6%ftp.example.com%21%anon%
+        wsl= #151#14%AlmaLinux-9%
+        odd= #12#99%odd.example.com%22%
+        ssh= #42#0%ssh.example.com%22%deploy%
+";
+    let (shared, _) = loaded(dir.path(), text);
+    let names: Vec<&str> = shared
+        .sessions_of("team")
+        .iter()
+        .map(heimdall_app::shared_sessions::SharedSession::name)
+        .collect();
+    assert_eq!(names, ["ssh"], "the icon does not decide the protocol");
+    let report = shared.report_of("team").expect("a report");
+    let skipped: Vec<_> = report
+        .entries
+        .iter()
+        .filter(|entry| entry.check == ReportCheck::SkippedSession)
+        .map(|entry| (entry.session.as_str(), entry.reason, entry.detail.as_str()))
+        .collect();
+    assert_eq!(skipped.len(), 3, "{skipped:?}");
+    for expected in [
+        ("ftp", Some(SkipReason::FtpNotSupported), ""),
+        ("wsl", Some(SkipReason::WslNotSupported), ""),
+        ("odd", Some(SkipReason::OtherProtocol), "99"),
+    ] {
+        assert!(skipped.contains(&expected), "{expected:?}: {skipped:?}");
+    }
+    assert_eq!(shared.sources()[0].refused, 3);
+}
+
+#[test]
+fn a_file_that_adds_a_route_to_every_session_leaves_no_direct_session_behind() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    let direct = format!(
+        "[Bookmarks]\r\n{}{}",
+        line("tel", 98, &[(0, "t.example.com")]),
+        line("vnc", 128, &[(0, "v.example.com")]),
+    );
+    std::fs::write(&file, &direct).expect("write");
+    let sources = vec![source("team", &file)];
+    let mut shared = cached(dir.path());
+    shared.load(&sources, &Variables::default());
+    assert_eq!(shared.sessions_of("team").len(), 2);
+    // The file now sends both through a route Heimdall cannot follow.
+    let routed = format!(
+        "[Bookmarks]\r\n{}{}",
+        line(
+            "tel",
+            98,
+            &[(0, "t.example.com"), (5, "jump.example.com"), (6, "22")]
+        ),
+        line(
+            "vnc",
+            128,
+            &[(0, "v.example.com"), (12, "2"), (13, "proxy.example.com")]
+        ),
+    );
+    std::fs::write(&file, &routed).expect("write");
+    assert!(shared.refresh(&sources, &Variables::default(), later()));
+    assert!(
+        shared.sessions_of("team").is_empty(),
+        "neither the previous read nor anything else brings a direct session back"
+    );
+    assert_eq!(shared.sources()[0].refused, 2);
+    // After a restart, with the file or without it, the old copy does not answer either.
+    for keep_file in [true, false] {
+        if !keep_file {
+            std::fs::remove_file(&file).expect("remove");
+        }
+        let mut restarted = cached(dir.path());
+        restarted.load(&sources, &Variables::default());
+        assert!(restarted.sessions_of("team").is_empty(), "{keep_file}");
+    }
+}
+
+#[test]
+fn a_file_whose_session_lines_are_all_too_long_leaves_no_earlier_session_behind() {
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("team.mxtsessions");
+    let first = format!(
+        "[Bookmarks]
+{}",
+        line("tel", 98, &[(0, "t.example.com")])
+    );
+    std::fs::write(&file, &first).expect("write");
+    let sources = vec![source("team", &file)];
+    let mut shared = cached(dir.path());
+    shared.load(&sources, &Variables::default());
+    assert_eq!(shared.sessions_of("team").len(), 1);
+    let long = "x".repeat(3000);
+    let dropped = format!(
+        "[Bookmarks]
+{}",
+        line("tel", 98, &[(0, "t.example.com"), (2, &long)])
+    );
+    std::fs::write(&file, &dropped).expect("write");
+    assert!(shared.refresh(&sources, &Variables::default(), later()));
+    assert!(shared.sessions_of("team").is_empty());
+    let mut restarted = cached(dir.path());
+    restarted.load(&sources, &Variables::default());
+    assert!(restarted.sessions_of("team").is_empty());
 }
 
 #[test]

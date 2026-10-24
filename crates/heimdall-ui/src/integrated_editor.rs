@@ -424,9 +424,13 @@ pub fn view<'a>(
     .align_y(iced::Alignment::Center);
     let mut page = column![header].spacing(spacing::SM);
     if let Some(note) = notice(edit, connected) {
-        let mut line = row![text(note).size(font_size::CAPTION).style(text::warning)]
-            .spacing(spacing::SM)
-            .align_y(iced::Alignment::Center);
+        let mut line = row![
+            text(note)
+                .size(font_size::CAPTION)
+                .style(styles::warning_text)
+        ]
+        .spacing(spacing::SM)
+        .align_y(iced::Alignment::Center);
         if edit.notice == Some(EditorNotice::ChangedOnServer) && can_save {
             line = line.push(
                 button(text(fl!("ui-editor-overwrite")).size(font_size::CAPTION))

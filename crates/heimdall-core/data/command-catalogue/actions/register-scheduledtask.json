@@ -1,0 +1,147 @@
+{
+  "id": "register-scheduledtask",
+  "title": "Create a scheduled task",
+  "description": "Register a new scheduled task in the Windows Task Scheduler",
+  "category": "services-automation",
+  "platform": 0,
+  "level": 1,
+  "tags": [
+    "taskscheduler",
+    "create",
+    "automation",
+    "windows",
+    "register"
+  ],
+  "windowsCommandTemplateId": "register-scheduledtask-cmd",
+  "windowsCommandTemplate": {
+    "id": "register-scheduledtask-cmd",
+    "platform": 0,
+    "name": "Register-ScheduledTask",
+    "commandPattern": "$action = New-ScheduledTaskAction -Execute '{executable}' -Argument '{arguments}'; $trigger = New-ScheduledTaskTrigger -Daily -At '{time}'; Register-ScheduledTask -TaskName '{taskname}' -Action $action -Trigger $trigger -User '{user}'",
+    "parameters": [
+      {
+        "name": "taskname",
+        "label": "Task name",
+        "type": "string",
+        "quoting": "InlineInQuotes",
+        "defaultValue": "MyTask",
+        "required": true,
+        "description": "Name of the task to create"
+      },
+      {
+        "name": "executable",
+        "label": "Executable",
+        "type": "string",
+        "quoting": "InlineInQuotes",
+        "defaultValue": "powershell.exe",
+        "required": true,
+        "description": "Program to run"
+      },
+      {
+        "name": "arguments",
+        "label": "Arguments",
+        "type": "string",
+        "quoting": "InlineInQuotes",
+        "defaultValue": "-File C:\\Scripts\\backup.ps1",
+        "required": false,
+        "description": "Command arguments"
+      },
+      {
+        "name": "time",
+        "label": "Time",
+        "type": "string",
+        "quoting": "InlineInQuotes",
+        "defaultValue": "9:00AM",
+        "required": true,
+        "description": "Time of the daily trigger (e.g. 9:00AM)"
+      },
+      {
+        "name": "user",
+        "label": "User",
+        "type": "string",
+        "quoting": "InlineInQuotes",
+        "defaultValue": "SYSTEM",
+        "required": true,
+        "description": "Account the task runs as (e.g. SYSTEM)"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-File C:\\Scripts\\backup.ps1'; $trigger = New-ScheduledTaskTrigger -Daily -At 2:00AM; Register-ScheduledTask -TaskName 'DailyBackup' -Action $action -Trigger $trigger -User 'SYSTEM'",
+      "description": "Daily backup task at 2 AM",
+      "platform": 0
+    },
+    {
+      "command": "$action = New-ScheduledTaskAction -Execute 'shutdown.exe' -Argument '/r /t 0'; $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 3:00AM; Register-ScheduledTask -TaskName 'WeeklyReboot' -Action $action -Trigger $trigger",
+      "description": "Weekly restart on Sunday",
+      "platform": 0
+    },
+    {
+      "command": "$action = New-ScheduledTaskAction -Execute 'C:\\Scripts\\startup.bat'; $trigger = New-ScheduledTaskTrigger -AtStartup; Register-ScheduledTask -TaskName 'StartupScript' -Action $action -Trigger $trigger -User 'SYSTEM'",
+      "description": "Script at system startup",
+      "platform": 0
+    },
+    {
+      "command": "$action = New-ScheduledTaskAction -Execute 'notepad.exe' -Argument '-Force -Verbose'; $trigger = New-ScheduledTaskTrigger -AtLogOn; Register-ScheduledTask -TaskName 'DailyBackup' -Action $action -Trigger $trigger -User 'jdupont' -WhatIf",
+      "description": "Simulate the action without running it (dry run). The -WhatIf switch shows what would change without applying it. ESSENTIAL before any bulk action or critical change. Remove -WhatIf once checked to run it.",
+      "platform": 0
+    },
+    {
+      "command": "$action = New-ScheduledTaskAction -Execute 'notepad.exe' -Argument '-Force -Verbose'; $trigger = New-ScheduledTaskTrigger -AtLogOn; Register-ScheduledTask -TaskName 'DailyBackup' -Action $action -Trigger $trigger -User 'jdupont' -Confirm:$false",
+      "description": "Run the action without an interactive confirmation. -Confirm:$false suppresses the prompts. Useful in automated scripts, but use it with care: there is no safety net.",
+      "platform": 0
+    },
+    {
+      "command": "$action = New-ScheduledTaskAction -Execute 'notepad.exe' -Argument '-Force -Verbose'; $trigger = New-ScheduledTaskTrigger -AtLogOn; Register-ScheduledTask -TaskName 'DailyBackup' -Action $action -Trigger $trigger -User 'jdupont' -Verbose",
+      "description": "Show detailed information about the command's execution. -Verbose enables debug messages to understand exactly what happens. Essential for troubleshooting and for understanding the internal operations.",
+      "platform": 0
+    }
+  ],
+  "notes": "Requires administrator rights. Use -User 'SYSTEM' to run as the system account. Triggers: -Daily, -Weekly, -AtStartup, -AtLogon, -Once.",
+  "links": [
+    {
+      "title": "Register-ScheduledTask Documentation",
+      "url": "https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/register-scheduledtask"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Créer une tâche planifiée",
+      "description": "Enregistre une nouvelle tâche planifiée dans le Planificateur de tâches Windows",
+      "notes": "Nécessite des privilèges administrateur. Utilisez -User 'SYSTEM' pour exécution système. Déclencheurs: -Daily, -Weekly, -AtStartup, -AtLogon, -Once.",
+      "parameters": {
+        "windows": {
+          "taskname": {
+            "label": "Nom de la tâche",
+            "description": "Nom de la tâche à créer"
+          },
+          "executable": {
+            "label": "Exécutable",
+            "description": "Programme à exécuter"
+          },
+          "arguments": {
+            "label": "Arguments",
+            "description": "Arguments de la commande"
+          },
+          "time": {
+            "label": "Heure",
+            "description": "Heure du déclenchement quotidien (ex: 9:00AM)"
+          },
+          "user": {
+            "label": "Utilisateur",
+            "description": "Compte d'exécution (ex: SYSTEM)"
+          }
+        }
+      },
+      "examples": {
+        "$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-File C:\\Scripts\\backup.ps1'; $trigger = New-ScheduledTaskTrigger -Daily -At 2:00AM; Register-ScheduledTask -TaskName 'DailyBackup' -Action $action -Trigger $trigger -User 'SYSTEM'": "Tâche de sauvegarde quotidienne à 2h",
+        "$action = New-ScheduledTaskAction -Execute 'shutdown.exe' -Argument '/r /t 0'; $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 3:00AM; Register-ScheduledTask -TaskName 'WeeklyReboot' -Action $action -Trigger $trigger": "Redémarrage hebdomadaire le dimanche",
+        "$action = New-ScheduledTaskAction -Execute 'C:\\Scripts\\startup.bat'; $trigger = New-ScheduledTaskTrigger -AtStartup; Register-ScheduledTask -TaskName 'StartupScript' -Action $action -Trigger $trigger -User 'SYSTEM'": "Script au démarrage du système",
+        "$action = New-ScheduledTaskAction -Execute 'notepad.exe' -Argument '-Force -Verbose'; $trigger = New-ScheduledTaskTrigger -AtLogOn; Register-ScheduledTask -TaskName 'DailyBackup' -Action $action -Trigger $trigger -User 'jdupont' -WhatIf": "Simulation de l'action sans exécution réelle (dry-run). Le switch -WhatIf affiche ce qui serait modifié sans appliquer les changements. INDISPENSABLE avant toute action de masse ou modification critique. Retirez -WhatIf après validation pour exécuter.",
+        "$action = New-ScheduledTaskAction -Execute 'notepad.exe' -Argument '-Force -Verbose'; $trigger = New-ScheduledTaskTrigger -AtLogOn; Register-ScheduledTask -TaskName 'DailyBackup' -Action $action -Trigger $trigger -User 'jdupont' -Confirm:$false": "Exécute l'action sans demander de confirmation interactive. -Confirm:$false supprime les invites de validation. Utile dans les scripts automatisés mais à utiliser avec précaution : aucun filet de sécurité.",
+        "$action = New-ScheduledTaskAction -Execute 'notepad.exe' -Argument '-Force -Verbose'; $trigger = New-ScheduledTaskTrigger -AtLogOn; Register-ScheduledTask -TaskName 'DailyBackup' -Action $action -Trigger $trigger -User 'jdupont' -Verbose": "Affiche des informations détaillées sur l'exécution de la commande. -Verbose active les messages de débogage pour comprendre précisément ce qui se passe. Essentiel pour le troubleshooting et la compréhension des opérations internes."
+      }
+    }
+  }
+}

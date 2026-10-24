@@ -1,0 +1,93 @@
+{
+  "id": "systemd-analyze",
+  "title": "Analyze the boot time",
+  "description": "Analyze and show the boot time of the system and of the services",
+  "category": "services-automation",
+  "platform": 1,
+  "level": 0,
+  "tags": [
+    "systemd-analyze",
+    "boot",
+    "performance",
+    "startup"
+  ],
+  "linuxCommandTemplateId": "systemd-analyze-cmd",
+  "linuxCommandTemplate": {
+    "id": "systemd-analyze-cmd",
+    "platform": 1,
+    "name": "systemd-analyze",
+    "commandPattern": "systemd-analyze blame | head -n {lines}",
+    "parameters": [
+      {
+        "name": "lines",
+        "label": "Number of services",
+        "type": "number",
+        "defaultValue": "20",
+        "required": true,
+        "description": "Number of slowest services to show"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "systemd-analyze",
+      "description": "Show the total boot time",
+      "platform": 1
+    },
+    {
+      "command": "systemd-analyze blame",
+      "description": "List the services by startup time",
+      "platform": 1
+    },
+    {
+      "command": "systemd-analyze critical-chain",
+      "description": "Show the critical chain of the boot",
+      "platform": 1
+    },
+    {
+      "command": "systemd-analyze plot > boot.svg",
+      "description": "Boot chart",
+      "platform": 1
+    },
+    {
+      "command": "systemd-analyze verify /etc/systemd/system/myapp.service",
+      "description": "Check a service",
+      "platform": 1
+    },
+    {
+      "command": "systemd-analyze time",
+      "description": "Boot time summary",
+      "platform": 1
+    }
+  ],
+  "notes": "Does not require sudo. blame sorts by decreasing time. Useful to speed up the boot.",
+  "links": [
+    {
+      "title": "systemd-analyze documentation",
+      "url": "https://www.freedesktop.org/software/systemd/man/systemd-analyze.html"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Analyser le temps de démarrage",
+      "description": "Analyse et affiche le temps de démarrage du système et des services",
+      "notes": "Ne nécessite pas sudo. blame liste par ordre décroissant de temps. Utile pour optimiser le boot.",
+      "parameters": {
+        "linux": {
+          "lines": {
+            "label": "Nombre de services",
+            "description": "Nombre de services les plus lents à afficher"
+          }
+        }
+      },
+      "examples": {
+        "systemd-analyze": "Affiche le temps total de boot",
+        "systemd-analyze blame": "Liste les services par temps de démarrage",
+        "systemd-analyze critical-chain": "Affiche la chaîne critique du démarrage",
+        "systemd-analyze plot > boot.svg": "Graphique du boot",
+        "systemd-analyze verify /etc/systemd/system/myapp.service": "Vérifier un service",
+        "systemd-analyze time": "Résumé du temps de boot"
+      }
+    }
+  }
+}

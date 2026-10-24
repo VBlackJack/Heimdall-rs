@@ -27,7 +27,7 @@ use heimdall_app::reachability::{DownReason, Unchecked, Verdict};
 use heimdall_app::split::{Axis, Placement, SplitMessage};
 use heimdall_app::{
     ConnectAs, FilesMessage, FilterMessage, FloatMessage, FolderMessage, GatewayBadge,
-    HostKeysMessage, Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind,
+    HostKeysMessage, MaskedCopyMessage, Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind,
     ProfileMenuMessage, ProfileSummary, RdpMessage, ResolutionChoice, SelectionMessage,
     SessionState, SessionsMessage, SpecialKeys, TabGroup, TabId, TabMenuMessage, TreeFilter,
 };
@@ -134,6 +134,9 @@ pub enum TreeMenu {
     SendKeys(TabId),
     /// A terminal tab's macros: record, play, stop.
     Macros(TabId),
+    /// What Shift+right-click offers in a terminal: save its selection to the command
+    /// library, as the C# one-item menu.
+    Capture(TabId),
     /// The notes a session's menu writes about it, as the C# Notes submenu.
     Notes(ProfileId),
     /// The user's external tools a session's menu, or its tab's, starts for it, as the C#
@@ -582,7 +585,7 @@ pub fn owned_row(
         label = label.push(
             text(FAVORITE_MARK)
                 .size(font_size::SMALL_CAPTION)
-                .style(text::warning),
+                .style(styles::warning_text),
         );
     }
     if let Some(badge) = &profile.gateway {
@@ -1716,6 +1719,8 @@ pub struct TabMenuState {
     pub saveable: bool,
     /// It takes terminal macros.
     pub macros: bool,
+    /// Its output can be copied with the secrets masked: a session of text.
+    pub masked_copy: bool,
     /// The user lists external tools, which its profile's entries start for it.
     pub external_tools: bool,
     /// Opened from a pane's header: Disconnect closes that pane alone.
@@ -1803,6 +1808,17 @@ pub fn macro_entries<'a>(tab: TabId, menu: &heimdall_app::MacroMenu) -> Element<
             macro_message(heimdall_app::MacroMessage::Edit(name.clone())),
         ));
     }
+    menu_card(entries).into()
+}
+
+/// What Shift+right-click offers in a terminal: one entry, enabled only while there is a
+/// selection to save, as the C# `TerminalLibraryCapture.CreateMenu`.
+pub fn capture_entries<'a>(tab: TabId, has_selection: bool) -> Element<'a, Message> {
+    let entries = MenuColumn::new().push(keyed_entry(
+        fl!("ui-capture-menu"),
+        Some(fl!("ui-menu-keys-capture")),
+        has_selection.then_some(AppMessage::CaptureCommand(tab)),
+    ));
     menu_card(entries).into()
 }
 
@@ -2295,6 +2311,13 @@ fn terminal_entries<'a>(state: &TabMenuState) -> Vec<Element<'a, Message>> {
     }
     if state.macros {
         entries.push(submenu(fl!("ui-macros-menu"), TreeMenu::Macros(tab)));
+    }
+    if state.masked_copy {
+        entries.push(keyed_entry(
+            fl!("ui-masked-copy-menu"),
+            Some(fl!("ui-menu-keys-masked-copy")),
+            Some(AppMessage::MaskedCopy(MaskedCopyMessage::Open(tab))),
+        ));
     }
     if let Some(shown) = state.health {
         entries.push(health_entry(tab, shown));

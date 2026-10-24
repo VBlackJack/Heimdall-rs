@@ -1,0 +1,87 @@
+{
+  "id": "network-test-connection-advanced",
+  "title": "Advanced network connectivity test",
+  "description": "Test the network connectivity to a host with a traceroute, a port test and detailed routing information.",
+  "category": "network-dns",
+  "platform": 0,
+  "level": 0,
+  "tags": [
+    "network",
+    "connectivity",
+    "diagnostic",
+    "test-netconnection"
+  ],
+  "windowsCommandTemplateId": "network-test-connection-advanced-cmd",
+  "windowsCommandTemplate": {
+    "id": "network-test-connection-advanced-cmd",
+    "platform": 0,
+    "name": "Test-NetConnection",
+    "commandPattern": "Test-NetConnection -ComputerName {hostname} -Port {port} -InformationLevel Detailed -TraceRoute",
+    "parameters": [
+      {
+        "name": "hostname",
+        "label": "Hostname or IP",
+        "type": "string",
+        "defaultValue": "google.com",
+        "required": true,
+        "description": "Hostname or IP address to test"
+      },
+      {
+        "name": "port",
+        "label": "Port",
+        "type": "number",
+        "defaultValue": "443",
+        "required": true,
+        "description": "TCP port to test"
+      }
+    ]
+  },
+  "examples": [
+    {
+      "command": "Test-NetConnection -ComputerName google.com -Port 443",
+      "description": "QUICK DIAGNOSTIC: check whether a given port (e.g. HTTPS) is open. Essential to tell a stopped service from a firewall problem.",
+      "platform": 0
+    },
+    {
+      "command": "Test-NetConnection -ComputerName 8.8.8.8 -TraceRoute",
+      "description": "Diagnose the network route (hops). Shows at which router or firewall the packets are lost.",
+      "platform": 0
+    },
+    {
+      "command": "Test-NetConnection -ComputerName cloudflare.com -InformationLevel Detailed",
+      "description": "Show full technical details (DNS resolution, source address, outgoing interface).",
+      "platform": 0
+    }
+  ],
+  "notes": "Replaces ping and tracert. InformationLevel Detailed shows all the information. Common ports: 80 (HTTP), 443 (HTTPS), 3389 (RDP), 445 (SMB).",
+  "links": [
+    {
+      "title": "Test-NetConnection Documentation",
+      "url": "https://learn.microsoft.com/en-us/powershell/module/nettcpip/test-netconnection"
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Test de connectivité réseau avancé",
+      "description": "Teste la connectivité réseau vers un hôte avec traceroute, test de port et informations de routage détaillées",
+      "notes": "Remplace ping et tracert. InformationLevel Detailed affiche toutes les informations. Ports courants: 80 (HTTP), 443 (HTTPS), 3389 (RDP), 445 (SMB).",
+      "parameters": {
+        "windows": {
+          "hostname": {
+            "label": "Nom d'hôte ou IP",
+            "description": "Nom d'hôte ou adresse IP à tester"
+          },
+          "port": {
+            "label": "Port",
+            "description": "Port TCP à tester"
+          }
+        }
+      },
+      "examples": {
+        "Test-NetConnection -ComputerName google.com -Port 443": "DIAGNOSTIC EXPRESS : Vérifie si un port spécifique (ex: HTTPS) est ouvert. Indispensable pour distinguer un problème de service arrêté d'un problème de pare-feu.",
+        "Test-NetConnection -ComputerName 8.8.8.8 -TraceRoute": "Diagnostique la route réseau (Hops). Permet d'identifier à quel routeur/firewall les paquets sont perdus.",
+        "Test-NetConnection -ComputerName cloudflare.com -InformationLevel Detailed": "Affiche des détails techniques complets (résolution DNS, adresse source, interface de sortie)."
+      }
+    }
+  }
+}

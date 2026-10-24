@@ -50,6 +50,7 @@ fn profile(id: &str, host: &str) -> SshProfile {
         session_logging: None,
         ssh_mode: heimdall_core::profile::SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }
 }
 
@@ -356,7 +357,7 @@ fn a_version_1_file_still_opens_and_is_saved_as_the_current_version() {
         text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
         "{text}"
     );
-    assert_eq!(PROFILE_FILE_VERSION, 15);
+    assert_eq!(PROFILE_FILE_VERSION, 16);
 }
 
 #[test]
@@ -384,6 +385,7 @@ fn telnet(id: &str) -> TelnetProfile {
         host: "switch.lab".to_owned(),
         port: 23,
         session_logging: None,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }
 }
 
@@ -1669,4 +1671,46 @@ fn a_store_from_before_the_untrusted_mark_trusts_only_the_steps_its_approval_cov
             .all(|step| step.untrusted)
     );
     assert!(post_connect("changed").needs_approval());
+}
+
+#[test]
+fn a_version_15_file_reads_with_no_far_end_os_and_a_declared_one_is_kept() {
+    use heimdall_core::profile::RemoteOs;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    fs::write(
+        &path,
+        "version = 15\n\n[[ssh]]\nid = \"a\"\nname = \"A\"\nhost = \"h\"\nport = 22\n\n[[telnet]]\nid = \"t\"\nname = \"T\"\nhost = \"sw\"\nport = 23\n",
+    )
+    .expect("writes");
+    let mut store = ProfileStore::open(&path).expect("a version 15 file opens");
+    let (ssh_id, telnet_id) = (ProfileId::new("a"), ProfileId::new("t"));
+    assert_eq!(store.ssh_profiles()[0].remote_os, RemoteOs::Auto);
+    assert_eq!(store.remote_os_of(&ssh_id), RemoteOs::Auto);
+    let mut windows = profile("a", "h");
+    windows.remote_os = RemoteOs::Windows;
+    let mut linux = telnet("t");
+    linux.remote_os = RemoteOs::Linux;
+    store.merge([windows]);
+    store.merge_telnet([linux]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert!(text.starts_with("version = 16\n"), "{text}");
+    assert!(text.contains("remote_os = \"windows\""), "{text}");
+    assert!(text.contains("remote_os = \"linux\""), "{text}");
+    let back = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(back.remote_os_of(&ssh_id), RemoteOs::Windows);
+    assert_eq!(back.remote_os_of(&telnet_id), RemoteOs::Linux);
+    assert_eq!(back.remote_os_of(&ProfileId::new("none")), RemoteOs::Auto);
+}
+
+#[test]
+fn an_undeclared_far_end_os_is_not_written() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge([profile("a", "h")]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert!(!text.contains("remote_os"), "{text}");
 }

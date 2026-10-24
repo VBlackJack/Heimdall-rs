@@ -54,6 +54,7 @@ fn app(dir: &Path, port: u16) -> App {
         host: "127.0.0.1".to_owned(),
         port,
         session_logging: None,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

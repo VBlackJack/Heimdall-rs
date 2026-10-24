@@ -1,0 +1,110 @@
+{
+  "id": "db-mysqladmin-ping",
+  "title": "Check MySQL status (mysqladmin)",
+  "description": "Check whether the MySQL server is alive and responding.",
+  "category": "database",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "mysql",
+    "mariadb",
+    "db",
+    "status",
+    "ping"
+  ],
+  "windowsCommandTemplate": {
+    "id": "193d03b3-ce1c-486a-82bc-cd26282ca996",
+    "platform": 0,
+    "name": "mysqladmin",
+    "commandPattern": "mysqladmin -h {host} -u {user} -p ping",
+    "parameters": [
+      {
+        "name": "host",
+        "label": "Host",
+        "type": "string",
+        "defaultValue": "localhost",
+        "required": true,
+        "description": "MySQL server"
+      },
+      {
+        "name": "user",
+        "label": "User",
+        "type": "string",
+        "defaultValue": "root",
+        "required": true,
+        "description": "MySQL user"
+      }
+    ]
+  },
+  "linuxCommandTemplate": {
+    "id": "fbe94b36-6f8b-42bc-85f7-d7714c5d61a4",
+    "platform": 1,
+    "name": "mysqladmin",
+    "commandPattern": "mysqladmin -h {host} -u {user} -p ping",
+    "parameters": [
+      {
+        "name": "host",
+        "label": "Host",
+        "type": "string",
+        "defaultValue": "localhost",
+        "required": true,
+        "description": "MySQL server"
+      },
+      {
+        "name": "user",
+        "label": "User",
+        "type": "string",
+        "defaultValue": "root",
+        "required": true,
+        "description": "MySQL user"
+      }
+    ]
+  },
+  "examples": [],
+  "linuxExamples": [
+    {
+      "command": "mysqladmin -u root -p processlist",
+      "description": "Show the list of running queries (the equivalent of SHOW PROCESSLIST). Useful to spot blocking.",
+      "platform": 1
+    },
+    {
+      "command": "mysqladmin -u root -p status",
+      "description": "Show the vital statistics (Uptime, Threads, Slow queries).",
+      "platform": 1
+    }
+  ],
+  "linuxCommandTemplateId": "fbe94b36-6f8b-42bc-85f7-d7714c5d61a4",
+  "windowsCommandTemplateId": "193d03b3-ce1c-486a-82bc-cd26282ca996",
+  "translations": {
+    "fr": {
+      "title": "Vérifier statut MySQL (MySQLAdmin)",
+      "description": "Vérifie si le serveur MySQL est en vie et répond.",
+      "parameters": {
+        "windows": {
+          "host": {
+            "label": "Hôte",
+            "description": "Serveur MySQL"
+          },
+          "user": {
+            "label": "Utilisateur",
+            "description": "User MySQL"
+          }
+        },
+        "linux": {
+          "host": {
+            "label": "Hôte",
+            "description": "Serveur MySQL"
+          },
+          "user": {
+            "label": "Utilisateur",
+            "description": "User MySQL"
+          }
+        }
+      },
+      "examples": {
+        "mysqladmin -u root -p processlist": "Affiche la liste des requêtes en cours d'exécution (équivalent de SHOW PROCESSLIST). Utile pour détecter les blocages.",
+        "mysqladmin -u root -p status": "Affiche les statistiques vitales (Uptime, Threads, Slow queries)."
+      }
+    }
+  }
+}

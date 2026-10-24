@@ -73,8 +73,8 @@ pub fn view(chip: &AgentChip) -> Option<Element<'_, Message>> {
     let label = text(text_said).size(font_size::CAPTION);
     let label = match tone {
         AgentTone::Off => label.style(text::secondary),
-        AgentTone::Warn => label.style(text::warning),
-        AgentTone::Ok => label.style(text::success),
+        AgentTone::Warn => label.style(styles::warning_text),
+        AgentTone::Ok => label.style(styles::success_text),
     };
     Some(
         styles::tip(

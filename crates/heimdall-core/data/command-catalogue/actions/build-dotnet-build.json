@@ -1,0 +1,138 @@
+{
+  "id": "build-dotnet-build",
+  "title": "Build a .NET project",
+  "description": "Build a .NET project or solution.",
+  "category": "development",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "build",
+    "dotnet",
+    "compile",
+    "csharp",
+    "development"
+  ],
+  "windowsCommandTemplateId": "build-dotnet-build-win-cmd",
+  "windowsCommandTemplate": {
+    "id": "build-dotnet-build-win-cmd",
+    "platform": 0,
+    "name": "dotnet build",
+    "commandPattern": "dotnet build {projectPath} --configuration {configuration}",
+    "parameters": [
+      {
+        "name": "projectPath",
+        "label": "Project/Solution",
+        "type": "string",
+        "defaultValue": ".",
+        "required": false,
+        "description": "Path of the .csproj, the .sln or the folder"
+      },
+      {
+        "name": "configuration",
+        "label": "Configuration",
+        "type": "string",
+        "defaultValue": "Release",
+        "required": false,
+        "description": "Debug or Release"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "build-dotnet-build-linux-cmd",
+  "linuxCommandTemplate": {
+    "id": "build-dotnet-build-linux-cmd",
+    "platform": 1,
+    "name": "dotnet build",
+    "commandPattern": "dotnet build {projectPath} --configuration {configuration}",
+    "parameters": [
+      {
+        "name": "projectPath",
+        "label": "Project/Solution",
+        "type": "string",
+        "defaultValue": ".",
+        "required": false,
+        "description": "Path of the .csproj, the .sln or the folder"
+      },
+      {
+        "name": "configuration",
+        "label": "Configuration",
+        "type": "string",
+        "defaultValue": "Release",
+        "required": false,
+        "description": "Debug or Release"
+      }
+    ]
+  },
+  "examples": [],
+  "notes": "--no-restore skips the package restore. --output sets the output folder.",
+  "links": [
+    {
+      "title": "Documentation dotnet build",
+      "url": "https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-build"
+    }
+  ],
+  "windowsExamples": [
+    {
+      "command": "dotnet build MyApp.csproj --configuration Release",
+      "description": "Build in Release mode",
+      "platform": 0
+    },
+    {
+      "command": "dotnet build --no-restore",
+      "description": "Build without restoring the packages",
+      "platform": 0
+    },
+    {
+      "command": "dotnet build \"C:\\Projects\\MyApp\" --configuration Release",
+      "description": "Example using the 'configuration' parameter: Debug or Release. Replace Release with the value that fits your environment.",
+      "platform": 0
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "dotnet build",
+      "description": "Build the project",
+      "platform": 1
+    },
+    {
+      "command": "dotnet test",
+      "description": "Run the tests",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Compiler un projet .NET",
+      "description": "Compile un projet ou une solution .NET.",
+      "notes": "--no-restore évite la restauration des packages. --output pour spécifier le dossier de sortie.",
+      "parameters": {
+        "windows": {
+          "projectPath": {
+            "label": "Projet/Solution",
+            "description": "Chemin du .csproj, .sln ou dossier"
+          },
+          "configuration": {
+            "label": "Configuration",
+            "description": "Debug ou Release"
+          }
+        },
+        "linux": {
+          "projectPath": {
+            "label": "Projet/Solution",
+            "description": "Chemin du .csproj, .sln ou dossier"
+          },
+          "configuration": {
+            "label": "Configuration",
+            "description": "Debug ou Release"
+          }
+        }
+      },
+      "examples": {
+        "dotnet build MyApp.csproj --configuration Release": "Compile en mode Release",
+        "dotnet build --no-restore": "Compile sans restaurer les packages",
+        "dotnet build \"C:\\Projects\\MyApp\" --configuration Release": "Exemple utilisant le paramètre 'configuration': Debug ou Release. Remplacez Release par la valeur appropriée selon votre environnement.",
+        "dotnet build": "Compiler le projet",
+        "dotnet test": "Exécuter les tests"
+      }
+    }
+  }
+}

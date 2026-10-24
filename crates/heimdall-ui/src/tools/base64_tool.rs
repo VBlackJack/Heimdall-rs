@@ -348,7 +348,7 @@ impl Base64Pane {
         };
         let status = self.status.said().map(|(said, error)| {
             text(said).size(font_size::CAPTION).style(if error {
-                text::danger
+                styles::error_text
             } else {
                 text::secondary
             })

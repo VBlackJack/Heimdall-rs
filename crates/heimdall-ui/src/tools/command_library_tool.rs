@@ -15,35 +15,43 @@
  */
 
 //! The command library: the user's own commands, made, changed and deleted here, then the
-//! seeded catalog filtered by platform and by what is typed. Each command shows its
+//! shipped catalogue (the C# Heimdall's actions, read from its JSON files) filtered by
+//! platform and by what is typed, in the language of the window. Each command shows its
 //! description, the values it asks for and its command with them put in, copied by its own
 //! button or sent to a terminal tab, once the user agrees to the question that follows.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use heimdall_app::{SendTarget, SentCommand, TabId};
+use heimdall_app::{CapturedCommand, Delivery, SendTarget, SentCommand, TabId};
+use heimdall_core::profile::RemoteOs;
 use heimdall_core::tools::command_activity::{
-    self, ACTIVITY_FILE, ActivityError, CommandActivity, HistoryEntry,
+    self, ACTIVITY_FILE, ActivityError, CommandActivity, HistoryEntry, HistoryMode,
 };
 use heimdall_core::tools::command_library::{
-    self, BUILTIN_SNIPPETS, CommandSnippet, ParamLabel, SnippetCategory, SnippetId, SnippetPlatform,
+    self, CatalogueEntry, CommandIssue, LEGACY_SNIPPET_IDS,
 };
+use heimdall_core::tools::library_transfer::{self, RunbookImport};
 use heimdall_core::tools::user_commands::{
     self, Criticality, Draft, DraftError, GenerateError, ImportReport, LIBRARY_FILE, LibraryError,
-    TemplatePlatform, UserCommand, UserLibrary, UserPlatform, ValueError,
+    TemplatePlatform, UserCommand, UserLibrary, UserParameter, UserPlatform, ValueError,
 };
 use iced::widget::{
     Column, Row, button, checkbox, column, container, row, scrollable, text, text_input,
 };
 use iced::{Element, Length, Task, window};
 
+use self::sync::{SyncJob, SyncMessage, SyncNotice, SyncPane};
+use super::command_library_runbooks::{Delivered, Ready, RunTarget, RunbookMessage, RunbooksPane};
 use super::{CopySlot, ToolMessage, ToolPane};
 use crate::file_dialog::{self, FileDialog};
 use crate::i18n::fl;
 use crate::shell::{Message, main_window_task};
 use crate::styles;
 use crate::tokens::{font_size, spacing};
+
+mod sync;
 
 /// Width of a value's label, as the result grids' label column.
 const PARAM_LABEL_WIDTH: f32 = 160.0;
@@ -58,11 +66,25 @@ const MAX_AWAITED: usize = 8;
 /// The separator of several terminal names in one line.
 const NAME_SEPARATOR: &str = ", ";
 
+/// What joins the tags of a command in the editor's field.
+const TAG_JOINER: &str = ", ";
+
+/// The commands of the catalogue shown at first, and added by each press of "show more": the
+/// catalogue is hundreds of commands, and a card with its values is not cheap to draw.
+const CATALOG_PAGE_SIZE: usize = 30;
+
+/// The platforms the filter offers, in order; a command for both is under each.
+const PLATFORM_FILTERS: [UserPlatform; 3] = [
+    UserPlatform::Linux,
+    UserPlatform::Windows,
+    UserPlatform::Both,
+];
+
 /// A command of the library: one of the seeded catalog or one of the user's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandRef {
-    /// A command of the catalog.
-    Catalog(SnippetId),
+    /// A command of the catalogue, by identity.
+    Catalog(String),
     /// A command of the user, by identity.
     User(String),
 }
@@ -71,11 +93,17 @@ pub enum CommandRef {
 #[derive(Debug, Clone)]
 pub enum CommandLibraryMessage {
     /// The platform shown; `None` for every one.
-    Platform(Option<SnippetPlatform>),
+    Platform(Option<UserPlatform>),
     /// The search typed.
     Search(String),
-    /// Value `.1` of snippet `.0` typed.
-    Param(SnippetId, &'static str, String),
+    /// Show more commands of the catalogue.
+    ShowMore,
+    /// Show more of the user's own commands.
+    ShowMoreMine,
+    /// Value `.1` of the catalogue's command `.0` typed.
+    Param(String, String, String),
+    /// The template of the catalogue's command `.0` shown.
+    Template(String, TemplatePlatform),
     /// Value `.1` of the user's command `.0` typed.
     UserParam(String, String, String),
     /// The template of the user's command `.0` shown.
@@ -84,10 +112,33 @@ pub enum CommandLibraryMessage {
     Copy(CommandRef),
     /// Ask to send the command to the terminal chosen.
     Send(CommandRef),
+    /// Type the command at the prompt of the terminal chosen, without Enter and without a
+    /// question: nothing runs until the user presses Enter there.
+    Insert(CommandRef),
+    /// Insert the command last used, as the C# Shift+Enter.
+    InsertSelected,
+    /// The library belongs to a session: its platform starts the filter, its host and its
+    /// user fill the parameters that take them, and the history can be limited to its host.
+    Session {
+        /// The session's host.
+        host: Option<String>,
+        /// The session's account.
+        user: Option<String>,
+        /// The platform of its far end; `Auto` when it cannot be told.
+        platform: RemoteOs,
+        /// Its terminal tab, which commands go to first.
+        tab: Option<TabId>,
+    },
+    /// Limit the history to the session's host, or show every host's.
+    HistoryThisHostOnly(bool),
     /// The terminal tab the commands are sent to.
     Target(TabId),
     /// Start a new command of the user.
     New,
+    /// Start a new command of the user from a command captured in a terminal: its text is the
+    /// pattern for the session's platform, at the level that runs, tagged with the protocol,
+    /// and the title is left for the user. Nothing is saved before the user does.
+    Capture(CapturedCommand),
     /// Edit the user's command of this identity.
     Edit(String),
     /// A field of the editor changed.
@@ -138,10 +189,27 @@ pub enum CommandLibraryMessage {
     Import,
     /// The file picked was read; `None` when none was picked.
     Imported(Option<Result<String, TransferError>>),
-    /// Ask where to export the library.
+    /// Open or close the question of what an export holds.
     Export,
+    /// Ask where to write an export of `.0`.
+    ExportScope(ExportScope),
+    /// Something about the runbooks.
+    Runbooks(RunbookMessage),
+    /// Something about the Git synchronization.
+    Sync(SyncMessage),
     /// The library was written to the file picked; `None` when none was picked.
     Exported(Option<Result<(), TransferError>>),
+}
+
+/// What an export writes, as the C# `CommandLibraryExportScope`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportScope {
+    /// What the user created or imported, and their runbooks: the default.
+    Mine,
+    /// The commands the list shows now, filters and search applied; no runbook.
+    CurrentFilter,
+    /// The whole catalogue as well as the user's commands and runbooks.
+    Everything,
 }
 
 /// Why a file of commands could not be imported or exported.
@@ -151,6 +219,18 @@ pub enum TransferError {
     TooLarge,
     /// Not an export of the library.
     Format,
+    /// More actions than an import takes.
+    TooManyActions,
+    /// More runbooks than an import takes.
+    TooManyRunbooks,
+    /// Written by another major version of the format.
+    Version(String),
+    /// The file's runbooks cannot be kept: nothing was imported.
+    RunbooksUnsaved,
+    /// As [`TransferError::RunbooksUnsaved`], and the library could not be put back as it was.
+    RunbooksUnsavedLibraryKept,
+    /// Nothing to write for this choice.
+    NothingToExport,
     /// What the system said.
     Failed(String),
 }
@@ -187,6 +267,15 @@ pub enum Outcome {
         command: String,
         /// Marked dangerous.
         dangerous: bool,
+        /// A command typed as is, which no library action stands for.
+        typed_as_is: bool,
+    },
+    /// Type `command` at the prompt of terminal `target`, no question asked.
+    Insert {
+        /// The terminal tab.
+        target: TabId,
+        /// The command.
+        command: String,
     },
     /// Ask whether to write `command` into every terminal of `targets`.
     Broadcast {
@@ -201,6 +290,8 @@ pub enum Outcome {
     Import,
     /// Ask where to write this export of the library.
     Export(String),
+    /// Run a step of the Git synchronization off the interface's thread.
+    Sync(SyncJob),
 }
 
 impl Outcome {
@@ -210,9 +301,12 @@ impl Outcome {
         match self {
             Self::Import => pick_import(tab, main),
             Self::Export(text) => pick_export(tab, main, text),
-            Self::None | Self::Copy(..) | Self::Send { .. } | Self::Broadcast { .. } => {
-                Task::none()
-            }
+            Self::Sync(job) => job.task(tab),
+            Self::None
+            | Self::Copy(..)
+            | Self::Send { .. }
+            | Self::Insert { .. }
+            | Self::Broadcast { .. } => Task::none(),
         }
     }
 }
@@ -220,8 +314,8 @@ impl Outcome {
 /// What the pane tells under its buttons.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Notice {
-    /// A file imported.
-    Imported(ImportReport),
+    /// A file imported: its actions, and its runbooks when it carried some.
+    Imported(ImportReport, Option<RunbookImport>),
     /// The library exported.
     Exported,
     /// A file that could not be used.
@@ -238,6 +332,12 @@ enum Notice {
     ReplayBlocked,
     /// The favorites and history could not be written.
     ActivityUnsaved,
+    /// A command typed at the prompt of this terminal, waiting for the user's Enter.
+    Inserted(String),
+    /// A capture from a terminal that the editor open with changes in it refused.
+    CaptureBlocked,
+    /// What the Git synchronization did.
+    Sync(SyncNotice),
 }
 
 /// A command asked to be written, until the application says it was.
@@ -245,19 +345,62 @@ enum Notice {
 struct Awaited {
     /// The command as it is typed.
     command: String,
-    /// What the history keeps of it, but where and when.
-    entry: HistoryEntry,
+    /// What the history keeps of it, but where and when; none for a command no library action
+    /// stands for (a literal step of a runbook).
+    entry: Option<HistoryEntry>,
+    /// The step of the runbook run this command is, when it is one.
+    run_step: Option<(u64, usize)>,
     /// The terminals asked, with their names.
     tabs: Vec<(TabId, String)>,
     /// Asked to several terminals at once.
     broadcast: bool,
+    /// Whether it is run or only typed at the prompt.
+    delivery: Delivery,
+}
+
+/// What a press on a step of a run asks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunStep {
+    /// Write it into the terminal and submit it, after the question.
+    Send,
+    /// Type it at the prompt.
+    Insert,
+    /// Copy it.
+    Copy,
+}
+
+/// What the session the library was opened for gives it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Session {
+    /// Its host.
+    host: Option<String>,
+    /// Its account.
+    user: Option<String>,
 }
 
 /// The editor: the draft and why it was not kept.
 #[derive(Debug, Clone, Default)]
 struct Editor {
     draft: Draft,
+    /// The draft as the editor opened on it, to tell whether the user changed anything.
+    original: Draft,
     problem: Option<DraftError>,
+}
+
+impl Editor {
+    /// An editor opened on `draft`.
+    fn on(draft: Draft) -> Self {
+        Self {
+            original: draft.clone(),
+            draft,
+            problem: None,
+        }
+    }
+
+    /// Whether the user changed the draft since the editor opened.
+    fn is_changed(&self) -> bool {
+        self.draft != self.original
+    }
 }
 
 /// What went wrong with the user's file.
@@ -272,9 +415,14 @@ enum Failure {
 /// The command library's state.
 #[derive(Debug, Default)]
 pub struct CommandLibraryPane {
-    platform: Option<SnippetPlatform>,
+    platform: Option<UserPlatform>,
     search: String,
-    values: HashMap<(SnippetId, &'static str), String>,
+    /// The pages of the catalogue shown besides the first.
+    more_pages: usize,
+    /// The pages of the user's own commands shown besides the first.
+    more_mine_pages: usize,
+    values: HashMap<(String, String), String>,
+    templates: HashMap<String, TemplatePlatform>,
     /// Where the user's commands are kept; `None` when the platform has no folder.
     file: Option<PathBuf>,
     library: UserLibrary,
@@ -299,6 +447,22 @@ pub struct CommandLibraryPane {
     broadcast: Vec<TabId>,
     awaited: Vec<Awaited>,
     notice: Option<Notice>,
+    /// The session the library was opened for, when it was.
+    session: Option<Session>,
+    /// The terminal tab of the session the library was opened from.
+    session_tab: Option<TabId>,
+    /// Whether the history shows only the rows of the session's host: ticked when the
+    /// library belongs to a session, as the C# default.
+    history_this_host_only: bool,
+    /// The runbooks: the panel and the file they are kept in.
+    runbooks: RunbooksPane,
+    /// The Git synchronization: its settings and what it is doing.
+    sync: SyncPane,
+    /// Whether the question of what an export holds is open.
+    export_choice: bool,
+    /// The category of the command last created in this pane, which a captured command starts
+    /// in, as the C# `LastCreatedCategory`.
+    last_category: Option<String>,
 }
 
 impl CommandLibraryPane {
@@ -325,14 +489,28 @@ impl CommandLibraryPane {
                 }
             }
         }
+        // The ten commands the library had before the shipped catalogue keep their stars
+        // and their history under the names of their successors.
+        if pane.activity.rename_catalog_keys(&LEGACY_SNIPPET_IDS) {
+            pane.keep_activity();
+        }
         if let Some(path) = &pane.file {
             match UserLibrary::load(path) {
                 Ok(library) => pane.library = library,
-                Err(LibraryError::Io(_) | LibraryError::TooLarge | LibraryError::Format) => {
+                Err(
+                    LibraryError::Io(_)
+                    | LibraryError::TooLarge
+                    | LibraryError::Format
+                    | LibraryError::TooManyActions
+                    | LibraryError::TooManyRunbooks
+                    | LibraryError::Version(_),
+                ) => {
                     pane.failure = Some(Failure::Unreadable);
                 }
             }
         }
+        pane.runbooks = RunbooksPane::new(profiles_file, &pane.library);
+        pane.sync = SyncPane::new(profiles_file);
         pane
     }
 
@@ -342,20 +520,36 @@ impl CommandLibraryPane {
     }
 
     /// The terminal a command goes to: the one chosen while it is still there, else the
-    /// first.
+    /// session the library was opened from while it is still offered, else the first.
     fn effective_target(&self) -> Option<&SendTarget> {
-        self.target
-            .and_then(|chosen| self.targets.iter().find(|each| each.tab == chosen))
+        let offered = |wanted: Option<TabId>| {
+            wanted.and_then(|tab| self.targets.iter().find(|each| each.tab == tab))
+        };
+        offered(self.target)
+            .or_else(|| offered(self.session_tab))
             .or_else(|| self.targets.first())
     }
 
     /// Applies `message`.
     pub fn update(&mut self, message: CommandLibraryMessage) -> Outcome {
         match message {
-            CommandLibraryMessage::Platform(platform) => self.platform = platform,
-            CommandLibraryMessage::Search(typed) => self.search = typed,
-            CommandLibraryMessage::Param(id, key, value) => {
-                self.values.insert((id, key), value);
+            CommandLibraryMessage::Platform(platform) => {
+                self.platform = platform;
+                self.more_pages = 0;
+                self.more_mine_pages = 0;
+            }
+            CommandLibraryMessage::Search(typed) => {
+                self.search = typed;
+                self.more_pages = 0;
+                self.more_mine_pages = 0;
+            }
+            CommandLibraryMessage::ShowMore => self.more_pages += 1,
+            CommandLibraryMessage::ShowMoreMine => self.more_mine_pages += 1,
+            CommandLibraryMessage::Param(id, name, value) => {
+                self.values.insert((id, name), value);
+            }
+            CommandLibraryMessage::Template(id, platform) => {
+                self.templates.insert(id, platform);
             }
             CommandLibraryMessage::UserParam(id, name, value) => {
                 self.user_values.insert((id, name), value);
@@ -366,7 +560,10 @@ impl CommandLibraryPane {
             CommandLibraryMessage::Copy(command) => {
                 self.selected = Some(command.clone());
                 return match self.command_text(&command) {
-                    Some(text) => Outcome::Copy(self.copy_slot(&command), text),
+                    Some(text) => {
+                        self.record_copy(&command);
+                        Outcome::Copy(self.copy_slot(&command), text)
+                    }
                     None => Outcome::None,
                 };
             }
@@ -374,15 +571,39 @@ impl CommandLibraryPane {
                 self.selected = Some(command.clone());
                 return self.send(&command);
             }
+            CommandLibraryMessage::Insert(command) => {
+                self.selected = Some(command.clone());
+                return self.insert(&command);
+            }
+            // The key is the library's own only while no editor has the keyboard.
+            CommandLibraryMessage::InsertSelected => {
+                if self.editor.is_none()
+                    && !self.runbooks.is_open()
+                    && let Some(command) = self.selected.clone()
+                {
+                    return self.insert(&command);
+                }
+            }
+            CommandLibraryMessage::Session {
+                host,
+                user,
+                platform,
+                tab,
+            } => self.open_for_session(host, user, platform, tab),
+            CommandLibraryMessage::HistoryThisHostOnly(on) => self.history_this_host_only = on,
             CommandLibraryMessage::Broadcast(command) => {
                 self.selected = Some(command.clone());
                 return self.broadcast_outcome(&command);
             }
-            CommandLibraryMessage::Target(tab) => self.target = Some(tab),
-            CommandLibraryMessage::Import if self.can_edit() => return Outcome::Import,
-            CommandLibraryMessage::Export if !self.library.commands().is_empty() => {
-                return Outcome::Export(self.library.export());
+            CommandLibraryMessage::Target(tab) => {
+                self.target = Some(tab);
+                self.runbooks.repin(tab);
             }
+            CommandLibraryMessage::Runbooks(message) => return self.runbooks_message(message),
+            CommandLibraryMessage::Sync(message) => return self.sync_message(message),
+            CommandLibraryMessage::Import if self.can_edit() => return Outcome::Import,
+            CommandLibraryMessage::Export => self.export_choice = !self.export_choice,
+            CommandLibraryMessage::ExportScope(scope) => return self.export(scope),
             CommandLibraryMessage::Replay(index) => return self.replay(index),
             CommandLibraryMessage::CopyHistory(index) => {
                 return match self.activity.history().get(index) {
@@ -406,7 +627,11 @@ impl CommandLibraryPane {
                 self.activity.toggle_favorite(&key);
                 self.keep_activity();
             }
-            CommandLibraryMessage::FavoritesOnly => self.favorites_only = !self.favorites_only,
+            CommandLibraryMessage::FavoritesOnly => {
+                self.favorites_only = !self.favorites_only;
+                self.more_pages = 0;
+                self.more_mine_pages = 0;
+            }
             CommandLibraryMessage::Duplicate(command) => self.duplicate(&command),
             CommandLibraryMessage::DuplicateSelected => {
                 if let Some(command) = self.selected.clone() {
@@ -416,6 +641,9 @@ impl CommandLibraryPane {
             CommandLibraryMessage::ToggleHistory => {
                 self.history_open = !self.history_open;
                 self.clearing_history = false;
+                if self.history_open {
+                    self.runbooks.close();
+                }
             }
             CommandLibraryMessage::AskClearHistory => self.clearing_history = true,
             CommandLibraryMessage::CancelClearHistory => self.clearing_history = false,
@@ -446,7 +674,10 @@ impl CommandLibraryPane {
         }
     }
 
-    /// The file read is added to the library, as the C# import, and said what it did.
+    /// The file read is added to the library, as the C# import, and said what it did. The
+    /// file is held to its schema and its counts first; its actions are then kept, and its
+    /// runbooks against the library as those actions left it, so a runbook may use an action
+    /// of the same file.
     fn imported(&mut self, result: Result<String, TransferError>) {
         let text = match result {
             Ok(text) => text,
@@ -458,23 +689,91 @@ impl CommandLibraryPane {
         if !self.can_edit() {
             return;
         }
+        let runbooks = match library_transfer::precheck(&text) {
+            Ok(runbooks) => runbooks,
+            Err(error) => {
+                self.notice = Some(Notice::TransferFailed(transfer_error(error)));
+                return;
+            }
+        };
+        // Refused before anything is kept, so a file is never half imported for this reason.
+        if !runbooks.is_empty() && !self.runbooks.can_edit() {
+            self.notice = Some(Notice::TransferFailed(TransferError::RunbooksUnsaved));
+            return;
+        }
         let before = self.library.clone();
         match self.library.import(&text) {
             Ok(report) => {
-                if self.keep(&before) {
-                    self.notice = Some(Notice::Imported(report));
+                // A level in a file is its author's claim: a destructive pattern is
+                // dangerous whatever the file says.
+                self.library.raise_dangerous(&report.touched, |pattern| {
+                    heimdall_app::dangerous_command(pattern).is_some()
+                });
+                if !self.keep(&before) {
+                    return;
                 }
+                let kept = if runbooks.is_empty() {
+                    Some(None)
+                } else {
+                    self.runbooks.import(&runbooks, &self.library).map(Some)
+                };
+                self.notice = Some(if let Some(runbooks) = kept {
+                    Notice::Imported(report, runbooks)
+                } else {
+                    // The runbooks could not be kept: the actions go back too, so a file is
+                    // never half imported.
+                    self.library = before.clone();
+                    Notice::TransferFailed(if self.keep(&before) {
+                        TransferError::RunbooksUnsaved
+                    } else {
+                        TransferError::RunbooksUnsavedLibraryKept
+                    })
+                });
             }
-            Err(LibraryError::TooLarge) => {
-                self.notice = Some(Notice::TransferFailed(TransferError::TooLarge));
+            Err(error) => self.notice = Some(Notice::TransferFailed(transfer_error(error))),
+        }
+    }
+
+    /// What an export of `scope` writes, asked to be saved where the user says; says so when
+    /// there is nothing to write.
+    fn export(&mut self, scope: ExportScope) -> Outcome {
+        self.export_choice = false;
+        let user: Vec<&UserCommand> = match scope {
+            ExportScope::CurrentFilter => self.shown_user(),
+            ExportScope::Mine | ExportScope::Everything => self.library.commands().iter().collect(),
+        };
+        // The shipped actions go out whole, their translations too, as the C# `Action`.
+        let shipped: Vec<_> = match scope {
+            ExportScope::CurrentFilter => self
+                .shown()
+                .into_iter()
+                .map(library_transfer::shipped_value)
+                .collect(),
+            ExportScope::Everything => command_library::shipped()
+                .entries()
+                .iter()
+                .map(library_transfer::shipped_value)
+                .collect(),
+            ExportScope::Mine => Vec::new(),
+        };
+        let runbooks = match scope {
+            ExportScope::CurrentFilter => Vec::new(),
+            ExportScope::Mine | ExportScope::Everything => self.runbooks.exportable(&self.library),
+        };
+        let actions: Vec<_> = shipped
+            .into_iter()
+            .chain(user.into_iter().map(library_transfer::action_value))
+            .collect();
+        let text = (!actions.is_empty() || !runbooks.is_empty())
+            .then(|| library_transfer::export_text(&actions, &runbooks));
+        match text {
+            Some(text) => {
+                self.notice = None;
+                Outcome::Export(text)
             }
-            Err(LibraryError::Io(error)) => {
-                self.notice = Some(Notice::TransferFailed(TransferError::Failed(
-                    error.to_string(),
-                )));
-            }
-            Err(LibraryError::Format) => {
-                self.notice = Some(Notice::TransferFailed(TransferError::Format));
+            None => {
+                self.notice = Some(Notice::TransferFailed(TransferError::NothingToExport));
+                Outcome::None
             }
         }
     }
@@ -482,7 +781,7 @@ impl CommandLibraryPane {
     /// The name a command is kept under in the favorites and the history.
     fn key_of(&self, command: &CommandRef) -> String {
         match command {
-            CommandRef::Catalog(id) => command_activity::catalog_key(id.key()),
+            CommandRef::Catalog(id) => command_activity::catalog_key(id),
             CommandRef::User(id) => command_activity::user_key(id),
         }
     }
@@ -490,7 +789,9 @@ impl CommandLibraryPane {
     /// The command named `key` in the favorites or the history, when it is still here.
     fn command_of_key(&self, key: &str) -> Option<CommandRef> {
         if let Some(name) = key.strip_prefix(command_activity::CATALOG_KEY_PREFIX) {
-            return SnippetId::from_key(name).map(CommandRef::Catalog);
+            return command_library::shipped()
+                .get(name)
+                .map(|entry| CommandRef::Catalog(entry.command().id.clone()));
         }
         let id = key.strip_prefix(command_activity::USER_KEY_PREFIX)?;
         self.library
@@ -533,13 +834,13 @@ impl CommandLibraryPane {
                     ),
                 )
             }),
-            CommandRef::Catalog(id) => command_library::snippet(*id).map(snippet_draft),
+            CommandRef::Catalog(id) => {
+                catalogue_entry(id).map(|entry| catalogue_draft(&entry.localized(&language())))
+            }
         };
         if let Some(draft) = draft {
-            self.editor = Some(Editor {
-                draft,
-                problem: None,
-            });
+            self.editor = Some(Editor::on(draft));
+            self.history_open = false;
         }
     }
 
@@ -554,9 +855,11 @@ impl CommandLibraryPane {
                 .tabs
                 .iter()
                 .filter(|(tab, _)| {
-                    receipts
-                        .iter()
-                        .any(|each| each.tab == *tab && each.command == awaited.command)
+                    receipts.iter().any(|each| {
+                        each.tab == *tab
+                            && each.command == awaited.command
+                            && each.delivery == awaited.delivery
+                    })
                 })
                 .cloned()
                 .collect();
@@ -564,15 +867,41 @@ impl CommandLibraryPane {
                 self.awaited.push(awaited);
                 continue;
             }
-            let mut entry = awaited.entry.clone();
-            entry.target = reached
-                .iter()
-                .map(|(_, name)| name.as_str())
-                .collect::<Vec<_>>()
-                .join(NAME_SEPARATOR);
-            entry.at = now_unix();
-            self.activity.record(entry);
-            self.keep_activity();
+            if let Some(mut entry) = awaited.entry.clone() {
+                entry.target = reached
+                    .iter()
+                    .map(|(_, name)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(NAME_SEPARATOR);
+                entry.at = now_unix();
+                entry.mode = match awaited.delivery {
+                    Delivery::Run => HistoryMode::Sent,
+                    Delivery::Inserted => HistoryMode::Inserted,
+                };
+                self.activity.record(entry);
+                self.keep_activity();
+            }
+            // The run goes on only once the terminal has the step: a question answered no
+            // leaves it where it is.
+            if let Some((run_id, index)) = awaited.run_step {
+                self.runbooks.step_delivered(
+                    run_id,
+                    index,
+                    match awaited.delivery {
+                        Delivery::Run => Delivered::Sent,
+                        Delivery::Inserted => Delivered::Inserted,
+                    },
+                );
+            }
+            if awaited.delivery == Delivery::Inserted {
+                self.notice = Some(Notice::Inserted(
+                    reached
+                        .iter()
+                        .map(|(_, name)| name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(NAME_SEPARATOR),
+                ));
+            }
             if awaited.broadcast {
                 let unreached: Vec<&(TabId, String)> = awaited
                     .tabs
@@ -592,22 +921,104 @@ impl CommandLibraryPane {
         }
     }
 
+    /// Starts the library on the session it was opened for, as the C# `AutoSelectPlatform` and
+    /// `InitializeAsync` do: the platform filter on the session's platform (every platform when
+    /// it cannot be told), its host and user kept to fill the parameters, and the history
+    /// limited to its host.
+    fn open_for_session(
+        &mut self,
+        host: Option<String>,
+        user: Option<String>,
+        platform: RemoteOs,
+        tab: Option<TabId>,
+    ) {
+        self.session_tab = tab;
+        let given = |value: Option<String>| {
+            value
+                .map(|text| text.trim().to_owned())
+                .filter(|text| !text.is_empty())
+        };
+        let session = Session {
+            host: given(host),
+            user: given(user),
+        };
+        self.runbooks.session_changed();
+        self.runbooks
+            .set_session(session.host.clone(), session.user.clone(), platform);
+        self.history_this_host_only = session.host.is_some();
+        self.session = (session != Session::default()).then_some(session);
+        self.platform = command_library::session_platform_filter(platform);
+        self.more_pages = 0;
+        self.more_mine_pages = 0;
+    }
+
+    /// The host of the session the library was opened for.
+    fn session_host(&self) -> Option<&str> {
+        self.session
+            .as_ref()
+            .and_then(|session| session.host.as_deref())
+    }
+
+    /// The host the history is limited to: the session's, while "This host only" is ticked.
+    fn history_host_filter(&self) -> Option<&str> {
+        self.session_host().filter(|_| self.history_this_host_only)
+    }
+
+    /// The rows of the history the panel shows, each with its place in the whole history: all
+    /// of them, or the session's host's alone while "This host only" is ticked. A row without a
+    /// host is hidden under the filter: nothing says it went to this host.
+    fn history_rows(&self) -> Vec<(usize, &HistoryEntry)> {
+        let host_filter = self.history_host_filter();
+        self.activity
+            .history()
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| host_filter.is_none_or(|host| entry.is_for_host(host)))
+            .collect()
+    }
+
+    /// Records a copy in the history, against the session's host, as the C# does after a
+    /// copy: it went to the clipboard, not to a terminal, so no terminal is named.
+    fn record_copy(&mut self, command: &CommandRef) {
+        let Some(mut entry) = self.history_entry(command) else {
+            return;
+        };
+        entry.mode = HistoryMode::Copied;
+        entry.at = now_unix();
+        self.activity.record(entry);
+        self.keep_activity();
+    }
+
     /// The messages about the user's commands.
     fn edit(&mut self, message: CommandLibraryMessage) {
         match message {
             CommandLibraryMessage::New if self.can_edit() => {
                 self.editor = Some(Editor::default());
+                self.history_open = false;
+            }
+            // An editor with changes in it is never replaced by a capture: said, nothing lost.
+            CommandLibraryMessage::Capture(_)
+                if self.editor.as_ref().is_some_and(Editor::is_changed) =>
+            {
+                self.notice = Some(Notice::CaptureBlocked);
+            }
+            CommandLibraryMessage::Capture(capture) if self.can_edit() => {
+                self.notice = None;
+                self.history_open = false;
+                self.editor = Some(Editor::on(captured_draft(
+                    &capture,
+                    self.last_category.as_deref(),
+                )));
             }
             CommandLibraryMessage::Edit(id) if self.can_edit() => {
                 if let Some(command) = self.library.get(&id) {
-                    self.editor = Some(Editor {
-                        draft: Draft::of(command),
-                        problem: None,
-                    });
+                    self.editor = Some(Editor::on(Draft::of(command)));
+                    self.history_open = false;
                 }
             }
             CommandLibraryMessage::Field(field, value) => {
                 if let Some(editor) = &mut self.editor {
+                    editor.problem = None;
                     let draft = &mut editor.draft;
                     match field {
                         Field::Title => draft.title = value,
@@ -621,11 +1032,13 @@ impl CommandLibraryPane {
             }
             CommandLibraryMessage::EditPlatform(platform) => {
                 if let Some(editor) = &mut self.editor {
+                    editor.problem = None;
                     editor.draft.platform = platform;
                 }
             }
             CommandLibraryMessage::EditLevel(level) => {
                 if let Some(editor) = &mut self.editor {
+                    editor.problem = None;
                     editor.draft.level = level;
                 }
             }
@@ -660,10 +1073,18 @@ impl CommandLibraryPane {
             return;
         };
         let before = self.library.clone();
+        let created = editor
+            .draft
+            .id
+            .is_none()
+            .then(|| editor.draft.category.trim().to_owned());
         match self.library.upsert(&editor.draft) {
             Ok(_) => {
                 if self.keep(&before) {
                     self.editor = None;
+                    if let Some(category) = created.filter(|category| !category.is_empty()) {
+                        self.last_category = Some(category);
+                    }
                 }
             }
             Err(problem) => editor.problem = Some(problem),
@@ -692,7 +1113,9 @@ impl CommandLibraryPane {
     /// The button that copies `command`.
     fn copy_slot(&self, command: &CommandRef) -> CopySlot {
         match command {
-            CommandRef::Catalog(id) => CopySlot::CmdLibCommand(*id),
+            CommandRef::Catalog(id) => {
+                CopySlot::CmdLibCommand(command_library::shipped().position(id).unwrap_or_default())
+            }
             CommandRef::User(id) => CopySlot::CmdLibUserCommand(
                 self.library
                     .commands()
@@ -707,18 +1130,27 @@ impl CommandLibraryPane {
     /// from the values typed.
     fn command_text(&self, command: &CommandRef) -> Option<String> {
         match command {
-            CommandRef::Catalog(id) => command_library::snippet(*id).map(|each| self.render(each)),
+            CommandRef::Catalog(id) => catalogue_entry(id)
+                .and_then(|entry| self.render(command, &entry.localized(&language())).ok()),
             CommandRef::User(id) => self
                 .library
                 .get(id)
-                .and_then(|each| self.user_render(each).ok()),
+                .and_then(|each| self.render(command, each).ok()),
         }
     }
 
     /// Whether `command` is marked dangerous, as the C# `DangerousCommandGuard` asks of it.
-    fn is_dangerous(&self, command: &CommandRef) -> bool {
+    fn is_dangerous(&self, command: &CommandRef, text: &str) -> bool {
+        // The level a file or a user gave is not the only judge: the paste guard's list of
+        // destructive commands asks too, as for any text about to reach a shell.
+        heimdall_app::dangerous_command(text).is_some() || self.marked_dangerous(command)
+    }
+
+    /// Whether the level kept for `command` is the highest.
+    fn marked_dangerous(&self, command: &CommandRef) -> bool {
         match command {
-            CommandRef::Catalog(id) => command_library::is_dangerous(*id),
+            CommandRef::Catalog(id) => catalogue_entry(id)
+                .is_some_and(|entry| entry.command().level == Criticality::Dangerous),
             CommandRef::User(id) => self
                 .library
                 .get(id)
@@ -731,20 +1163,18 @@ impl CommandLibraryPane {
     fn history_entry(&self, command: &CommandRef) -> Option<HistoryEntry> {
         let (title, pattern, parameters) = match command {
             CommandRef::Catalog(id) => {
-                let snippet = command_library::snippet(*id)?;
+                let entry = catalogue_entry(id)?;
+                let each = entry.localized(&language());
+                let template = each.template(self.template_shown(command, &each)?)?;
                 (
-                    snippet_texts(*id).0,
-                    snippet.template.to_owned(),
-                    snippet
-                        .parameters
-                        .iter()
-                        .map(|each| each.key.to_owned())
-                        .collect(),
+                    each.title.clone(),
+                    template.command_pattern.clone(),
+                    template.parameters.iter().map(|p| p.name.clone()).collect(),
                 )
             }
             CommandRef::User(id) => {
                 let each = self.library.get(id)?;
-                let template = each.template(self.template_shown(each)?)?;
+                let template = each.template(self.template_shown(command, each)?)?;
                 (
                     each.title.clone(),
                     template.command_pattern.clone(),
@@ -758,6 +1188,8 @@ impl CommandLibraryPane {
             pattern,
             parameters,
             target: String::new(),
+            host: self.session_host().unwrap_or_default().to_owned(),
+            mode: HistoryMode::Sent,
             at: 0,
         })
     }
@@ -769,19 +1201,161 @@ impl CommandLibraryPane {
         text: &str,
         tabs: Vec<(TabId, String)>,
         broadcast: bool,
+        delivery: Delivery,
     ) {
         let Some(entry) = self.history_entry(command) else {
             return;
         };
+        // A command asked from a card supersedes the question of a run step still open: only
+        // one question is ever on screen, so the run's was closed without sending, and its
+        // text must not be taken for this one's receipt.
+        self.awaited.retain(|each| each.run_step.is_none());
         if self.awaited.len() >= MAX_AWAITED {
             self.awaited.remove(0);
         }
         self.awaited.push(Awaited {
             command: text.to_owned(),
-            entry,
+            entry: Some(entry),
+            run_step: None,
             tabs,
             broadcast,
+            delivery,
         });
+    }
+
+    /// Applies a message of the runbooks panel. The steps of a run reach a terminal through
+    /// the very path a command of the library takes: the same refusal of a control
+    /// character, the same paste encoding, the same targets (the session's own terminal
+    /// first, never a remote desktop, a file transfer or a web view). Nothing here sends
+    /// without the press of a button, and nothing sends twice for one.
+    fn runbooks_message(&mut self, message: RunbookMessage) -> Outcome {
+        match message {
+            RunbookMessage::RunSend => self.run_step(RunStep::Send),
+            RunbookMessage::RunInsert => self.run_step(RunStep::Insert),
+            RunbookMessage::RunCopy => self.run_step(RunStep::Copy),
+            other => {
+                // What an earlier send said is not about the run, and the history is not the
+                // view any more.
+                if matches!(other, RunbookMessage::Toggle | RunbookMessage::Run(_)) {
+                    self.notice = None;
+                }
+                if matches!(other, RunbookMessage::Toggle) {
+                    self.history_open = false;
+                }
+                if matches!(other, RunbookMessage::RunStop | RunbookMessage::RunSkip) {
+                    self.awaited.retain(|each| each.run_step.is_none());
+                }
+                self.runbooks.update(other, &self.library);
+                // The terminal is pinned when the run starts.
+                let tab = self.effective_target().map(|target| target.tab);
+                self.runbooks.pin(tab);
+                Outcome::None
+            }
+        }
+    }
+
+    /// What to tell about where the run's steps go, when they cannot go anywhere.
+    fn run_warning(&self) -> Option<String> {
+        match self.run_target() {
+            RunTarget::Gone => Some(fl!("ui-tool-cmdlib-runbooks-run-target-gone")),
+            RunTarget::Changed => Some(fl!("ui-tool-cmdlib-runbooks-run-session-changed")),
+            // Terminals are open but none was there when the run began: it has to be told.
+            RunTarget::NoTerminal if !self.targets.is_empty() => {
+                Some(fl!("ui-tool-cmdlib-runbooks-run-pick-terminal"))
+            }
+            RunTarget::Ready(_) | RunTarget::NoTerminal => None,
+        }
+    }
+
+    /// Where the steps of the run go: its pinned terminal while it is offered.
+    fn run_target(&self) -> RunTarget {
+        if self.runbooks.is_stale() {
+            return RunTarget::Changed;
+        }
+        match self.runbooks.pinned() {
+            Some(tab) if self.targets.iter().any(|each| each.tab == tab) => RunTarget::Ready(tab),
+            Some(_) => RunTarget::Gone,
+            None => RunTarget::NoTerminal,
+        }
+    }
+
+    /// Sends, inserts or copies the current step of the run. The step is made and judged
+    /// again now, from the variables and the library as they are: a step the generator refuses
+    /// gives nothing.
+    fn run_step(&mut self, how: RunStep) -> Outcome {
+        // A press just after a delivery is a double click, not a wish to send the next step.
+        if self.runbooks.is_guarded() {
+            return Outcome::None;
+        }
+        let Some(ready) = self.runbooks.ready_step(&self.library) else {
+            return Outcome::None;
+        };
+        let text = ready.step.command.clone();
+        let host = self.session_host().unwrap_or_default().to_owned();
+        let entry = |mode: HistoryMode, ready: &Ready| {
+            ready.action.as_ref().map(|action| HistoryEntry {
+                command: if command_library::shipped().get(&action.id).is_some() {
+                    command_activity::catalog_key(&action.id)
+                } else {
+                    command_activity::user_key(&action.id)
+                },
+                title: action.title.clone(),
+                pattern: action.pattern.clone(),
+                parameters: action.parameters.clone(),
+                target: String::new(),
+                host: host.clone(),
+                mode,
+                at: now_unix(),
+            })
+        };
+        if how == RunStep::Copy {
+            if let Some(copied) = entry(HistoryMode::Copied, &ready) {
+                self.activity.record(copied);
+                self.keep_activity();
+            }
+            self.runbooks
+                .step_delivered(ready.run_id, ready.index, Delivered::Copied);
+            return Outcome::Copy(CopySlot::CmdLibRunbookStep, text);
+        }
+        // Always the terminal the run was pinned to, never the first one offered.
+        let RunTarget::Ready(pinned) = self.run_target() else {
+            return Outcome::None;
+        };
+        let Some(target) = self.targets.iter().find(|each| each.tab == pinned).cloned() else {
+            return Outcome::None;
+        };
+        let delivery = if how == RunStep::Send {
+            Delivery::Run
+        } else {
+            Delivery::Inserted
+        };
+        // One step is waited for at a time: an earlier question left unanswered is dropped.
+        self.awaited.retain(|each| each.run_step.is_none());
+        if self.awaited.len() >= MAX_AWAITED {
+            self.awaited.remove(0);
+        }
+        let tab = target.tab;
+        self.awaited.push(Awaited {
+            command: text.clone(),
+            entry: entry(HistoryMode::Sent, &ready),
+            run_step: Some((ready.run_id, ready.index)),
+            tabs: vec![(target.tab, target.name)],
+            broadcast: false,
+            delivery,
+        });
+        if how == RunStep::Send {
+            Outcome::Send {
+                target: tab,
+                command: text,
+                dangerous: ready.is_dangerous(),
+                typed_as_is: ready.step.literal,
+            }
+        } else {
+            Outcome::Insert {
+                target: tab,
+                command: text,
+            }
+        }
     }
 
     /// Asks the application to question the user about sending `command`.
@@ -791,12 +1365,42 @@ impl CommandLibraryPane {
         else {
             return Outcome::None;
         };
-        let dangerous = self.is_dangerous(command);
-        self.await_receipt(command, &text, vec![(target.tab, target.name)], false);
+        let dangerous = self.is_dangerous(command, &text);
+        self.await_receipt(
+            command,
+            &text,
+            vec![(target.tab, target.name)],
+            false,
+            Delivery::Run,
+        );
         Outcome::Send {
             target: target.tab,
             command: text,
             dangerous,
+            typed_as_is: false,
+        }
+    }
+
+    /// Asks the application to type `command` at the prompt of the terminal chosen. No
+    /// question and no danger check: nothing runs, the user's own Enter is the confirmation, as
+    /// the C# `Insert`. The text is the one Send would write, made by the same generator and
+    /// refused for the same control characters.
+    fn insert(&mut self, command: &CommandRef) -> Outcome {
+        let (Some(target), Some(text)) =
+            (self.effective_target().cloned(), self.command_text(command))
+        else {
+            return Outcome::None;
+        };
+        self.await_receipt(
+            command,
+            &text,
+            vec![(target.tab, target.name)],
+            false,
+            Delivery::Inserted,
+        );
+        Outcome::Insert {
+            target: target.tab,
+            command: text,
         }
     }
 
@@ -812,9 +1416,9 @@ impl CommandLibraryPane {
         let Some(text) = self.command_text(command).filter(|_| !chosen.is_empty()) else {
             return Outcome::None;
         };
-        let dangerous = self.is_dangerous(command);
+        let dangerous = self.is_dangerous(command, &text);
         let targets = chosen.iter().map(|(tab, _)| *tab).collect();
-        self.await_receipt(command, &text, chosen, true);
+        self.await_receipt(command, &text, chosen, true, Delivery::Run);
         Outcome::Broadcast {
             targets,
             command: text,
@@ -834,15 +1438,21 @@ impl CommandLibraryPane {
             return Outcome::None;
         };
         self.selected = Some(command.clone());
-        if let CommandRef::User(id) = &command
-            && let Some(found) = self.library.get(id)
-            && let Some(platform) = found.template_platforms().into_iter().find(|platform| {
-                found
-                    .template(*platform)
-                    .is_some_and(|template| template.command_pattern == entry.pattern)
-            })
-        {
-            self.user_templates.insert(id.clone(), platform);
+        match &command {
+            CommandRef::User(id) => {
+                if let Some(found) = self.library.get(id)
+                    && let Some(platform) = pattern_platform(found, &entry.pattern)
+                {
+                    self.user_templates.insert(id.clone(), platform);
+                }
+            }
+            CommandRef::Catalog(id) => {
+                if let Some(found) = catalogue_entry(id)
+                    && let Some(platform) = pattern_platform(found.command(), &entry.pattern)
+                {
+                    self.templates.insert(id.clone(), platform);
+                }
+            }
         }
         self.history_open = false;
         let outcome = self.send(&command);
@@ -852,88 +1462,114 @@ impl CommandLibraryPane {
         outcome
     }
 
-    /// The template of `command` shown: the one chosen, else this system's.
-    fn template_shown(&self, command: &UserCommand) -> Option<TemplatePlatform> {
-        let chosen = self
-            .user_templates
-            .get(&command.id)
-            .copied()
-            .filter(|platform| command.template_platforms().contains(platform));
-        chosen.or_else(|| command.preferred_platform(cfg!(windows)))
+    /// The template of `command`, written `shown`, that is shown: the one chosen, else this
+    /// system's.
+    fn template_shown(
+        &self,
+        reference: &CommandRef,
+        shown: &UserCommand,
+    ) -> Option<TemplatePlatform> {
+        let chosen = match reference {
+            CommandRef::Catalog(id) => self.templates.get(id),
+            CommandRef::User(id) => self.user_templates.get(id),
+        }
+        .copied()
+        .filter(|platform| shown.template_platforms().contains(platform));
+        chosen.or_else(|| shown.preferred_platform(cfg!(windows)))
     }
 
-    /// The command of the user with the values typed.
-    fn user_render(&self, command: &UserCommand) -> Result<String, GenerateError> {
+    /// The value typed for `name` of `reference`.
+    fn typed(&self, reference: &CommandRef, name: &str) -> Option<&str> {
+        let (values, id) = match reference {
+            CommandRef::Catalog(id) => (&self.values, id),
+            CommandRef::User(id) => (&self.user_values, id),
+        };
+        values
+            .get(&(id.clone(), name.to_owned()))
+            .map(String::as_str)
+    }
+
+    /// The value `parameter` of `reference` holds now: what was typed, even when emptied;
+    /// else what the session the library was opened for gives it (its host for a host, its
+    /// user for an account), as the C# `GetInitialParameterValue`. The value goes through the
+    /// generator's checks and quoting like one typed.
+    fn value(&self, reference: &CommandRef, parameter: &UserParameter) -> Option<Cow<'_, str>> {
+        if let Some(typed) = self.typed(reference, &parameter.name) {
+            return Some(Cow::Borrowed(typed));
+        }
+        let session = self.session.as_ref()?;
+        command_library::session_value(parameter, session.host.as_deref(), session.user.as_deref())
+            .map(Cow::Owned)
+    }
+
+    /// The command `shown`, of `reference`, with the values typed or given by the session.
+    fn render(&self, reference: &CommandRef, shown: &UserCommand) -> Result<String, GenerateError> {
         let platform = self
-            .template_shown(command)
+            .template_shown(reference, shown)
             .ok_or(GenerateError::EmptyPattern)?;
-        let template = command
+        let template = shown
             .template(platform)
             .ok_or(GenerateError::EmptyPattern)?;
-        user_commands::generate(template, platform, |name| {
-            self.user_values
-                .get(&(command.id.clone(), name.to_owned()))
-                .map(String::as_str)
-        })
-    }
-
-    /// The command of `snippet` with the values typed.
-    fn render(&self, snippet: &CommandSnippet) -> String {
-        snippet.render(|key| self.values.get(&(snippet.id, key)).map(String::as_str))
-    }
-
-    /// The snippets the platform and the search keep.
-    fn shown(&self) -> Vec<&'static CommandSnippet> {
-        BUILTIN_SNIPPETS
+        let values: HashMap<&str, Cow<'_, str>> = template
+            .parameters
             .iter()
-            .filter(|snippet| command_library::on_platform(snippet, self.platform))
-            .filter(|snippet| {
-                !self.favorites_only || self.is_favorite(&CommandRef::Catalog(snippet.id))
+            .filter_map(|parameter| {
+                self.value(reference, parameter)
+                    .map(|value| (parameter.name.as_str(), value))
             })
-            .filter(|snippet| {
-                let (title, description) = snippet_texts(snippet.id);
-                let category = category_name(snippet.category);
-                command_library::matches_query(
-                    snippet,
-                    &[&title, &description, &category],
-                    &self.search,
-                )
+            .collect();
+        let command = user_commands::generate(template, platform, |name| {
+            values.get(name).map(|value| &**value)
+        })?;
+        // A line break would submit the first line before the rest is read, whatever the
+        // pattern's author meant: no copy, no send, no receipt for such a command.
+        if command.chars().any(|c| c.is_control()) {
+            return Err(GenerateError::Multiline);
+        }
+        Ok(command)
+    }
+
+    /// The commands of the catalogue the platform, the favorites and the search keep.
+    fn shown(&self) -> Vec<&'static CatalogueEntry> {
+        let language = language();
+        command_library::shipped()
+            .entries()
+            .iter()
+            .filter(|entry| command_library::on_platform(entry.command().platform, self.platform))
+            .filter(|entry| {
+                !self.favorites_only
+                    || self.is_favorite(&CommandRef::Catalog(entry.command().id.clone()))
+            })
+            .filter(|entry| {
+                let query = self.search.trim();
+                query.is_empty()
+                    || command_library::matches_query(
+                        &entry.localized(&language),
+                        &category_name(&entry.command().category),
+                        query,
+                    )
+                    // The English text is searched in any language, as the C# keeps it
+                    // beside the translation.
+                    || command_library::matches_query(
+                        entry.command(),
+                        &category_name(&entry.command().category),
+                        query,
+                    )
             })
             .collect()
     }
 
     /// The commands of the user the platform and the search keep.
     fn shown_user(&self) -> Vec<&UserCommand> {
-        let query = self.search.trim().to_lowercase();
         self.library
             .commands()
             .iter()
             .filter(|command| {
                 !self.favorites_only || self.is_favorite(&CommandRef::User(command.id.clone()))
             })
+            .filter(|command| command_library::on_platform(command.platform, self.platform))
             .filter(|command| {
-                self.platform.is_none_or(|platform| match platform {
-                    SnippetPlatform::Linux => command.platform != UserPlatform::Windows,
-                    SnippetPlatform::Windows => command.platform != UserPlatform::Linux,
-                    SnippetPlatform::CrossPlatform => true,
-                })
-            })
-            .filter(|command| {
-                query.is_empty()
-                    || [&command.title, &command.description, &command.category]
-                        .iter()
-                        .any(|field| field.to_lowercase().contains(&query))
-                    || command
-                        .tags
-                        .iter()
-                        .any(|tag| tag.to_lowercase().contains(&query))
-                    || [
-                        &command.windows_command_template,
-                        &command.linux_command_template,
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .any(|t| t.command_pattern.to_lowercase().contains(&query))
+                command_library::matches_query(command, &command.category, &self.search)
             })
             .collect()
     }
@@ -942,7 +1578,7 @@ impl CommandLibraryPane {
     /// editor when open, then the user's commands and the catalog.
     pub fn view<'a>(&'a self, tab: TabId, state: &ToolPane) -> Element<'a, Message> {
         let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
-        let platform = |label: String, choice: Option<SnippetPlatform>| {
+        let platform = |label: String, choice: Option<UserPlatform>| {
             button(text(label).size(font_size::BODY))
                 .padding(super::COPY_PADDING)
                 .style(if self.platform == choice {
@@ -955,9 +1591,9 @@ impl CommandLibraryPane {
         };
         let platforms = Row::with_children(
             std::iter::once(platform(fl!("ui-tool-cmdlib-platform-all"), None)).chain(
-                SnippetPlatform::ALL
+                PLATFORM_FILTERS
                     .into_iter()
-                    .map(|choice| platform(platform_name(choice), Some(choice))),
+                    .map(|choice| platform(user_platform_name(choice), Some(choice))),
             ),
         )
         .spacing(spacing::SM);
@@ -973,6 +1609,14 @@ impl CommandLibraryPane {
                 (self.can_edit() && self.editor.is_none())
                     .then(|| send(CommandLibraryMessage::New)),
             );
+        // The button is another kind of widget while the editor is open, so its pressed or
+        // hovered state is dropped with the editor instead of coming back highlighted when
+        // the form closes.
+        let new: Element<'a, Message> = if self.editor.is_some() {
+            container(new).into()
+        } else {
+            new.into()
+        };
         let plain = |label: String, on: bool, message: Option<CommandLibraryMessage>| {
             button(text(label).size(font_size::BODY))
                 .padding(super::COPY_PADDING)
@@ -992,8 +1636,13 @@ impl CommandLibraryPane {
             ),
             plain(
                 fl!("ui-tool-cmdlib-export"),
-                false,
-                (!self.library.commands().is_empty()).then_some(CommandLibraryMessage::Export)
+                self.export_choice,
+                Some(CommandLibraryMessage::Export)
+            ),
+            plain(
+                fl!("ui-tool-cmdlib-sync"),
+                self.sync.is_open(),
+                Some(CommandLibraryMessage::Sync(SyncMessage::Toggle))
             ),
             plain(
                 fl!("ui-tool-cmdlib-favorites-only"),
@@ -1005,8 +1654,41 @@ impl CommandLibraryPane {
                 self.history_open,
                 Some(CommandLibraryMessage::ToggleHistory)
             ),
+            plain(
+                fl!("ui-tool-cmdlib-runbooks"),
+                self.runbooks.is_open(),
+                Some(CommandLibraryMessage::Runbooks(RunbookMessage::Toggle))
+            ),
         ]
         .spacing(spacing::SM);
+        // The runbooks have the whole view, as the C#: a panel squeezed in above the list of
+        // commands left room for a few lines of it.
+        if self.runbooks.is_open() {
+            let mut page = column![tools].spacing(spacing::SM);
+            if self.export_choice {
+                page = page.push(export_choice_view(tab));
+            }
+            if self.sync.is_open() {
+                page = page.push(self.sync_view(tab));
+            }
+            if let Some(notice) = &self.notice {
+                page = page.push(notice_view(notice));
+            }
+            page = page.push(self.target_row(tab));
+            let run_target = self.run_target();
+            let warning = self.run_warning();
+            let can_send = if self.runbooks.is_bound() {
+                matches!(run_target, RunTarget::Ready(_))
+            } else {
+                self.effective_target().is_some()
+            };
+            let panel = self.runbooks.view(tab, &self.library, can_send, warning);
+            return super::tool_body(
+                page.push(
+                    scrollable(panel.unwrap_or_else(|| column![].into())).height(Length::Fill),
+                ),
+            );
+        }
         let shown = self.shown();
         let mine = self.shown_user();
         let count = shown.len() + mine.len();
@@ -1020,6 +1702,19 @@ impl CommandLibraryPane {
                 .style(text::secondary),
         ]
         .spacing(spacing::SM);
+        if self.export_choice {
+            page = page.push(export_choice_view(tab));
+        }
+        if self.sync.is_open() {
+            page = page.push(self.sync_view(tab));
+        }
+        if let Some(host) = self.session_host() {
+            page = page.push(
+                text(fl!("ui-tool-cmdlib-session", host = host))
+                    .size(font_size::CAPTION)
+                    .style(text::secondary),
+            );
+        }
         if let Some(failure) = self.failure {
             page = page.push(
                 text(match failure {
@@ -1027,7 +1722,7 @@ impl CommandLibraryPane {
                     Failure::Unsaved => fl!("ui-tool-cmdlib-library-unsaved"),
                 })
                 .size(font_size::BODY)
-                .style(text::danger),
+                .style(styles::error_text),
             );
         }
         if let Some(notice) = &self.notice {
@@ -1053,8 +1748,22 @@ impl CommandLibraryPane {
                     .size(font_size::BODY_LARGE)
                     .font(styles::SEMIBOLD),
             );
-            for command in mine {
+            let visible_mine =
+                CATALOG_PAGE_SIZE.saturating_mul(self.more_mine_pages.saturating_add(1));
+            let remaining_mine = mine.len().saturating_sub(visible_mine);
+            for command in mine.into_iter().take(visible_mine) {
                 cards = cards.push(self.user_card(tab, state, command));
+            }
+            if remaining_mine > 0 {
+                cards = cards.push(
+                    button(
+                        text(fl!("ui-tool-cmdlib-show-more", count = remaining_mine))
+                            .size(font_size::BODY),
+                    )
+                    .padding(super::COPY_PADDING)
+                    .style(styles::secondary)
+                    .on_press(send(CommandLibraryMessage::ShowMoreMine)),
+                );
             }
             if !shown.is_empty() {
                 cards = cards.push(
@@ -1064,8 +1773,20 @@ impl CommandLibraryPane {
                 );
             }
         }
-        for snippet in shown {
-            cards = cards.push(self.card(tab, state, snippet));
+        let visible = CATALOG_PAGE_SIZE.saturating_mul(self.more_pages.saturating_add(1));
+        let remaining = shown.len().saturating_sub(visible);
+        for entry in shown.into_iter().take(visible) {
+            cards = cards.push(self.catalogue_card(tab, state, entry));
+        }
+        if remaining > 0 {
+            cards = cards.push(
+                button(
+                    text(fl!("ui-tool-cmdlib-show-more", count = remaining)).size(font_size::BODY),
+                )
+                .padding(super::COPY_PADDING)
+                .style(styles::secondary)
+                .on_press(send(CommandLibraryMessage::ShowMore)),
+            );
         }
         super::tool_body(page.push(scrollable(cards).height(Length::Fill)))
     }
@@ -1160,29 +1881,62 @@ impl CommandLibraryPane {
                 .size(font_size::CAPTION)
                 .style(text::secondary),
         );
+        // The box exists only for a library that belongs to a session: its host is what the
+        // rows are compared with.
+        if self.session_host().is_some() {
+            body = body.push(
+                checkbox(self.history_this_host_only)
+                    .label(fl!("ui-tool-cmdlib-history-this-host"))
+                    .on_toggle(move |on| send(CommandLibraryMessage::HistoryThisHostOnly(on)))
+                    .style(styles::checkbox)
+                    .text_size(font_size::BODY),
+            );
+        }
+        let rows = self.history_rows();
         if self.activity.history().is_empty() {
             body = body.push(text(fl!("ui-tool-cmdlib-history-empty")).size(font_size::BODY));
+        } else if rows.is_empty() {
+            body = body.push(text(fl!("ui-tool-cmdlib-history-empty-host")).size(font_size::BODY));
         }
-        for (index, entry) in self.activity.history().iter().enumerate() {
+        for (index, entry) in rows {
             let when = heimdall_app::local_time_text(entry.at);
-            let line = row![
-                column![
-                    text(entry.title.as_str())
-                        .size(font_size::BODY)
-                        .font(styles::SEMIBOLD),
+            let status = match entry.mode {
+                HistoryMode::Sent => fl!(
+                    "ui-tool-cmdlib-history-sent",
+                    target = entry.target.as_str(),
+                    when = when
+                ),
+                HistoryMode::Inserted => fl!(
+                    "ui-tool-cmdlib-history-inserted",
+                    target = entry.target.as_str(),
+                    when = when
+                ),
+                HistoryMode::Copied => fl!("ui-tool-cmdlib-history-copied", when = when),
+            };
+            let mut details = column![
+                text(entry.title.as_str())
+                    .size(font_size::BODY)
+                    .font(styles::SEMIBOLD),
+                text(status).size(font_size::CAPTION).style(text::secondary),
+            ]
+            .spacing(spacing::XS)
+            .width(Length::Fill);
+            if !entry.host.is_empty() {
+                details = details.push(
                     text(fl!(
-                        "ui-tool-cmdlib-history-sent",
-                        target = entry.target.as_str(),
-                        when = when
+                        "ui-tool-cmdlib-history-host",
+                        host = entry.host.as_str()
                     ))
                     .size(font_size::CAPTION)
                     .style(text::secondary),
+                );
+            }
+            let line = row![
+                details.push(
                     text(entry.pattern.as_str())
                         .font(super::BOX_FONT)
                         .size(font_size::BODY),
-                ]
-                .spacing(spacing::XS)
-                .width(Length::Fill),
+                ),
                 button(text(fl!("ui-tool-cmdlib-history-replay")).size(font_size::BODY))
                     .padding(super::COPY_PADDING)
                     .style(styles::secondary)
@@ -1290,6 +2044,12 @@ impl CommandLibraryPane {
                 send(CommandLibraryMessage::Copy(command.clone())),
                 super::COPY_PADDING,
             ),
+            button(text(fl!("ui-tool-cmdlib-insert")).size(font_size::BODY))
+                .padding(super::COPY_PADDING)
+                .style(styles::secondary)
+                .on_press_maybe(
+                    can_send.then(|| send(CommandLibraryMessage::Insert(command.clone())))
+                ),
             button(text(fl!("ui-tool-cmdlib-send")).size(font_size::BODY))
                 .padding(super::COPY_PADDING)
                 .style(styles::secondary)
@@ -1300,95 +2060,55 @@ impl CommandLibraryPane {
         .spacing(spacing::SM)
     }
 
-    /// One snippet: its title, platform and category, its description, its values and its
-    /// command with its buttons.
-    fn card<'a>(
+    /// One command of the catalogue, in the language of the window.
+    fn catalogue_card<'a>(
         &'a self,
         tab: TabId,
         state: &ToolPane,
-        snippet: &'static CommandSnippet,
+        entry: &'static CatalogueEntry,
     ) -> Element<'a, Message> {
-        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
-        let (title, description) = snippet_texts(snippet.id);
-        let header = row![
-            text(title)
-                .size(font_size::BODY_LARGE)
-                .font(styles::SEMIBOLD),
-            text(platform_name(snippet.platform))
-                .size(font_size::CAPTION)
-                .style(text::secondary),
-            text(category_name(snippet.category))
-                .size(font_size::CAPTION)
-                .style(text::secondary),
-        ]
-        .spacing(spacing::SM)
-        .align_y(iced::Alignment::Center);
-        let params = Column::with_children(snippet.parameters.iter().map(|parameter| {
-            let id = snippet.id;
-            let key = parameter.key;
-            let value = self.values.get(&(id, key)).map_or("", String::as_str);
-            row![
-                text(param_label(parameter.label))
-                    .size(font_size::BODY)
-                    .width(PARAM_LABEL_WIDTH),
-                text_input(parameter.default_value, value)
-                    .size(font_size::BODY)
-                    .padding(super::INPUT_PADDING)
-                    .style(styles::text_input)
-                    .on_input(move |typed| send(CommandLibraryMessage::Param(id, key, typed))),
-            ]
-            .spacing(spacing::SM)
-            .align_y(iced::Alignment::Center)
-            .into()
-        }))
-        .spacing(spacing::XS);
-        let reference = CommandRef::Catalog(snippet.id);
-        let command = command_box(
-            self.render(snippet),
-            self.actions(tab, state, &reference, true),
-        );
-        container(
-            column![
-                header,
-                text(description)
-                    .size(font_size::BODY)
-                    .style(text::secondary),
-                params,
-                command,
-                self.extras(tab, &reference, true)
-            ]
-            .spacing(spacing::SM),
+        let shown = entry.localized(&language());
+        let reference = CommandRef::Catalog(shown.id.clone());
+        self.command_card(
+            tab,
+            state,
+            &reference,
+            &shown,
+            category_name(&shown.category),
+            entry.notes(&language()),
+            None,
         )
-        .padding(spacing::MD)
-        .width(Length::Fill)
-        .style(styles::card)
-        .into()
     }
 
-    /// One command of the user: as a snippet's card, with the template to use when it has
-    /// two, why its command cannot be made yet, and its edit and delete buttons.
-    fn user_card<'a>(
+    /// One command: its title, platform, category and level, its description, the template
+    /// to use when it has two, its values, its command with its buttons or why it cannot be
+    /// made yet, and `manage` (a user's command's edit and delete buttons) under them.
+    fn command_card<'a>(
         &'a self,
         tab: TabId,
         state: &ToolPane,
-        command: &'a UserCommand,
+        reference: &CommandRef,
+        command: &UserCommand,
+        category: String,
+        notes: Option<String>,
+        manage: Option<Element<'a, Message>>,
     ) -> Element<'a, Message> {
         let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
-        let shown = self.template_shown(command);
+        let shown = self.template_shown(reference, command);
         let header = row![
-            text(command.title.as_str())
+            text(command.title.clone())
                 .size(font_size::BODY_LARGE)
                 .font(styles::SEMIBOLD),
             text(user_platform_name(command.platform))
                 .size(font_size::CAPTION)
                 .style(text::secondary),
-            text(command.category.as_str())
+            text(category)
                 .size(font_size::CAPTION)
                 .style(text::secondary),
             text(level_name(command.level))
                 .size(font_size::CAPTION)
                 .style(if command.level == Criticality::Dangerous {
-                    text::danger
+                    styles::error_text
                 } else {
                     text::secondary
                 }),
@@ -1398,14 +2118,32 @@ impl CommandLibraryPane {
         let mut body = column![header].spacing(spacing::SM);
         if !command.description.is_empty() {
             body = body.push(
-                text(command.description.as_str())
+                text(command.description.clone())
                     .size(font_size::BODY)
+                    .style(text::secondary),
+            );
+        }
+        if let Some(notes) = notes.filter(|notes| !notes.trim().is_empty()) {
+            body = body.push(text(notes).size(font_size::CAPTION).style(text::secondary));
+        }
+        // The command itself under its title, for the template shown, on one line, as the C#
+        // row's `CommandPreview`.
+        if let Some(preview) = shown
+            .and_then(|platform| command.template(platform))
+            .map(|template| command_library::command_preview(&template.command_pattern))
+            .filter(|preview| !preview.is_empty())
+        {
+            body = body.push(
+                text(preview)
+                    .font(super::BOX_FONT)
+                    .size(font_size::CAPTION)
                     .style(text::secondary),
             );
         }
         let platforms = command.template_platforms();
         if platforms.len() > 1 {
             body = body.push(Row::with_children(platforms.into_iter().map(|choice| {
+                let id = command.id.clone();
                 button(text(template_name(choice)).size(font_size::BODY))
                     .padding(super::COPY_PADDING)
                     .style(if shown == Some(choice) {
@@ -1413,10 +2151,10 @@ impl CommandLibraryPane {
                     } else {
                         styles::secondary
                     })
-                    .on_press(send(CommandLibraryMessage::UserTemplate(
-                        command.id.clone(),
-                        choice,
-                    )))
+                    .on_press(send(match reference {
+                        CommandRef::Catalog(_) => CommandLibraryMessage::Template(id, choice),
+                        CommandRef::User(_) => CommandLibraryMessage::UserTemplate(id, choice),
+                    }))
                     .into()
             })));
         }
@@ -1425,28 +2163,30 @@ impl CommandLibraryPane {
                 Column::with_children(template.parameters.iter().map(|parameter| {
                     let id = command.id.clone();
                     let name = parameter.name.clone();
-                    let value = self
-                        .user_values
-                        .get(&(id.clone(), name.clone()))
-                        .map_or("", String::as_str);
+                    let value = self.value(reference, parameter).unwrap_or_default();
+                    let catalog = matches!(reference, CommandRef::Catalog(_));
                     row![
                         text(if parameter.label.is_empty() {
-                            parameter.name.as_str()
+                            parameter.name.clone()
                         } else {
-                            parameter.label.as_str()
+                            parameter.label.clone()
                         })
                         .size(font_size::BODY)
                         .width(PARAM_LABEL_WIDTH),
-                        text_input(parameter.default_value.as_deref().unwrap_or(""), value)
+                        text_input(parameter.default_value.as_deref().unwrap_or(""), &value)
                             .size(font_size::BODY)
                             .padding(super::INPUT_PADDING)
                             .style(styles::text_input)
                             .on_input(move |typed| {
-                                send(CommandLibraryMessage::UserParam(
-                                    id.clone(),
-                                    name.clone(),
-                                    typed,
-                                ))
+                                send(if catalog {
+                                    CommandLibraryMessage::Param(id.clone(), name.clone(), typed)
+                                } else {
+                                    CommandLibraryMessage::UserParam(
+                                        id.clone(),
+                                        name.clone(),
+                                        typed,
+                                    )
+                                })
                             }),
                     ]
                     .spacing(spacing::SM)
@@ -1456,24 +2196,59 @@ impl CommandLibraryPane {
                 .spacing(spacing::XS),
             );
         }
-        let reference = CommandRef::User(command.id.clone());
-        let renders = self.user_render(command).is_ok();
-        body = body.push(self.extras(tab, &reference, renders));
-        match self.user_render(command) {
+        let made = self.render(reference, command);
+        body = body.push(self.extras(tab, reference, made.is_ok()));
+        match made {
             Ok(rendered) => {
                 body = body.push(command_box(
                     rendered,
-                    self.actions(tab, state, &reference, true),
+                    self.actions(tab, state, reference, true),
                 ));
             }
             Err(error) => {
+                // A shipped command refused with nothing typed is refused for its own
+                // defaults: say so, instead of blaming a value nobody wrote.
+                let nothing_typed = command
+                    .template(shown.unwrap_or(TemplatePlatform::Linux))
+                    .is_none_or(|template| {
+                        template.parameters.iter().all(|parameter| {
+                            self.typed(reference, &parameter.name)
+                                .is_none_or(|typed| typed.trim().is_empty())
+                        })
+                    });
+                let unbuildable = matches!(reference, CommandRef::Catalog(_))
+                    && nothing_typed
+                    && matches!(&error, GenerateError::Values(values)
+                        if values.iter().any(|each| matches!(each, ValueError::Dangerous(_))));
                 body = body.push(
-                    text(generate_error(&error))
-                        .size(font_size::BODY)
-                        .style(text::danger),
+                    text(if unbuildable {
+                        fl!("ui-tool-cmdlib-catalogue-unbuildable")
+                    } else {
+                        generate_error(&error)
+                    })
+                    .size(font_size::BODY)
+                    .style(styles::error_text),
                 );
             }
         }
+        if let Some(manage) = manage {
+            body = body.push(manage);
+        }
+        container(body)
+            .padding(spacing::MD)
+            .width(Length::Fill)
+            .style(styles::card)
+            .into()
+    }
+
+    /// One command of the user, with its edit and delete buttons.
+    fn user_card<'a>(
+        &'a self,
+        tab: TabId,
+        state: &ToolPane,
+        command: &'a UserCommand,
+    ) -> Element<'a, Message> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
         let manage: Element<'a, Message> = if self.deleting.as_deref() == Some(&command.id) {
             row![
                 text(fl!(
@@ -1512,38 +2287,80 @@ impl CommandLibraryPane {
             .spacing(spacing::SM)
             .into()
         };
-        container(body.push(manage))
-            .padding(spacing::MD)
-            .width(Length::Fill)
-            .style(styles::card)
-            .into()
+        self.command_card(
+            tab,
+            state,
+            &CommandRef::User(command.id.clone()),
+            command,
+            command.category.clone(),
+            None,
+            Some(manage),
+        )
     }
 }
 
-/// The editor's draft for a copy of a snippet of the catalog: the platform it is written for
-/// keeps its pattern (both, for a cross-platform one), and a dangerous one stays so.
-fn snippet_draft(snippet: &CommandSnippet) -> Draft {
-    let (title, description) = snippet_texts(snippet.id);
-    let pattern = snippet.template.to_owned();
-    let (platform, windows_pattern, linux_pattern) = match snippet.platform {
-        SnippetPlatform::Windows => (UserPlatform::Windows, pattern, String::new()),
-        SnippetPlatform::Linux => (UserPlatform::Linux, String::new(), pattern),
-        SnippetPlatform::CrossPlatform => (UserPlatform::Both, pattern.clone(), pattern),
+/// The command of the catalogue of this identity.
+fn catalogue_entry(id: &str) -> Option<&'static CatalogueEntry> {
+    command_library::shipped().get(id)
+}
+
+/// The language of the window, as a catalogue file names it.
+pub(super) fn language() -> String {
+    crate::i18n::current().code().to_owned()
+}
+
+/// The template of `command` whose pattern is `pattern`: the one a history row ran on.
+fn pattern_platform(command: &UserCommand, pattern: &str) -> Option<TemplatePlatform> {
+    command.template_platforms().into_iter().find(|platform| {
+        command
+            .template(*platform)
+            .is_some_and(|template| template.command_pattern == pattern)
+    })
+}
+
+/// The editor's draft for a copy of a command of the catalogue, shown in the language of the
+/// window: its patterns keep their platforms, and a dangerous one stays so.
+fn catalogue_draft(command: &UserCommand) -> Draft {
+    let pattern_of = |platform| {
+        command
+            .template(platform)
+            .map(|template| template.command_pattern.clone())
+            .unwrap_or_default()
     };
     Draft {
         id: None,
-        title: fl!("ui-tool-cmdlib-duplicate-title", title = title),
-        description,
-        category: category_name(snippet.category),
+        title: fl!(
+            "ui-tool-cmdlib-duplicate-title",
+            title = command.title.as_str()
+        ),
+        description: command.description.clone(),
+        category: category_name(&command.category),
+        platform: command.platform,
+        level: command.level,
+        windows_pattern: pattern_of(TemplatePlatform::Windows),
+        linux_pattern: pattern_of(TemplatePlatform::Linux),
+        tags: command.tags.join(TAG_JOINER),
+    }
+}
+
+/// The editor's draft for a command captured from a terminal: its text in the pattern of the
+/// session's platform and only there, at the level that runs, the protocol as a tag, no title
+/// (the user names it) and the category of the last command made, if any.
+fn captured_draft(capture: &CapturedCommand, category: Option<&str>) -> Draft {
+    let text = capture.text.clone();
+    let (platform, windows_pattern, linux_pattern) = match capture.platform {
+        TemplatePlatform::Windows => (UserPlatform::Windows, text, String::new()),
+        TemplatePlatform::Linux => (UserPlatform::Linux, String::new(), text),
+    };
+    Draft {
+        id: None,
+        category: category.unwrap_or_default().to_owned(),
         platform,
-        level: if command_library::is_dangerous(snippet.id) {
-            Criticality::Dangerous
-        } else {
-            Criticality::Info
-        },
+        level: Criticality::Run,
         windows_pattern,
         linux_pattern,
-        tags: String::new(),
+        tags: capture.tag.clone().unwrap_or_default(),
+        ..Draft::default()
     }
 }
 
@@ -1556,29 +2373,86 @@ fn now_unix() -> i64 {
         })
 }
 
+/// What an import did: the counts of the actions and of the runbooks, the first runbook
+/// replaced, then the first action left out and the first runbook left out, each with its
+/// reason.
+fn import_text(report: &ImportReport, runbooks: Option<&RunbookImport>) -> String {
+    let mut done = fl!(
+        "ui-tool-cmdlib-import-done",
+        imported = report.imported,
+        updated = report.updated,
+        skipped = report.skipped
+    );
+    if let Some(runbooks) = runbooks {
+        done = fl!(
+            "ui-tool-cmdlib-import-runbooks",
+            done = done,
+            imported = runbooks.imported,
+            updated = runbooks.updated,
+            skipped = runbooks.skipped
+        );
+    }
+    if let Some((old, new)) = runbooks.and_then(|each| each.first_updated.as_ref()) {
+        done = fl!(
+            "ui-tool-cmdlib-import-replaced",
+            done = done,
+            old = old.as_str(),
+            name = new.as_str()
+        );
+    }
+    if let Some((title, issue)) = &report.first_skipped {
+        done = fl!(
+            "ui-tool-cmdlib-import-skipped",
+            done = done,
+            title = title.as_str(),
+            reason = issue_text(issue)
+        );
+    }
+    if let Some((name, why)) = runbooks.and_then(|each| each.first_skipped.as_ref()) {
+        done = fl!(
+            "ui-tool-cmdlib-import-skipped-runbook",
+            done = done,
+            title = name.as_str(),
+            reason = refusal_text(why)
+        );
+    }
+    done
+}
+
+/// What a file that could not be imported, exported or pulled is told as.
+fn transfer_error_text(error: &TransferError) -> String {
+    match error {
+        TransferError::TooLarge => fl!("ui-tool-cmdlib-transfer-too-large"),
+        TransferError::Format => fl!("ui-tool-cmdlib-transfer-format"),
+        TransferError::TooManyActions => fl!(
+            "ui-tool-cmdlib-transfer-too-many",
+            max = user_commands::MAX_IMPORT_ACTIONS
+        ),
+        TransferError::TooManyRunbooks => fl!(
+            "ui-tool-cmdlib-transfer-too-many-runbooks",
+            max = heimdall_core::tools::runbooks::MAX_RUNBOOKS
+        ),
+        TransferError::Version(version) => fl!(
+            "ui-tool-cmdlib-transfer-version",
+            version = version.as_str()
+        ),
+        TransferError::RunbooksUnsaved => fl!("ui-tool-cmdlib-transfer-runbooks-unsaved"),
+        TransferError::RunbooksUnsavedLibraryKept => {
+            fl!("ui-tool-cmdlib-transfer-runbooks-unsaved-kept")
+        }
+        TransferError::NothingToExport => fl!("ui-tool-cmdlib-export-nothing"),
+        TransferError::Failed(detail) => {
+            fl!("ui-tool-cmdlib-transfer-failed", detail = detail.as_str())
+        }
+    }
+}
+
 /// What the pane tells, in the window's language.
 fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
     let (message, failed) = match notice {
-        Notice::Imported(report) => (
-            fl!(
-                "ui-tool-cmdlib-import-done",
-                imported = report.imported,
-                updated = report.updated,
-                skipped = report.skipped
-            ),
-            false,
-        ),
+        Notice::Imported(report, runbooks) => (import_text(report, runbooks.as_ref()), false),
         Notice::Exported => (fl!("ui-tool-cmdlib-export-done"), false),
-        Notice::TransferFailed(error) => (
-            match error {
-                TransferError::TooLarge => fl!("ui-tool-cmdlib-transfer-too-large"),
-                TransferError::Format => fl!("ui-tool-cmdlib-transfer-format"),
-                TransferError::Failed(detail) => {
-                    fl!("ui-tool-cmdlib-transfer-failed", detail = detail.as_str())
-                }
-            },
-            true,
-        ),
+        Notice::TransferFailed(error) => (transfer_error_text(error), true),
         Notice::Broadcast {
             delivered,
             total,
@@ -1604,12 +2478,18 @@ fn notice_view<'a>(notice: &Notice) -> Element<'a, Message> {
         }
         Notice::ReplayGone => (fl!("ui-tool-cmdlib-replay-gone"), true),
         Notice::ReplayBlocked => (fl!("ui-tool-cmdlib-replay-blocked"), true),
+        Notice::CaptureBlocked => (fl!("ui-tool-cmdlib-capture-blocked"), true),
         Notice::ActivityUnsaved => (fl!("ui-tool-cmdlib-activity-unsaved"), true),
+        Notice::Inserted(target) => (
+            fl!("ui-tool-cmdlib-inserted", target = target.as_str()),
+            false,
+        ),
+        Notice::Sync(notice) => sync::notice_text(notice),
     };
     text(message)
         .size(font_size::BODY)
         .style(if failed {
-            text::danger
+            styles::error_text
         } else {
             text::secondary
         })
@@ -1835,7 +2715,7 @@ fn editor_view(tab: TabId, editor: &Editor) -> Element<'_, Message> {
         form = form.push(
             text(draft_error(problem))
                 .size(font_size::BODY)
-                .style(text::danger),
+                .style(styles::error_text),
         );
     }
     form = form.push(
@@ -1856,61 +2736,6 @@ fn editor_view(tab: TabId, editor: &Editor) -> Element<'_, Message> {
         .width(Length::Fill)
         .style(styles::card)
         .into()
-}
-
-/// The title and description of snippet `id`, in the window's language.
-fn snippet_texts(id: SnippetId) -> (String, String) {
-    match id {
-        SnippetId::LinuxListeningPorts => (
-            fl!("ui-tool-cmdlib-snippet-listening-ports"),
-            fl!("ui-tool-cmdlib-snippet-listening-ports-description"),
-        ),
-        SnippetId::LinuxKillPort => (
-            fl!("ui-tool-cmdlib-snippet-kill-port"),
-            fl!("ui-tool-cmdlib-snippet-kill-port-description"),
-        ),
-        SnippetId::LinuxJournalFollow => (
-            fl!("ui-tool-cmdlib-snippet-journal-follow"),
-            fl!("ui-tool-cmdlib-snippet-journal-follow-description"),
-        ),
-        SnippetId::LinuxCertExpiry => (
-            fl!("ui-tool-cmdlib-snippet-cert-expiry"),
-            fl!("ui-tool-cmdlib-snippet-cert-expiry-description"),
-        ),
-        SnippetId::WindowsTestConnection => (
-            fl!("ui-tool-cmdlib-snippet-test-connection"),
-            fl!("ui-tool-cmdlib-snippet-test-connection-description"),
-        ),
-        SnippetId::WindowsPortOwner => (
-            fl!("ui-tool-cmdlib-snippet-port-owner"),
-            fl!("ui-tool-cmdlib-snippet-port-owner-description"),
-        ),
-        SnippetId::WindowsRestartService => (
-            fl!("ui-tool-cmdlib-snippet-restart-service"),
-            fl!("ui-tool-cmdlib-snippet-restart-service-description"),
-        ),
-        SnippetId::WindowsFlushDns => (
-            fl!("ui-tool-cmdlib-snippet-flush-dns"),
-            fl!("ui-tool-cmdlib-snippet-flush-dns-description"),
-        ),
-        SnippetId::MtrProbe => (
-            fl!("ui-tool-cmdlib-snippet-mtr"),
-            fl!("ui-tool-cmdlib-snippet-mtr-description"),
-        ),
-        SnippetId::NmapServiceScan => (
-            fl!("ui-tool-cmdlib-snippet-nmap"),
-            fl!("ui-tool-cmdlib-snippet-nmap-description"),
-        ),
-    }
-}
-
-/// The name of `platform`.
-fn platform_name(platform: SnippetPlatform) -> String {
-    match platform {
-        SnippetPlatform::Linux => fl!("ui-tool-cmdlib-platform-linux"),
-        SnippetPlatform::Windows => fl!("ui-tool-cmdlib-platform-windows"),
-        SnippetPlatform::CrossPlatform => fl!("ui-tool-cmdlib-platform-cross"),
-    }
 }
 
 /// The name of the platforms of a command of the user.
@@ -1939,25 +2764,24 @@ fn level_name(level: Criticality) -> String {
     }
 }
 
-/// The name of `category`.
-fn category_name(category: SnippetCategory) -> String {
-    match category {
-        SnippetCategory::Network => fl!("ui-tool-cmdlib-category-network"),
-        SnippetCategory::System => fl!("ui-tool-cmdlib-category-system"),
-        SnippetCategory::Services => fl!("ui-tool-cmdlib-category-services"),
-        SnippetCategory::Security => fl!("ui-tool-cmdlib-category-security"),
-        SnippetCategory::Diagnostics => fl!("ui-tool-cmdlib-category-diagnostics"),
-    }
-}
-
-/// The label of a value of kind `label`.
-fn param_label(label: ParamLabel) -> String {
-    match label {
-        ParamLabel::Host => fl!("ui-tool-cmdlib-param-host"),
-        ParamLabel::Port => fl!("ui-tool-cmdlib-param-port"),
-        ParamLabel::LocalPort => fl!("ui-tool-cmdlib-param-local-port"),
-        ParamLabel::PortRange => fl!("ui-tool-cmdlib-param-port-range"),
-        ParamLabel::Service => fl!("ui-tool-cmdlib-param-service"),
+/// The name of the category `key`, in the window's language; a category the user typed is
+/// shown as typed.
+pub(super) fn category_name(key: &str) -> String {
+    match key {
+        "security" => fl!("ui-tool-cmdlib-category-security"),
+        "active-directory" => fl!("ui-tool-cmdlib-category-active-directory"),
+        "services-automation" => fl!("ui-tool-cmdlib-category-services-automation"),
+        "windows-updates" => fl!("ui-tool-cmdlib-category-windows-updates"),
+        "monitoring-logs" => fl!("ui-tool-cmdlib-category-monitoring-logs"),
+        "files-storage" => fl!("ui-tool-cmdlib-category-files-storage"),
+        "network-dns" => fl!("ui-tool-cmdlib-category-network-dns"),
+        "package-management" => fl!("ui-tool-cmdlib-category-package-management"),
+        "development" => fl!("ui-tool-cmdlib-category-development"),
+        "performance" => fl!("ui-tool-cmdlib-category-performance"),
+        "containers-vms" => fl!("ui-tool-cmdlib-category-containers-vms"),
+        "database" => fl!("ui-tool-cmdlib-category-database"),
+        "windows-debloat" => fl!("ui-tool-cmdlib-category-windows-debloat"),
+        other => other.to_owned(),
     }
 }
 
@@ -1970,20 +2794,122 @@ fn draft_error(problem: DraftError) -> String {
         DraftError::CategoryTooLong => fl!("ui-tool-cmdlib-error-category-long"),
         DraftError::DescriptionTooLong => fl!("ui-tool-cmdlib-error-description-long"),
         DraftError::PatternMissing => fl!("ui-tool-cmdlib-error-pattern-missing"),
-        DraftError::PatternTooLong => fl!("ui-tool-cmdlib-error-pattern-long"),
+        DraftError::PatternTooLong => fl!(
+            "ui-tool-cmdlib-error-pattern-long",
+            max = user_commands::MAX_PATTERN_LENGTH
+        ),
         DraftError::PatternMultiline => fl!("ui-tool-cmdlib-error-pattern-multiline"),
+        DraftError::PatternHidden => fl!("ui-tool-cmdlib-error-pattern-hidden"),
         DraftError::TooManyParameters => fl!("ui-tool-cmdlib-error-too-many-parameters"),
         DraftError::TooManyTags => fl!("ui-tool-cmdlib-error-too-many-tags"),
         DraftError::Gone => fl!("ui-tool-cmdlib-error-gone"),
     }
 }
 
+/// The question of what an export holds, with the three answers and a word about secrets.
+fn export_choice_view<'a>(tab: TabId) -> Element<'a, Message> {
+    let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
+    let choice = |label: String, scope: ExportScope| {
+        button(text(label).size(font_size::BODY))
+            .padding(super::COPY_PADDING)
+            .style(if scope == ExportScope::Mine {
+                styles::primary
+            } else {
+                styles::secondary
+            })
+            .on_press(send(CommandLibraryMessage::ExportScope(scope)))
+    };
+    column![
+        text(fl!("ui-tool-cmdlib-export-scope-title")).size(font_size::BODY),
+        row![
+            choice(fl!("ui-tool-cmdlib-export-scope-mine"), ExportScope::Mine),
+            choice(
+                fl!("ui-tool-cmdlib-export-scope-filtered"),
+                ExportScope::CurrentFilter
+            ),
+            choice(
+                fl!("ui-tool-cmdlib-export-scope-all"),
+                ExportScope::Everything
+            ),
+            button(text(fl!("ui-tool-cmdlib-cancel")).size(font_size::BODY))
+                .padding(super::COPY_PADDING)
+                .style(styles::secondary)
+                .on_press(send(CommandLibraryMessage::Export)),
+        ]
+        .spacing(spacing::SM),
+        text(fl!("ui-tool-cmdlib-export-scope-hint"))
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+        text(fl!("ui-tool-cmdlib-export-secrets-note"))
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+    ]
+    .spacing(spacing::XS)
+    .into()
+}
+
+/// What a refused file is told as.
+fn transfer_error(error: LibraryError) -> TransferError {
+    match error {
+        LibraryError::TooLarge => TransferError::TooLarge,
+        LibraryError::Io(error) => TransferError::Failed(error.to_string()),
+        LibraryError::Format => TransferError::Format,
+        LibraryError::TooManyActions => TransferError::TooManyActions,
+        LibraryError::TooManyRunbooks => TransferError::TooManyRunbooks,
+        LibraryError::Version(version) => TransferError::Version(version),
+    }
+}
+
+/// Why an imported runbook was left out, in the window's language.
+fn refusal_text(why: &library_transfer::RunbookRefusal) -> String {
+    super::command_library_runbooks::refusal_text(why)
+}
+
+/// Why an imported command was left out, in the window's language.
+fn issue_text(issue: &CommandIssue) -> String {
+    match issue {
+        CommandIssue::MissingTitle => fl!("ui-tool-cmdlib-issue-title-missing"),
+        CommandIssue::TitleTooLong => fl!("ui-tool-cmdlib-error-title-long"),
+        CommandIssue::MissingCategory => fl!("ui-tool-cmdlib-error-category-missing"),
+        CommandIssue::CategoryTooLong => fl!("ui-tool-cmdlib-error-category-long"),
+        CommandIssue::DescriptionTooLong => fl!("ui-tool-cmdlib-error-description-long"),
+        CommandIssue::TooManyTags => fl!("ui-tool-cmdlib-error-too-many-tags"),
+        CommandIssue::NoTemplate => fl!("ui-tool-cmdlib-error-pattern-missing"),
+        CommandIssue::PatternTooLong(_) => fl!(
+            "ui-tool-cmdlib-error-pattern-long",
+            max = user_commands::MAX_PATTERN_LENGTH
+        ),
+        CommandIssue::PatternMultiline(_) => fl!("ui-tool-cmdlib-error-pattern-multiline"),
+        CommandIssue::PatternHidden(_) => fl!("ui-tool-cmdlib-error-pattern-hidden"),
+        CommandIssue::TooManyParameters(_) => fl!("ui-tool-cmdlib-error-too-many-parameters"),
+        CommandIssue::UnnamedParameter(_) => fl!("ui-tool-cmdlib-issue-parameter-unnamed"),
+        CommandIssue::DuplicateParameter(_, name) => {
+            fl!(
+                "ui-tool-cmdlib-issue-parameter-duplicate",
+                name = name.as_str()
+            )
+        }
+        CommandIssue::UnknownParameterType(_, kind) => {
+            fl!("ui-tool-cmdlib-issue-parameter-type", kind = kind.as_str())
+        }
+        CommandIssue::ChoiceWithoutValues(_, name) => {
+            fl!("ui-tool-cmdlib-issue-choice-empty", name = name.as_str())
+        }
+        CommandIssue::RefusedDefault(_) => fl!("ui-tool-cmdlib-issue-default-refused"),
+        CommandIssue::InCatalogue => fl!("ui-tool-cmdlib-issue-in-catalogue"),
+    }
+}
+
 /// Why a command of the user cannot be made from the values typed.
-fn generate_error(error: &GenerateError) -> String {
+pub(super) fn generate_error(error: &GenerateError) -> String {
     match error {
         GenerateError::EmptyPattern => fl!("ui-tool-cmdlib-error-empty-pattern"),
         GenerateError::TooManyParameters => fl!("ui-tool-cmdlib-error-too-many-parameters"),
-        GenerateError::TooLong => fl!("ui-tool-cmdlib-error-command-long"),
+        GenerateError::Multiline => fl!("ui-tool-cmdlib-error-pattern-multiline"),
+        GenerateError::TooLong => fl!(
+            "ui-tool-cmdlib-error-command-long",
+            max = user_commands::MAX_COMMAND_LENGTH
+        ),
         GenerateError::Values(values) => {
             values.iter().map(value_error).collect::<Vec<_>>().join(" ")
         }
@@ -1991,7 +2917,7 @@ fn generate_error(error: &GenerateError) -> String {
 }
 
 /// Why a value is refused, naming its parameter.
-fn value_error(error: &ValueError) -> String {
+pub(super) fn value_error(error: &ValueError) -> String {
     match error {
         ValueError::Required(label) => fl!("ui-tool-cmdlib-value-required", label = label.as_str()),
         ValueError::NotOffered(label) => {
@@ -2006,7 +2932,11 @@ fn value_error(error: &ValueError) -> String {
         ValueError::Hostname(label) => fl!("ui-tool-cmdlib-value-hostname", label = label.as_str()),
         ValueError::IpAddress(label) => fl!("ui-tool-cmdlib-value-ip", label = label.as_str()),
         ValueError::DriveLetter(label) => fl!("ui-tool-cmdlib-value-drive", label = label.as_str()),
-        ValueError::Path(label) => fl!("ui-tool-cmdlib-value-path", label = label.as_str()),
+        ValueError::Path(label) => fl!(
+            "ui-tool-cmdlib-value-path",
+            label = label.as_str(),
+            max = user_commands::MAX_PATH_LENGTH
+        ),
         ValueError::TooLong(label) => fl!(
             "ui-tool-cmdlib-value-long",
             label = label.as_str(),
@@ -2021,6 +2951,11 @@ fn value_error(error: &ValueError) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use heimdall_core::tools::runbooks::{RUNBOOKS_FILE, Runbook, RunbookStore, Step};
+
+    use super::super::command_library_runbooks::{RunTarget, StepStatus};
     use super::*;
 
     /// Three tab identifiers, made by opening three tools in an application.
@@ -2059,6 +2994,40 @@ mod tests {
         CommandLibraryPane::new(Some(&folder.join("profiles.toml")))
     }
 
+    /// The route tracer of the catalogue, with a value to ask for and a template for each
+    /// shell.
+    const TRACE: &str = "network-trace-route";
+
+    /// The tracer of the catalogue, its Linux template shown (this host's shell decides
+    /// otherwise), and `target` typed.
+    fn trace(pane: &mut CommandLibraryPane, target: &str) -> CommandRef {
+        pane.update(CommandLibraryMessage::Template(
+            TRACE.to_owned(),
+            TemplatePlatform::Linux,
+        ));
+        pane.update(CommandLibraryMessage::Param(
+            TRACE.to_owned(),
+            "target".to_owned(),
+            target.to_owned(),
+        ));
+        CommandRef::Catalog(TRACE.to_owned())
+    }
+
+    /// A command of the catalogue for Windows only, with no value to ask for.
+    fn fsmo() -> CommandRef {
+        CommandRef::Catalog("ad-check-fsmo-roles".to_owned())
+    }
+
+    /// A command of the catalogue for Linux only, marked dangerous, whose values have defaults.
+    fn fsck() -> CommandRef {
+        CommandRef::Catalog("fsck-check-filesystem".to_owned())
+    }
+
+    /// A command of the catalogue for Linux only, not dangerous, whose value has a default.
+    fn follow() -> CommandRef {
+        CommandRef::Catalog("journalctl-follow".to_owned())
+    }
+
     fn type_into(pane: &mut CommandLibraryPane, field: Field, value: &str) {
         pane.update(CommandLibraryMessage::Field(field, value.to_owned()));
     }
@@ -2076,59 +3045,99 @@ mod tests {
     }
 
     #[test]
-    fn a_snippet_copies_its_command_with_the_values_typed_by_its_own_button() {
+    fn a_catalogue_command_copies_with_the_values_typed_by_its_own_button() {
         let mut pane = CommandLibraryPane::default();
-        pane.update(CommandLibraryMessage::Param(
-            SnippetId::MtrProbe,
-            "host",
-            "10.0.0.1".to_owned(),
-        ));
+        let trace = trace(&mut pane, "10.0.0.1");
+        let position = command_library::shipped().position(TRACE).expect("shipped");
         assert_eq!(
-            pane.update(CommandLibraryMessage::Copy(CommandRef::Catalog(
-                SnippetId::MtrProbe
-            ))),
+            pane.update(CommandLibraryMessage::Copy(trace)),
             Outcome::Copy(
-                CopySlot::CmdLibCommand(SnippetId::MtrProbe),
-                "mtr -rw -c 50 10.0.0.1".to_owned()
+                CopySlot::CmdLibCommand(position),
+                "traceroute 10.0.0.1".to_owned()
             )
         );
+        let position = command_library::shipped()
+            .position("ad-check-fsmo-roles")
+            .expect("shipped");
         assert_eq!(
-            pane.update(CommandLibraryMessage::Copy(CommandRef::Catalog(
-                SnippetId::WindowsFlushDns
-            ))),
+            pane.update(CommandLibraryMessage::Copy(fsmo())),
             Outcome::Copy(
-                CopySlot::CmdLibCommand(SnippetId::WindowsFlushDns),
-                "Clear-DnsClientCache".to_owned()
+                CopySlot::CmdLibCommand(position),
+                "netdom query fsmo".to_owned()
             )
         );
     }
 
     #[test]
-    fn the_platform_and_the_search_filter_the_catalog() {
+    fn a_value_refused_leaves_nothing_to_copy_and_a_missing_one_is_asked_for() {
         let mut pane = CommandLibraryPane::default();
-        assert_eq!(pane.shown().len(), BUILTIN_SNIPPETS.len());
-        pane.update(CommandLibraryMessage::Platform(Some(
-            SnippetPlatform::Windows,
-        )));
-        assert!(
-            pane.shown()
-                .iter()
-                .all(|snippet| { snippet.platform != SnippetPlatform::Linux })
+        let trace = trace(&mut pane, "");
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Copy(trace.clone())),
+            Outcome::None,
+            "a required value not given"
         );
-        pane.update(CommandLibraryMessage::Search("dnsclient".to_owned()));
-        let shown: Vec<SnippetId> = pane.shown().iter().map(|snippet| snippet.id).collect();
-        assert_eq!(shown, [SnippetId::WindowsFlushDns]);
+        trace_value(&mut pane, "a; rm -rf x");
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Copy(trace)),
+            Outcome::None,
+            "shell syntax"
+        );
+    }
+
+    fn trace_value(pane: &mut CommandLibraryPane, target: &str) {
+        pane.update(CommandLibraryMessage::Param(
+            TRACE.to_owned(),
+            "target".to_owned(),
+            target.to_owned(),
+        ));
+    }
+
+    #[test]
+    fn the_platform_and_the_search_filter_the_catalogue() {
+        let mut pane = CommandLibraryPane::default();
+        let all = command_library::shipped().entries().len();
+        assert_eq!(pane.shown().len(), all);
+        pane.update(CommandLibraryMessage::Platform(Some(UserPlatform::Windows)));
+        let windows = pane.shown();
+        assert!(windows.len() < all);
+        assert!(
+            windows
+                .iter()
+                .all(|entry| entry.command().platform != UserPlatform::Linux)
+        );
+        pane.update(CommandLibraryMessage::Search(
+            "netdom query fsmo".to_owned(),
+        ));
+        let shown: Vec<&str> = pane
+            .shown()
+            .iter()
+            .map(|entry| entry.command().id.as_str())
+            .collect();
+        assert!(shown.contains(&"ad-check-fsmo-roles"), "{shown:?}");
+        assert!(shown.len() < 5, "{shown:?}");
+    }
+
+    #[test]
+    fn more_of_the_catalogue_is_shown_page_by_page_and_a_new_filter_starts_over() {
+        let mut pane = CommandLibraryPane::default();
+        pane.update(CommandLibraryMessage::ShowMore);
+        pane.update(CommandLibraryMessage::ShowMore);
+        assert_eq!(pane.more_pages, 2);
+        pane.update(CommandLibraryMessage::Search("x".to_owned()));
+        assert_eq!(pane.more_pages, 0);
+        pane.update(CommandLibraryMessage::ShowMore);
+        pane.update(CommandLibraryMessage::Platform(None));
+        assert_eq!(pane.more_pages, 0);
+        pane.update(CommandLibraryMessage::ShowMore);
+        pane.update(CommandLibraryMessage::FavoritesOnly);
+        assert_eq!(pane.more_pages, 0);
     }
 
     #[test]
     fn a_send_asks_for_the_command_with_its_values_and_never_without_a_terminal() {
         let mut pane = CommandLibraryPane::default();
-        pane.update(CommandLibraryMessage::Param(
-            SnippetId::MtrProbe,
-            "host",
-            "10.0.0.1".to_owned(),
-        ));
-        let mtr = CommandRef::Catalog(SnippetId::MtrProbe);
+        let mtr = trace(&mut pane, "10.0.0.1");
         assert_eq!(
             pane.update(CommandLibraryMessage::Send(mtr.clone())),
             Outcome::None,
@@ -2144,7 +3153,7 @@ mod tests {
         };
         assert_eq!(
             (target, command.as_str()),
-            (first, "mtr -rw -c 50 10.0.0.1"),
+            (first, "traceroute 10.0.0.1"),
             "the first terminal until one is chosen"
         );
         pane.update(CommandLibraryMessage::Target(second));
@@ -2169,18 +3178,14 @@ mod tests {
         let mut pane = CommandLibraryPane::default();
         pane.set_targets(vec![target(tab_ids()[0], "A")]);
         assert!(matches!(
-            pane.update(CommandLibraryMessage::Send(CommandRef::Catalog(
-                SnippetId::LinuxKillPort
-            ))),
+            pane.update(CommandLibraryMessage::Send(fsck())),
             Outcome::Send {
                 dangerous: true,
                 ..
             }
         ));
         assert!(matches!(
-            pane.update(CommandLibraryMessage::Send(CommandRef::Catalog(
-                SnippetId::MtrProbe
-            ))),
+            pane.update(CommandLibraryMessage::Send(follow())),
             Outcome::Send {
                 dangerous: false,
                 ..
@@ -2198,7 +3203,10 @@ mod tests {
         // Another pane over the same folder sees it: kept, apart from the catalog.
         let again = self::pane(folder.path());
         assert_eq!(again.library.commands().len(), 1);
-        assert_eq!(again.shown().len(), BUILTIN_SNIPPETS.len());
+        assert_eq!(
+            again.shown().len(),
+            command_library::shipped().entries().len()
+        );
 
         pane.update(CommandLibraryMessage::Edit(id.clone()));
         type_into(&mut pane, Field::Title, "Ping three times");
@@ -2234,8 +3242,148 @@ mod tests {
         assert!(pane.library.commands().is_empty());
     }
 
+    /// A command captured in a terminal of the given platform.
+    fn captured(text: &str, platform: TemplatePlatform) -> CapturedCommand {
+        CapturedCommand {
+            text: text.to_owned(),
+            platform,
+            tag: Some("ssh".to_owned()),
+        }
+    }
+
     #[test]
-    fn a_user_command_is_copied_and_sent_with_its_values_quoted() {
+    fn a_captured_linux_command_opens_the_editor_on_a_new_action_with_the_title_left_to_the_user() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "df -h && free -m",
+            TemplatePlatform::Linux,
+        )));
+        let draft = &pane.editor.as_ref().expect("the editor is open").draft;
+        assert_eq!(draft.id, None, "a new action, never an edit");
+        assert_eq!(draft.linux_pattern, "df -h && free -m");
+        assert_eq!(draft.windows_pattern, "", "one shell only");
+        assert_eq!(draft.platform, UserPlatform::Linux);
+        assert_eq!(draft.level, Criticality::Run);
+        assert_eq!(draft.tags, "ssh");
+        assert_eq!(draft.title, "", "the user names it");
+        assert!(
+            pane.library.commands().is_empty(),
+            "nothing is kept before the user saves"
+        );
+    }
+
+    #[test]
+    fn a_captured_windows_command_goes_to_the_powershell_pattern() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "cd C:\\logs ; Get-ChildItem",
+            TemplatePlatform::Windows,
+        )));
+        let draft = &pane.editor.as_ref().expect("the editor is open").draft;
+        assert_eq!(draft.windows_pattern, "cd C:\\logs ; Get-ChildItem");
+        assert_eq!(draft.linux_pattern, "");
+        assert_eq!(draft.platform, UserPlatform::Windows);
+    }
+
+    #[test]
+    fn a_captured_command_is_saved_through_the_checks_of_the_editor_as_the_users_own() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "uptime",
+            TemplatePlatform::Linux,
+        )));
+        // No title, no category: refused with the usual reason, the draft kept.
+        pane.update(CommandLibraryMessage::Save);
+        assert_eq!(
+            pane.editor.as_ref().and_then(|editor| editor.problem),
+            Some(DraftError::TitleMissing)
+        );
+        type_into(&mut pane, Field::Title, "Load");
+        type_into(&mut pane, Field::Category, "Network");
+        pane.update(CommandLibraryMessage::Save);
+        assert!(pane.editor.is_none(), "kept");
+        let kept = pane.library.commands();
+        assert_eq!(kept.len(), 1, "a command of the user, in their file");
+        assert_eq!(kept[0].tags, ["ssh"]);
+        assert_eq!(kept[0].level, Criticality::Run);
+
+        // The next capture starts in the category last created.
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "df -h",
+            TemplatePlatform::Linux,
+        )));
+        assert_eq!(
+            pane.editor
+                .as_ref()
+                .map(|editor| editor.draft.category.as_str()),
+            Some("Network")
+        );
+    }
+
+    #[test]
+    fn a_capture_never_replaces_an_editor_with_changes_and_says_so() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        pane.update(CommandLibraryMessage::New);
+        type_into(&mut pane, Field::Title, "Mine");
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "uptime",
+            TemplatePlatform::Linux,
+        )));
+        let editor = pane.editor.as_ref().expect("still open");
+        assert_eq!(editor.draft.title, "Mine", "nothing lost");
+        assert_eq!(editor.draft.linux_pattern, "");
+        assert_eq!(pane.notice, Some(Notice::CaptureBlocked));
+
+        // An editor nothing was typed in gives way.
+        pane.update(CommandLibraryMessage::CancelEdit);
+        pane.update(CommandLibraryMessage::New);
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "uptime",
+            TemplatePlatform::Linux,
+        )));
+        assert_eq!(
+            pane.editor
+                .as_ref()
+                .map(|editor| editor.draft.linux_pattern.as_str()),
+            Some("uptime")
+        );
+        assert_eq!(pane.notice, None);
+    }
+
+    #[test]
+    fn a_captured_command_holding_a_line_break_is_refused_at_save() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "ls\nrm -rf x",
+            TemplatePlatform::Linux,
+        )));
+        type_into(&mut pane, Field::Title, "Bad");
+        type_into(&mut pane, Field::Category, "Network");
+        pane.update(CommandLibraryMessage::Save);
+        assert_eq!(
+            pane.editor.as_ref().and_then(|editor| editor.problem),
+            Some(DraftError::PatternMultiline)
+        );
+        assert!(pane.library.commands().is_empty());
+    }
+
+    #[test]
+    fn a_capture_with_no_file_to_keep_it_in_opens_nothing() {
+        let mut pane = CommandLibraryPane::default();
+        pane.update(CommandLibraryMessage::Capture(captured(
+            "uptime",
+            TemplatePlatform::Linux,
+        )));
+        assert!(pane.editor.is_none());
+    }
+
+    #[test]
+    fn a_user_command_is_copied_and_sent_with_its_values_shaped_for_the_shell() {
         let folder = tempfile::tempdir().expect("folder");
         let mut pane = pane(folder.path());
         let id = make_ping(&mut pane);
@@ -2249,7 +3397,7 @@ mod tests {
             pane.update(CommandLibraryMessage::Copy(ping.clone())),
             Outcome::Copy(
                 CopySlot::CmdLibUserCommand(0),
-                "ping -c 3 'web.lab'".to_owned()
+                "ping -c 3 web.lab".to_owned()
             )
         );
         let terminal = tab_ids()[0];
@@ -2258,8 +3406,9 @@ mod tests {
             pane.update(CommandLibraryMessage::Send(ping.clone())),
             Outcome::Send {
                 target: terminal,
-                command: "ping -c 3 'web.lab'".to_owned(),
+                command: "ping -c 3 web.lab".to_owned(),
                 dangerous: false,
+                typed_as_is: false,
             }
         );
         // A value that would run more is refused: nothing to copy, nothing to send.
@@ -2295,6 +3444,7 @@ mod tests {
             tab,
             target: name.to_owned(),
             command: command.to_owned(),
+            delivery: Delivery::Run,
         }
     }
 
@@ -2303,9 +3453,14 @@ mod tests {
         let source = tempfile::tempdir().expect("folder");
         let mut origin = pane(source.path());
         make_ping(&mut origin);
-        let Outcome::Export(exported) = origin.update(CommandLibraryMessage::Export) else {
+        assert_eq!(origin.update(CommandLibraryMessage::Export), Outcome::None);
+        assert!(origin.export_choice, "the question is asked first");
+        let Outcome::Export(exported) =
+            origin.update(CommandLibraryMessage::ExportScope(ExportScope::Mine))
+        else {
             panic!("export asked");
         };
+        assert!(!origin.export_choice, "answered");
         assert!(exported.contains("schemaVersion"), "the C# envelope");
 
         let folder = tempfile::tempdir().expect("folder");
@@ -2313,14 +3468,11 @@ mod tests {
         assert_eq!(pane.update(CommandLibraryMessage::Import), Outcome::Import);
         pane.update(CommandLibraryMessage::Imported(Some(Ok(exported.clone()))));
         assert_eq!(pane.library.commands().len(), 1);
-        assert_eq!(
-            pane.notice,
-            Some(Notice::Imported(ImportReport {
-                imported: 1,
-                updated: 0,
-                skipped: 0
-            }))
-        );
+        assert!(matches!(
+            &pane.notice,
+            Some(Notice::Imported(report, None))
+                if (report.imported, report.updated, report.skipped) == (1, 0, 0)
+        ));
         let again = self::pane(folder.path());
         assert_eq!(again.library.commands().len(), 1, "kept in the file");
 
@@ -2329,7 +3481,7 @@ mod tests {
         assert_eq!(pane.library.commands().len(), 1);
         assert!(matches!(
             pane.notice,
-            Some(Notice::Imported(ImportReport { updated: 1, .. }))
+            Some(Notice::Imported(ImportReport { updated: 1, .. }, None))
         ));
 
         // Something that is not an export changes nothing and is said.
@@ -2356,6 +3508,215 @@ mod tests {
         let folder = tempfile::tempdir().expect("folder");
         let mut kept = self::pane(folder.path());
         assert_eq!(kept.update(CommandLibraryMessage::Export), Outcome::None);
+        assert_eq!(
+            kept.update(CommandLibraryMessage::ExportScope(ExportScope::Mine)),
+            Outcome::None
+        );
+        assert_eq!(
+            kept.notice,
+            Some(Notice::TransferFailed(TransferError::NothingToExport))
+        );
+    }
+
+    /// The `totalActions` and the runbooks of an export.
+    fn exported_counts(text: &str) -> (usize, usize) {
+        let total = text
+            .split("\"totalActions\":")
+            .nth(1)
+            .map(|rest| {
+                rest.trim_start()
+                    .chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect::<String>()
+            })
+            .and_then(|count| count.parse().ok())
+            .expect("a count");
+        (total, text.matches("\"executionMode\"").count())
+    }
+
+    #[test]
+    fn export_asks_what_to_include_and_a_file_with_runbooks_round_trips() {
+        let source = tempfile::tempdir().expect("folder");
+        let mut origin = run_pane(source.path(), vec![three_step_runbook()]);
+        origin.update(CommandLibraryMessage::Imported(Some(Ok(
+            TWO_ACTIONS.to_owned()
+        ))));
+        let export = |pane: &mut CommandLibraryPane, scope| {
+            pane.update(CommandLibraryMessage::Export);
+            match pane.update(CommandLibraryMessage::ExportScope(scope)) {
+                Outcome::Export(text) => text,
+                other => panic!("an export, not {other:?}"),
+            }
+        };
+
+        // My actions: what the user made or imported, and the runbooks.
+        let mine = export(&mut origin, ExportScope::Mine);
+        assert_eq!(exported_counts(&mine), (2, 1));
+        // The current filter: the actions listed, no runbook.
+        origin.update(CommandLibraryMessage::Search("Calm".to_owned()));
+        let filtered = export(&mut origin, ExportScope::CurrentFilter);
+        // The list shows the catalogue commands the search keeps as well as the user one.
+        assert_eq!(
+            exported_counts(&filtered),
+            (origin.shown().len() + origin.shown_user().len(), 0)
+        );
+        assert_eq!(origin.shown_user().len(), 1);
+        origin.update(CommandLibraryMessage::Search(String::new()));
+        // Everything: the shipped catalogue too.
+        let all = export(&mut origin, ExportScope::Everything);
+        let (count, runbooks) = exported_counts(&all);
+        assert_eq!(count, command_library::shipped().entries().len() + 2);
+        assert_eq!(runbooks, 1);
+
+        // Into another installation: the actions and the runbook come, and the summary says so.
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(mine.clone()))));
+        assert_eq!(pane.library.commands().len(), 2);
+        assert_eq!(pane.runbooks.exportable(&pane.library).len(), 1);
+        assert!(matches!(
+            &pane.notice,
+            Some(Notice::Imported(actions, Some(runbooks)))
+                if actions.imported == 2 && runbooks.imported == 1 && runbooks.skipped == 0
+        ));
+        assert_eq!(
+            self::pane(folder.path())
+                .runbooks
+                .exportable(&pane.library)
+                .len(),
+            1,
+            "kept in the file"
+        );
+        // The same file again replaces the runbook in place instead of copying it.
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(mine))));
+        assert_eq!(pane.runbooks.exportable(&pane.library).len(), 1);
+        assert!(matches!(
+            &pane.notice,
+            Some(Notice::Imported(_, Some(runbooks))) if runbooks.updated == 1
+        ));
+        // An export of everything does not copy the catalogue back into the user commands.
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(all))));
+        assert_eq!(pane.library.commands().len(), 2);
+        assert!(matches!(
+            &pane.notice,
+            Some(Notice::Imported(actions, _))
+                if actions.skipped == command_library::shipped().entries().len()
+                    && actions.first_skipped.as_ref().is_some_and(
+                        |(_, why)| *why == CommandIssue::InCatalogue
+                    )
+        ));
+    }
+
+    #[test]
+    fn a_hostile_file_is_refused_or_trimmed_and_nothing_is_run() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        for (file, expected) in [
+            (
+                r#"{"schemaVersion":"2.0","actions":[]}"#.to_owned(),
+                TransferError::Version("2.0".to_owned()),
+            ),
+            (
+                format!(
+                    "{{\"runbooks\":[{}]}}",
+                    vec!["{}"; heimdall_core::tools::runbooks::MAX_RUNBOOKS + 1].join(",")
+                ),
+                TransferError::TooManyRunbooks,
+            ),
+            (r#"{"runbooks":"x"}"#.to_owned(), TransferError::Format),
+        ] {
+            pane.update(CommandLibraryMessage::Imported(Some(Ok(file))));
+            assert_eq!(pane.notice, Some(Notice::TransferFailed(expected)));
+        }
+        assert!(pane.library.commands().is_empty());
+
+        // One good runbook, one with a control character, one with a refused value.
+        let file = r#"{"actions":[{"id":"calm","title":"Calm","category":"mine","platform":1,
+            "linuxCommandTemplate":{"platform":1,"commandPattern":"echo {w}",
+            "parameters":[{"name":"w","label":"W","type":"string"}]}}],
+          "runbooks":[
+            {"name":"Good","steps":[{"command":"uptime","platform":"Both"}]},
+            {"name":"Bell\u0007","steps":[{"command":"uptime"}]},
+            {"name":"Injected","steps":[{"actionId":"calm","parameters":{"w":"a; rm -rf /"}}]}]}"#;
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
+        let Some(Notice::Imported(_, Some(runbooks))) = &pane.notice else {
+            panic!("said: {:?}", pane.notice);
+        };
+        assert_eq!((runbooks.imported, runbooks.skipped), (1, 2));
+        assert!(
+            matches!(&runbooks.first_skipped, Some((name, _)) if name == "Bell"),
+            "the first left out is named, without its control character"
+        );
+        let kept = pane.runbooks.exportable(&pane.library);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].name, "Good");
+        // Both reads as Linux.
+        assert_eq!(
+            kept[0].steps,
+            [Step::literal("uptime", TemplatePlatform::Linux)]
+        );
+    }
+
+    #[test]
+    fn the_summary_names_the_first_action_and_the_first_runbook_left_out() {
+        let report = ImportReport {
+            skipped: 1,
+            first_skipped: Some((
+                "Odd".to_owned(),
+                CommandIssue::PatternHidden(TemplatePlatform::Linux),
+            )),
+            ..ImportReport::default()
+        };
+        let runbooks = RunbookImport {
+            skipped: 1,
+            first_skipped: Some((
+                "Bad runbook".to_owned(),
+                library_transfer::RunbookRefusal::DuplicateInFile,
+            )),
+            ..RunbookImport::default()
+        };
+        let text = import_text(&report, Some(&runbooks));
+        assert!(text.contains("Odd"), "{text}");
+        assert!(text.contains("Bad runbook"), "{text}");
+        let only_runbook = import_text(&ImportReport::default(), Some(&runbooks));
+        assert!(only_runbook.contains("Bad runbook"), "{only_runbook}");
+    }
+
+    #[test]
+    fn a_runbook_save_that_fails_takes_the_imported_actions_back() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        // The runbooks file becomes unreadable after the pane opened: the save fails late.
+        std::fs::create_dir(folder.path().join(RUNBOOKS_FILE)).expect("folder");
+        let file = r#"{"actions":[{"id":"calm","title":"Calm","category":"mine","platform":1,
+            "linuxCommandTemplate":{"platform":1,"commandPattern":"echo calm","parameters":[]}}],
+            "runbooks":[{"name":"R","steps":[{"command":"id"}]}]}"#;
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
+        assert_eq!(
+            pane.notice,
+            Some(Notice::TransferFailed(TransferError::RunbooksUnsaved))
+        );
+        assert!(pane.library.commands().is_empty(), "nothing half imported");
+        assert!(
+            self::pane(folder.path()).library.commands().is_empty(),
+            "nor in the file"
+        );
+    }
+
+    #[test]
+    fn a_file_with_runbooks_is_refused_whole_when_the_runbooks_file_cannot_be_used() {
+        let folder = tempfile::tempdir().expect("folder");
+        std::fs::write(folder.path().join(RUNBOOKS_FILE), "not json").expect("written");
+        let mut pane = pane(folder.path());
+        let file = r#"{"actions":[{"id":"calm","title":"Calm","category":"mine","platform":1,
+            "linuxCommandTemplate":{"platform":1,"commandPattern":"echo calm","parameters":[]}}],
+            "runbooks":[{"name":"R","steps":[{"command":"id"}]}]}"#;
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
+        assert_eq!(
+            pane.notice,
+            Some(Notice::TransferFailed(TransferError::RunbooksUnsaved))
+        );
+        assert!(pane.library.commands().is_empty(), "nothing half imported");
     }
 
     #[test]
@@ -2363,7 +3724,7 @@ mod tests {
         let folder = tempfile::tempdir().expect("folder");
         let mut pane = pane(folder.path());
         let id = make_ping(&mut pane);
-        let mtr = CommandRef::Catalog(SnippetId::MtrProbe);
+        let mtr = CommandRef::Catalog(TRACE.to_owned());
         let ping = CommandRef::User(id.clone());
         pane.update(CommandLibraryMessage::ToggleFavorite(mtr.clone()));
         assert!(pane.is_favorite(&mtr));
@@ -2378,8 +3739,12 @@ mod tests {
         );
 
         pane.update(CommandLibraryMessage::FavoritesOnly);
-        let shown: Vec<SnippetId> = pane.shown().iter().map(|each| each.id).collect();
-        assert_eq!(shown, [SnippetId::MtrProbe]);
+        let shown: Vec<&str> = pane
+            .shown()
+            .iter()
+            .map(|each| each.command().id.as_str())
+            .collect();
+        assert_eq!(shown, [TRACE]);
         assert!(pane.shown_user().is_empty());
         pane.update(CommandLibraryMessage::ToggleFavorite(ping.clone()));
         assert_eq!(pane.shown_user().len(), 1);
@@ -2415,17 +3780,14 @@ mod tests {
         assert_ne!(pane.library.commands()[1].id, id);
 
         // A snippet of the catalog is copied too: its pattern is kept for its platform.
-        pane.update(CommandLibraryMessage::Duplicate(CommandRef::Catalog(
-            SnippetId::WindowsFlushDns,
-        )));
+        pane.update(CommandLibraryMessage::Duplicate(fsmo()));
         let draft = &pane.editor.as_ref().expect("editor open").draft;
         assert_eq!(draft.platform, UserPlatform::Windows);
-        assert_eq!(draft.windows_pattern, "Clear-DnsClientCache");
+        assert_eq!(draft.windows_pattern, "netdom query fsmo");
         assert!(draft.linux_pattern.is_empty());
+        assert_eq!(draft.level, Criticality::Info);
         // The editor is open: a second duplicate changes nothing.
-        pane.update(CommandLibraryMessage::Duplicate(CommandRef::Catalog(
-            SnippetId::MtrProbe,
-        )));
+        pane.update(CommandLibraryMessage::Duplicate(follow()));
         assert_eq!(
             pane.editor.as_ref().expect("still open").draft.platform,
             UserPlatform::Windows
@@ -2438,12 +3800,10 @@ mod tests {
         let mut pane = pane(folder.path());
         pane.update(CommandLibraryMessage::DuplicateSelected);
         assert!(pane.editor.is_none(), "nothing used yet");
-        pane.update(CommandLibraryMessage::Copy(CommandRef::Catalog(
-            SnippetId::MtrProbe,
-        )));
+        pane.update(CommandLibraryMessage::Copy(follow()));
         pane.update(CommandLibraryMessage::DuplicateSelected);
         let editor = pane.editor.as_ref().expect("editor open");
-        assert_eq!(editor.draft.linux_pattern, "mtr -rw -c 50 {host}");
+        assert_eq!(editor.draft.linux_pattern, "journalctl -f -n {lines}");
     }
 
     #[test]
@@ -2452,12 +3812,7 @@ mod tests {
         let mut pane = pane(folder.path());
         let [first, ..] = tab_ids();
         pane.set_targets(vec![target(first, "web-1")]);
-        let mtr = CommandRef::Catalog(SnippetId::MtrProbe);
-        pane.update(CommandLibraryMessage::Param(
-            SnippetId::MtrProbe,
-            "host",
-            "secret-host.internal".to_owned(),
-        ));
+        let mtr = trace(&mut pane, "secret-host.internal");
         let Outcome::Send { command, .. } = pane.update(CommandLibraryMessage::Send(mtr)) else {
             panic!("asked");
         };
@@ -2473,8 +3828,8 @@ mod tests {
             panic!("one entry");
         };
         assert_eq!(entry.target, "web-1");
-        assert_eq!(entry.pattern, "mtr -rw -c 50 {host}");
-        assert_eq!(entry.parameters, ["host"]);
+        assert_eq!(entry.pattern, "traceroute {target}");
+        assert_eq!(entry.parameters, ["target"]);
         assert!(entry.at > 0);
         let kept = std::fs::read_to_string(folder.path().join(ACTIVITY_FILE)).expect("read");
         assert!(
@@ -2515,7 +3870,7 @@ mod tests {
         else {
             panic!("a question");
         };
-        assert_eq!((target, command.as_str()), (first, "ping -c 3 'web.lab'"));
+        assert_eq!((target, command.as_str()), (first, "ping -c 3 web.lab"));
         assert!(!pane.history_open, "the history closes on a replay");
 
         // Its copy is the pattern.
@@ -2537,11 +3892,13 @@ mod tests {
     fn a_replay_without_a_terminal_is_said_and_asks_nothing() {
         let mut pane = CommandLibraryPane::default();
         pane.activity.record(HistoryEntry {
-            command: command_activity::catalog_key(SnippetId::MtrProbe.key()),
-            title: "Network path quality".to_owned(),
-            pattern: "mtr -rw -c 50 {host}".to_owned(),
-            parameters: vec!["host".to_owned()],
+            command: command_activity::catalog_key(TRACE),
+            title: "Trace the network route".to_owned(),
+            pattern: "traceroute {target}".to_owned(),
+            parameters: vec!["target".to_owned()],
             target: "web-1".to_owned(),
+            host: String::new(),
+            mode: HistoryMode::Sent,
             at: now_unix(),
         });
         assert_eq!(pane.update(CommandLibraryMessage::Replay(0)), Outcome::None);
@@ -2552,7 +3909,7 @@ mod tests {
     fn the_history_is_cleared_once_asked_and_the_favorites_stay() {
         let folder = tempfile::tempdir().expect("folder");
         let mut pane = pane(folder.path());
-        let mtr = CommandRef::Catalog(SnippetId::MtrProbe);
+        let mtr = trace(&mut pane, "10.0.0.1");
         pane.update(CommandLibraryMessage::ToggleFavorite(mtr.clone()));
         let [first, ..] = tab_ids();
         pane.set_targets(vec![target(first, "web-1")]);
@@ -2582,7 +3939,7 @@ mod tests {
             target(second, "B"),
             target(third, "C"),
         ]);
-        let flush = CommandRef::Catalog(SnippetId::WindowsFlushDns);
+        let flush = fsmo();
         assert_eq!(
             pane.update(CommandLibraryMessage::Broadcast(flush.clone())),
             Outcome::None,
@@ -2599,7 +3956,7 @@ mod tests {
             panic!("a question");
         };
         assert_eq!(targets, [first, third], "in the order of the strip");
-        assert_eq!(command, "Clear-DnsClientCache");
+        assert_eq!(command, "netdom query fsmo");
         assert!(!dangerous);
         pane.update(CommandLibraryMessage::BroadcastTarget(third));
         assert_eq!(pane.broadcast, [first], "unticked");
@@ -2610,9 +3967,7 @@ mod tests {
         // A dangerous command is marked so for the one question.
         pane.update(CommandLibraryMessage::BroadcastAll);
         assert!(matches!(
-            pane.update(CommandLibraryMessage::Broadcast(CommandRef::Catalog(
-                SnippetId::LinuxKillPort
-            ))),
+            pane.update(CommandLibraryMessage::Broadcast(fsck())),
             Outcome::Broadcast {
                 dangerous: true,
                 ..
@@ -2630,12 +3985,12 @@ mod tests {
             target(third, "C"),
         ]);
         pane.update(CommandLibraryMessage::BroadcastAll);
-        let flush = CommandRef::Catalog(SnippetId::WindowsFlushDns);
+        let flush = fsmo();
         pane.update(CommandLibraryMessage::Broadcast(flush));
         // The application wrote into two of the three: the third closed meanwhile.
         pane.record_sent(&[
-            receipt(first, "A", "Clear-DnsClientCache"),
-            receipt(second, "B", "Clear-DnsClientCache"),
+            receipt(first, "A", "netdom query fsmo"),
+            receipt(second, "B", "netdom query fsmo"),
         ]);
         assert_eq!(
             pane.notice,
@@ -2660,9 +4015,9 @@ mod tests {
         pane.update(CommandLibraryMessage::BroadcastTarget(first));
         pane.update(CommandLibraryMessage::BroadcastTarget(second));
         pane.set_targets(vec![target(second, "B")]);
-        let Outcome::Broadcast { targets, .. } = pane.update(CommandLibraryMessage::Broadcast(
-            CommandRef::Catalog(SnippetId::WindowsFlushDns),
-        )) else {
+        let Outcome::Broadcast { targets, .. } =
+            pane.update(CommandLibraryMessage::Broadcast(fsmo()))
+        else {
             panic!("a question");
         };
         assert_eq!(targets, [second], "never a terminal that is gone");
@@ -2671,5 +4026,1096 @@ mod tests {
         pane.update(CommandLibraryMessage::BroadcastNone);
         pane.update(CommandLibraryMessage::BroadcastTarget(third));
         assert!(pane.broadcast.is_empty());
+    }
+
+    #[test]
+    fn the_favorites_and_the_history_of_the_first_ten_commands_follow_them_to_the_catalogue() {
+        let folder = tempfile::tempdir().expect("folder");
+        let path = folder.path().join(ACTIVITY_FILE);
+        let mut old = CommandActivity::default();
+        old.toggle_favorite(&command_activity::catalog_key("mtr-probe"));
+        old.toggle_favorite(&command_activity::catalog_key("linux-kill-port"));
+        old.record(HistoryEntry {
+            command: command_activity::catalog_key("mtr-probe"),
+            title: "Network path quality".to_owned(),
+            pattern: "mtr -rw -c 50 {host}".to_owned(),
+            parameters: vec!["host".to_owned()],
+            target: "web-1".to_owned(),
+            host: String::new(),
+            mode: HistoryMode::Sent,
+            at: now_unix(),
+        });
+        old.save(&path).expect("written");
+
+        let mut pane = pane(folder.path());
+        let trace = CommandRef::Catalog(TRACE.to_owned());
+        assert!(pane.is_favorite(&trace), "starred under its new name");
+        assert_eq!(
+            pane.command_of_key(&pane.activity.history()[0].command),
+            Some(trace),
+            "the history finds it"
+        );
+        // Written back under the new names, so the next start has nothing to rename.
+        let kept = CommandActivity::load(&path).expect("read");
+        assert!(kept.is_favorite(&command_activity::catalog_key(TRACE)));
+        assert!(!kept.is_favorite(&command_activity::catalog_key("mtr-probe")));
+        // The command with no successor is kept in the file and finds no command.
+        assert!(kept.is_favorite(&command_activity::catalog_key("linux-kill-port")));
+        pane.update(CommandLibraryMessage::Replay(0));
+        assert_ne!(pane.notice, Some(Notice::ReplayGone));
+    }
+
+    #[test]
+    fn a_file_imported_that_breaks_a_rule_is_left_out_and_counted() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let file = r#"{
+            "schemaVersion": "1.0",
+            "actions": [
+                {"id": "good", "title": "Good", "category": "mine", "platform": 1,
+                 "linuxCommandTemplate": {"platform": 1, "commandPattern": "uptime", "parameters": []}},
+                {"id": "odd", "title": "Odd", "category": "mine", "platform": 1,
+                 "linuxCommandTemplate": {"platform": 1, "commandPattern": "run {x}",
+                  "parameters": [{"name": "x", "label": "X", "type": "magic"}]}},
+                {"id": "lines", "title": "Lines", "category": "mine", "platform": 1,
+                 "linuxCommandTemplate": {"platform": 1, "commandPattern": "id\nwhoami", "parameters": []}}
+            ]
+        }"#;
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
+        let Some(Notice::Imported(report, _)) = &pane.notice else {
+            panic!("said");
+        };
+        assert_eq!((report.imported, report.updated, report.skipped), (1, 0, 2));
+        assert!(
+            matches!(&report.first_skipped, Some((title, _)) if title == "Odd"),
+            "the first left out is named"
+        );
+        assert_eq!(pane.library.commands().len(), 1);
+        assert_eq!(pane.library.commands()[0].title, "Good");
+    }
+
+    #[test]
+    fn a_catalogue_command_with_a_line_break_is_not_copied_sent_or_awaited() {
+        let mut pane = CommandLibraryPane::default();
+        let [first, second, _] = tab_ids();
+        pane.set_targets(vec![target(first, "A"), target(second, "B")]);
+        pane.update(CommandLibraryMessage::BroadcastAll);
+        let memory = CommandRef::Catalog("perf-memory-analysis".to_owned());
+        for platform in [TemplatePlatform::Windows, TemplatePlatform::Linux] {
+            pane.update(CommandLibraryMessage::Template(
+                "perf-memory-analysis".to_owned(),
+                platform,
+            ));
+            assert_eq!(
+                pane.update(CommandLibraryMessage::Copy(memory.clone())),
+                Outcome::None
+            );
+            assert_eq!(
+                pane.update(CommandLibraryMessage::Send(memory.clone())),
+                Outcome::None
+            );
+            assert_eq!(
+                pane.update(CommandLibraryMessage::Broadcast(memory.clone())),
+                Outcome::None
+            );
+        }
+        assert!(pane.awaited.is_empty(), "no receipt for a refused command");
+    }
+
+    #[test]
+    fn an_imported_destructive_command_asks_for_the_danger_confirmation_at_any_level() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let file = r#"{"actions": [
+            {"id": "wipe", "title": "Wipe", "category": "mine", "platform": 1, "level": 0,
+             "linuxCommandTemplate": {"platform": 1, "commandPattern": "rm -rf ~", "parameters": []}}
+        ]}"#;
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(file.to_owned()))));
+        let id = pane.library.commands()[0].id.clone();
+        assert_eq!(pane.library.commands()[0].level, Criticality::Dangerous);
+        pane.set_targets(vec![target(tab_ids()[0], "A")]);
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Send(CommandRef::User(id))),
+            Outcome::Send {
+                dangerous: true,
+                ..
+            }
+        ));
+        // Even a level kept as Info is judged by the text that reaches the shell.
+        let mut other = CommandLibraryPane::default();
+        assert!(other.is_dangerous(&fsmo(), "shutdown -h now"));
+        assert!(!other.is_dangerous(&fsmo(), "netdom query fsmo"));
+        other.update(CommandLibraryMessage::ShowMoreMine);
+        assert_eq!(other.more_mine_pages, 1);
+        other.update(CommandLibraryMessage::Search("x".to_owned()));
+        assert_eq!(other.more_mine_pages, 0);
+    }
+
+    /// A session told to the pane, as the window tells it when the tab opens.
+    fn open_for(pane: &mut CommandLibraryPane, host: &str, user: Option<&str>, os: RemoteOs) {
+        pane.update(CommandLibraryMessage::Session {
+            host: Some(host.to_owned()),
+            user: user.map(str::to_owned),
+            platform: os,
+            tab: None,
+        });
+    }
+
+    /// A user command with `pattern` for Linux, made through the editor; its identity.
+    fn make_command(pane: &mut CommandLibraryPane, title: &str, pattern: &str) -> String {
+        pane.update(CommandLibraryMessage::New);
+        pane.update(CommandLibraryMessage::EditPlatform(UserPlatform::Linux));
+        type_into(pane, Field::Title, title);
+        type_into(pane, Field::Category, "Network");
+        type_into(pane, Field::LinuxPattern, pattern);
+        pane.update(CommandLibraryMessage::Save);
+        assert!(pane.editor.is_none(), "kept");
+        pane.library
+            .commands()
+            .iter()
+            .find(|each| each.title == title)
+            .expect("made")
+            .id
+            .clone()
+    }
+
+    #[test]
+    fn a_library_opened_from_a_session_starts_on_the_platform_of_its_far_end() {
+        let mut pane = CommandLibraryPane::default();
+        assert_eq!(pane.platform, None, "opened from no session");
+        open_for(&mut pane, "win.lab", None, RemoteOs::Windows);
+        assert_eq!(pane.platform, Some(UserPlatform::Windows));
+        assert!(
+            pane.shown()
+                .iter()
+                .all(|entry| entry.command().platform != UserPlatform::Linux)
+        );
+        open_for(&mut pane, "web.lab", None, RemoteOs::Linux);
+        assert_eq!(pane.platform, Some(UserPlatform::Linux));
+        assert!(
+            pane.shown()
+                .iter()
+                .all(|entry| entry.command().platform != UserPlatform::Windows)
+        );
+        // Undetermined leaves every platform shown, and the filter stays the user's.
+        open_for(&mut pane, "switch.lab", None, RemoteOs::Auto);
+        assert_eq!(pane.platform, None);
+        pane.update(CommandLibraryMessage::Platform(Some(UserPlatform::Linux)));
+        assert_eq!(pane.platform, Some(UserPlatform::Linux));
+    }
+
+    #[test]
+    fn a_session_with_nothing_to_give_changes_nothing() {
+        let mut pane = CommandLibraryPane::default();
+        pane.update(CommandLibraryMessage::Session {
+            host: Some("  ".to_owned()),
+            user: None,
+            platform: RemoteOs::Auto,
+            tab: None,
+        });
+        assert_eq!(pane.session, None);
+        assert_eq!(pane.platform, None);
+        assert!(!pane.history_this_host_only);
+        assert_eq!(pane.history_host_filter(), None);
+    }
+
+    #[test]
+    fn the_session_host_and_user_fill_the_parameters_that_take_them() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let ping = CommandRef::User(make_command(&mut pane, "Ping", "ping -c 3 {host}"));
+        let who = CommandRef::User(make_command(&mut pane, "Who", "id {user}"));
+        let other = CommandRef::User(make_command(&mut pane, "Other", "echo {word}"));
+        open_for(&mut pane, " web.lab ", Some("ops"), RemoteOs::Linux);
+        let copied = |pane: &mut CommandLibraryPane, command: &CommandRef| match pane
+            .update(CommandLibraryMessage::Copy(command.clone()))
+        {
+            Outcome::Copy(_, text) => Some(text),
+            _ => None,
+        };
+        assert_eq!(
+            copied(&mut pane, &ping).as_deref(),
+            Some("ping -c 3 web.lab"),
+            "the host, with nothing typed"
+        );
+        assert_eq!(copied(&mut pane, &who).as_deref(), Some("id ops"));
+        let left = copied(&mut pane, &other).unwrap_or_default();
+        assert!(
+            !left.contains("web.lab") && !left.contains("ops"),
+            "a parameter of another name is left to its user: {left:?}"
+        );
+
+        // What is typed wins, and so does emptying the box: the session does not come back.
+        let CommandRef::User(id) = &ping else {
+            panic!("a user command");
+        };
+        pane.update(CommandLibraryMessage::UserParam(
+            id.clone(),
+            "host".to_owned(),
+            "db.lab".to_owned(),
+        ));
+        assert_eq!(
+            copied(&mut pane, &ping).as_deref(),
+            Some("ping -c 3 db.lab")
+        );
+        pane.update(CommandLibraryMessage::UserParam(
+            id.clone(),
+            "host".to_owned(),
+            String::new(),
+        ));
+        assert_ne!(
+            copied(&mut pane, &ping).as_deref(),
+            Some("ping -c 3 web.lab"),
+            "emptied by the user"
+        );
+    }
+
+    #[test]
+    fn a_catalogue_command_takes_the_session_host_by_the_name_of_its_parameter() {
+        let mut pane = CommandLibraryPane::default();
+        open_for(&mut pane, "10.0.0.7", None, RemoteOs::Linux);
+        pane.update(CommandLibraryMessage::Template(
+            TRACE.to_owned(),
+            TemplatePlatform::Linux,
+        ));
+        let Outcome::Copy(_, text) = pane.update(CommandLibraryMessage::Copy(CommandRef::Catalog(
+            TRACE.to_owned(),
+        ))) else {
+            panic!("copied");
+        };
+        assert_eq!(text, "traceroute 10.0.0.7");
+    }
+
+    #[test]
+    fn a_session_value_is_checked_and_quoted_like_one_typed() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let ping = CommandRef::User(make_command(&mut pane, "Ping", "ping -c 3 {host}"));
+        // The window checks a host before it gives it; if one got here, the generator would
+        // still refuse what the shell could read.
+        open_for(&mut pane, "web.lab; rm -rf /", None, RemoteOs::Linux);
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Copy(ping.clone())),
+            Outcome::None
+        );
+        pane.set_targets(vec![target(tab_ids()[0], "A")]);
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Insert(ping.clone())),
+            Outcome::None
+        );
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Send(ping)),
+            Outcome::None
+        );
+        assert!(pane.awaited.is_empty());
+    }
+
+    #[test]
+    fn an_insert_types_the_command_with_no_question_and_is_recorded_as_inserted() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let ping = CommandRef::User(make_command(&mut pane, "Ping", "ping -c 3 {host}"));
+        let terminal = tab_ids()[0];
+        // No terminal: nothing to type into.
+        open_for(&mut pane, "web.lab", None, RemoteOs::Linux);
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Insert(ping.clone())),
+            Outcome::None
+        );
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Insert(ping.clone())),
+            Outcome::Insert {
+                target: terminal,
+                command: "ping -c 3 web.lab".to_owned(),
+            }
+        );
+        assert!(pane.activity.history().is_empty(), "asked, not typed");
+        // A receipt of a run is not the insert's.
+        pane.record_sent(&[receipt(terminal, "web-1", "ping -c 3 web.lab")]);
+        assert!(pane.activity.history().is_empty());
+        let mut typed = receipt(terminal, "web-1", "ping -c 3 web.lab");
+        typed.delivery = Delivery::Inserted;
+        pane.record_sent(&[typed]);
+        let [entry] = pane.activity.history() else {
+            panic!("one entry");
+        };
+        assert_eq!(entry.mode, HistoryMode::Inserted);
+        assert_eq!(entry.host, "web.lab");
+        assert_eq!(entry.target, "web-1");
+        assert_eq!(entry.pattern, "ping -c 3 {host}", "never what was typed");
+        assert_eq!(pane.notice, Some(Notice::Inserted("web-1".to_owned())));
+    }
+
+    #[test]
+    fn an_insert_never_asks_the_dangerous_question_a_send_asks() {
+        let mut pane = CommandLibraryPane::default();
+        pane.set_targets(vec![target(tab_ids()[0], "A")]);
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Send(fsck())),
+            Outcome::Send {
+                dangerous: true,
+                ..
+            }
+        ));
+        // The same command, typed and left at the prompt: there is no question to carry.
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Insert(fsck())),
+            Outcome::Insert { .. }
+        ));
+    }
+
+    #[test]
+    fn an_insert_refuses_a_command_with_a_line_break_as_a_send_does() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let id = make_command(&mut pane, "Ping", "ping -c 3 {host}");
+        let ping = CommandRef::User(id.clone());
+        pane.set_targets(vec![target(tab_ids()[0], "A")]);
+        for value in ["web.lab\nrm -rf x", "web.lab\r", "web\u{1b}[2J", "a\tb"] {
+            pane.update(CommandLibraryMessage::UserParam(
+                id.clone(),
+                "host".to_owned(),
+                value.to_owned(),
+            ));
+            assert_eq!(
+                pane.update(CommandLibraryMessage::Insert(ping.clone())),
+                Outcome::None,
+                "{value:?}"
+            );
+            assert_eq!(
+                pane.update(CommandLibraryMessage::Send(ping.clone())),
+                Outcome::None,
+                "{value:?}"
+            );
+        }
+        assert!(pane.awaited.is_empty(), "nothing is awaited");
+    }
+
+    #[test]
+    fn shift_enter_inserts_the_command_last_used_and_nothing_before_or_over_the_editor() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "A")]);
+        assert_eq!(
+            pane.update(CommandLibraryMessage::InsertSelected),
+            Outcome::None,
+            "no command used yet"
+        );
+        let id = make_command(&mut pane, "Ping", "ping -c 3 localhost");
+        let ping = CommandRef::User(id);
+        pane.update(CommandLibraryMessage::Copy(ping));
+        assert_eq!(
+            pane.update(CommandLibraryMessage::InsertSelected),
+            Outcome::Insert {
+                target: terminal,
+                command: "ping -c 3 localhost".to_owned(),
+            }
+        );
+        // A key pressed in the editor's fields is not the library's.
+        pane.update(CommandLibraryMessage::New);
+        assert_eq!(
+            pane.update(CommandLibraryMessage::InsertSelected),
+            Outcome::None
+        );
+    }
+
+    #[test]
+    fn a_copy_is_recorded_as_copied_against_the_session_host_and_names_no_terminal() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        open_for(&mut pane, "web.lab", None, RemoteOs::Linux);
+        let trace = trace(&mut pane, "10.0.0.1");
+        let Outcome::Copy(..) = pane.update(CommandLibraryMessage::Copy(trace)) else {
+            panic!("copied");
+        };
+        let [entry] = pane.activity.history() else {
+            panic!("one entry");
+        };
+        assert_eq!(entry.mode, HistoryMode::Copied);
+        assert_eq!(entry.host, "web.lab");
+        assert_eq!(entry.target, "");
+        assert_eq!(entry.pattern, "traceroute {target}");
+        let kept = std::fs::read_to_string(folder.path().join(ACTIVITY_FILE)).expect("read");
+        assert!(!kept.contains("10.0.0.1"), "what was typed is never kept");
+        // A command that cannot be made is not copied, so not recorded.
+        pane.update(CommandLibraryMessage::Param(
+            TRACE.to_owned(),
+            "target".to_owned(),
+            "a;b".to_owned(),
+        ));
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Copy(CommandRef::Catalog(
+                TRACE.to_owned()
+            ))),
+            Outcome::None
+        );
+        assert_eq!(pane.activity.history().len(), 1);
+    }
+
+    #[test]
+    fn a_command_sent_is_recorded_as_sent_against_the_session_host() {
+        let mut pane = CommandLibraryPane::default();
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        open_for(&mut pane, "web.lab", None, RemoteOs::Linux);
+        let mtr = trace(&mut pane, "10.0.0.1");
+        let Outcome::Send { command, .. } = pane.update(CommandLibraryMessage::Send(mtr)) else {
+            panic!("asked");
+        };
+        pane.record_sent(&[receipt(terminal, "web-1", &command)]);
+        let [entry] = pane.activity.history() else {
+            panic!("one entry");
+        };
+        assert_eq!(
+            (entry.mode, entry.host.as_str()),
+            (HistoryMode::Sent, "web.lab")
+        );
+    }
+
+    #[test]
+    fn this_host_only_limits_the_history_to_the_session_host_and_starts_ticked() {
+        let mut pane = CommandLibraryPane::default();
+        let row = |host: &str, mode: HistoryMode, at: i64| HistoryEntry {
+            command: command_activity::catalog_key(TRACE),
+            title: "Trace".to_owned(),
+            pattern: "traceroute {target}".to_owned(),
+            parameters: vec!["target".to_owned()],
+            target: String::new(),
+            host: host.to_owned(),
+            mode,
+            at,
+        };
+        let now = now_unix();
+        pane.activity
+            .record(row("db.lab", HistoryMode::Sent, now - 3));
+        pane.activity.record(row("", HistoryMode::Sent, now - 2));
+        pane.activity
+            .record(row("WEB.lab", HistoryMode::Copied, now - 1));
+        pane.activity
+            .record(row("web.lab", HistoryMode::Inserted, now));
+        // Opened from no session: every row, and no box to untick.
+        assert_eq!(pane.history_rows().len(), 4);
+
+        open_for(&mut pane, "web.lab", None, RemoteOs::Linux);
+        assert!(
+            pane.history_this_host_only,
+            "ticked when the library has a session"
+        );
+        let shown: Vec<_> = pane
+            .history_rows()
+            .into_iter()
+            .map(|(index, entry)| (index, entry.mode))
+            .collect();
+        assert_eq!(
+            shown,
+            [(0, HistoryMode::Inserted), (1, HistoryMode::Copied)],
+            "this host's rows by their place in the whole history, case aside; the row with \
+             no host is not any host's"
+        );
+        pane.update(CommandLibraryMessage::HistoryThisHostOnly(false));
+        assert_eq!(pane.history_rows().len(), 4, "every host's");
+        pane.update(CommandLibraryMessage::HistoryThisHostOnly(true));
+        assert_eq!(pane.history_rows().len(), 2);
+    }
+
+    #[test]
+    fn a_replay_from_a_filtered_history_replays_the_row_clicked() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        let id = make_command(&mut pane, "Ping", "ping -c 3 localhost");
+        pane.activity.record(HistoryEntry {
+            command: command_activity::user_key(&id),
+            title: "Ping".to_owned(),
+            pattern: "ping -c 3 localhost".to_owned(),
+            parameters: Vec::new(),
+            target: "web-1".to_owned(),
+            host: "db.lab".to_owned(),
+            mode: HistoryMode::Sent,
+            at: now_unix(),
+        });
+        pane.activity.record(HistoryEntry {
+            command: command_activity::user_key(&id),
+            title: "Ping".to_owned(),
+            pattern: "ping -c 3 localhost".to_owned(),
+            parameters: Vec::new(),
+            target: "web-1".to_owned(),
+            host: "web.lab".to_owned(),
+            mode: HistoryMode::Sent,
+            at: now_unix(),
+        });
+        open_for(&mut pane, "web.lab", None, RemoteOs::Linux);
+        let [(index, _)] = pane.history_rows()[..] else {
+            panic!("this host's row alone");
+        };
+        assert_eq!(index, 0, "the latest is first in the whole history");
+        let Outcome::Send { command, .. } = pane.update(CommandLibraryMessage::Replay(index))
+        else {
+            panic!("asked");
+        };
+        assert_eq!(command, "ping -c 3 localhost");
+    }
+
+    #[test]
+    fn commands_go_first_to_the_terminal_of_the_session_the_library_was_opened_from() {
+        let mut pane = CommandLibraryPane::default();
+        let [first, second, third] = tab_ids();
+        pane.set_targets(vec![
+            target(first, "A"),
+            target(second, "B"),
+            target(third, "C"),
+        ]);
+        pane.update(CommandLibraryMessage::Session {
+            host: Some("web.lab".to_owned()),
+            user: None,
+            platform: RemoteOs::Linux,
+            tab: Some(second),
+        });
+        let ping = trace(&mut pane, "10.0.0.1");
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Insert(ping.clone())),
+            Outcome::Insert { target, .. } if target == second
+        ));
+        // The user's own choice wins, and a session terminal gone leaves the first.
+        pane.update(CommandLibraryMessage::Target(third));
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Insert(ping.clone())),
+            Outcome::Insert { target, .. } if target == third
+        ));
+        pane.target = None;
+        pane.set_targets(vec![target(first, "A"), target(third, "C")]);
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Insert(ping)),
+            Outcome::Insert { target, .. } if target == first
+        ));
+    }
+
+    /// A pane over a folder holding `runbooks`.
+    fn run_pane(folder: &Path, runbooks: Vec<Runbook>) -> CommandLibraryPane {
+        let mut store = RunbookStore::default();
+        for runbook in runbooks {
+            store.keep(runbook, &|_: &str| None).expect("kept");
+        }
+        store.save(&folder.join(RUNBOOKS_FILE)).expect("saved");
+        pane(folder)
+    }
+
+    /// Two actions of the user: one that runs, one marked dangerous.
+    const TWO_ACTIONS: &str = r#"{"actions": [
+        {"id": "calm", "title": "Calm", "category": "mine", "platform": 1, "level": 0,
+         "linuxCommandTemplate": {"platform": 1, "commandPattern": "echo calm", "parameters": []}},
+        {"id": "grave", "title": "Grave", "category": "mine", "platform": 1, "level": 2,
+         "linuxCommandTemplate": {"platform": 1, "commandPattern": "echo grave", "parameters": []}}
+    ]}"#;
+
+    fn action_step(id: &str) -> Step {
+        Step::action(id, id, BTreeMap::new())
+    }
+
+    /// An action, a literal command and a dangerous action.
+    fn three_step_runbook() -> Runbook {
+        let mut runbook = Runbook::new("Three");
+        runbook.steps = vec![
+            action_step("calm"),
+            Step::literal("uptime", TemplatePlatform::Linux),
+            action_step("grave"),
+        ];
+        runbook
+    }
+
+    /// Imports the two actions and starts a run of the first runbook of the pane.
+    fn start_run(pane: &mut CommandLibraryPane) {
+        pane.update(CommandLibraryMessage::Imported(Some(Ok(
+            TWO_ACTIONS.to_owned()
+        ))));
+        let id = pane.runbooks.first_id().expect("a runbook");
+        pane.update(CommandLibraryMessage::Runbooks(RunbookMessage::Toggle));
+        pane.update(CommandLibraryMessage::Runbooks(RunbookMessage::Run(id)));
+        // A press right after a delivery is ignored for a while; the tests that press twice
+        // on purpose say so.
+        pane.runbooks.set_guard(std::time::Duration::ZERO);
+    }
+
+    fn run_message(pane: &mut CommandLibraryPane, message: RunbookMessage) -> Outcome {
+        pane.update(CommandLibraryMessage::Runbooks(message))
+    }
+
+    #[test]
+    fn a_run_sends_nothing_by_itself_and_a_step_moves_on_only_when_the_terminal_has_it() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        open_for(&mut pane, "web.lab", None, RemoteOs::Linux);
+        start_run(&mut pane);
+
+        // Starting, looking and waiting write nothing and ask nothing.
+        assert!(pane.awaited.is_empty());
+        assert!(pane.activity.history().is_empty());
+        assert_eq!(pane.runbooks.status_of(0), Some(StepStatus::Pending));
+
+        // The press asks; the question is still to be answered, so the step stays where it is.
+        let Outcome::Send {
+            target: asked,
+            command,
+            dangerous,
+            typed_as_is,
+        } = run_message(&mut pane, RunbookMessage::RunSend)
+        else {
+            panic!("asked");
+        };
+        assert_eq!(
+            (asked, command.as_str(), dangerous, typed_as_is),
+            (terminal, "echo calm", false, false)
+        );
+        assert_eq!(pane.runbooks.current_index(), Some(0));
+        assert!(
+            pane.activity.history().is_empty(),
+            "not recorded before it is written"
+        );
+
+        // The terminal has it: recorded like a send of the library, and the run goes on to
+        // the next step, which is not sent.
+        pane.record_sent(&[receipt(terminal, "web-1", &command)]);
+        assert_eq!(pane.runbooks.status_of(0), Some(StepStatus::Sent));
+        assert_eq!(pane.runbooks.current_index(), Some(1));
+        let [entry] = pane.activity.history() else {
+            panic!("one row");
+        };
+        assert_eq!(
+            (entry.mode, entry.host.as_str(), entry.target.as_str()),
+            (HistoryMode::Sent, "web.lab", "web-1")
+        );
+        assert_eq!(entry.pattern, "echo calm");
+        assert_eq!(entry.command, command_activity::user_key("calm"));
+        assert!(pane.awaited.is_empty(), "nothing waits for the next step");
+    }
+
+    #[test]
+    fn one_step_is_waited_for_at_a_time_and_a_stop_forgets_it() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        start_run(&mut pane);
+
+        // A question answered no leaves the step to be sent again.
+        for _ in 0..3 {
+            assert!(matches!(
+                run_message(&mut pane, RunbookMessage::RunSend),
+                Outcome::Send { .. }
+            ));
+        }
+        assert_eq!(pane.awaited.len(), 1);
+        assert_eq!(pane.runbooks.current_index(), Some(0));
+
+        // A late receipt after a stop moves nothing and records nothing.
+        run_message(&mut pane, RunbookMessage::RunStop);
+        assert!(pane.awaited.is_empty());
+        pane.record_sent(&[receipt(terminal, "web-1", "echo calm")]);
+        assert!(pane.activity.history().is_empty());
+    }
+
+    #[test]
+    fn the_dangerous_question_is_asked_for_a_dangerous_action_and_always_for_a_literal_step() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        start_run(&mut pane);
+
+        let mut asked = Vec::new();
+        for _ in 0..3 {
+            let Outcome::Send {
+                command,
+                dangerous,
+                typed_as_is,
+                ..
+            } = run_message(&mut pane, RunbookMessage::RunSend)
+            else {
+                panic!("asked");
+            };
+            asked.push((command.clone(), dangerous, typed_as_is));
+            pane.record_sent(&[receipt(terminal, "web-1", &command)]);
+        }
+        assert_eq!(
+            asked,
+            [
+                ("echo calm".to_owned(), false, false),
+                // Always asked, and said to be typed as is, not called dangerous for that.
+                ("uptime".to_owned(), false, true),
+                ("echo grave".to_owned(), true, false),
+            ]
+        );
+        assert!(pane.runbooks.is_finished());
+        // A literal step leaves no row of the history, as the C#: a row belongs to an action.
+        let titles: Vec<&str> = pane
+            .activity
+            .history()
+            .iter()
+            .map(|entry| entry.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Grave", "Calm"]);
+    }
+
+    #[test]
+    fn an_insert_types_the_step_with_no_question_and_is_recorded_as_inserted() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        start_run(&mut pane);
+        run_message(&mut pane, RunbookMessage::RunSkip);
+        run_message(&mut pane, RunbookMessage::RunSkip);
+
+        // The last step is the dangerous one: Insert still asks nothing, as the library's.
+        let Outcome::Insert {
+            target: typed,
+            command,
+        } = run_message(&mut pane, RunbookMessage::RunInsert)
+        else {
+            panic!("typed");
+        };
+        assert_eq!((typed, command.as_str()), (terminal, "echo grave"));
+        let mut inserted = receipt(terminal, "web-1", &command);
+        inserted.delivery = Delivery::Inserted;
+        pane.record_sent(&[inserted]);
+        assert_eq!(pane.runbooks.status_of(2), Some(StepStatus::Inserted));
+        let [entry] = pane.activity.history() else {
+            panic!("one row");
+        };
+        assert_eq!(entry.mode, HistoryMode::Inserted);
+    }
+
+    #[test]
+    fn a_copy_marks_the_step_copied_and_is_recorded_for_an_action() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        start_run(&mut pane);
+        // No terminal needed to copy.
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunCopy),
+            Outcome::Copy(CopySlot::CmdLibRunbookStep, "echo calm".to_owned())
+        );
+        assert_eq!(pane.runbooks.status_of(0), Some(StepStatus::Copied));
+        assert_eq!(pane.activity.history()[0].mode, HistoryMode::Copied);
+        // The literal step: copied, no row.
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunCopy),
+            Outcome::Copy(CopySlot::CmdLibRunbookStep, text) if text == "uptime"
+        ));
+        assert_eq!(pane.activity.history().len(), 1);
+    }
+
+    #[test]
+    fn skip_and_stop_send_nothing_and_leave_no_row() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        start_run(&mut pane);
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSkip),
+            Outcome::None
+        );
+        assert_eq!(pane.runbooks.status_of(0), Some(StepStatus::Skipped));
+        assert_eq!(pane.runbooks.current_index(), Some(1));
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunStop),
+            Outcome::None
+        );
+        assert!(!pane.runbooks.is_running());
+        assert!(pane.awaited.is_empty());
+        assert!(pane.activity.history().is_empty());
+        // Nothing is sent by a stopped run.
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::None
+        );
+    }
+
+    #[test]
+    fn a_step_goes_to_the_terminal_of_the_session_first_and_to_none_without_one() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let [first, second, _] = tab_ids();
+        start_run(&mut pane);
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::None,
+            "no terminal: nothing asked, nothing awaited"
+        );
+        assert!(pane.awaited.is_empty());
+        assert_eq!(pane.runbooks.current_index(), Some(0));
+        pane.runbooks.stop_for_test();
+
+        pane.set_targets(vec![target(first, "A"), target(second, "B")]);
+        pane.update(CommandLibraryMessage::Session {
+            host: None,
+            user: None,
+            platform: RemoteOs::Linux,
+            tab: Some(second),
+        });
+        start_run(&mut pane);
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::Send { target, .. } if target == second
+        ));
+        // The user's own pick moves the run, and nothing else does.
+        pane.update(CommandLibraryMessage::Target(first));
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunInsert),
+            Outcome::Insert { target, .. } if target == first
+        ));
+    }
+
+    #[test]
+    fn a_run_stays_on_its_terminal_and_waits_when_it_is_gone_or_the_session_changes() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let [first, second, _] = tab_ids();
+        pane.set_targets(vec![target(first, "A"), target(second, "B")]);
+        start_run(&mut pane);
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::Send { target, .. } if target == first
+        ));
+        run_message(&mut pane, RunbookMessage::RunSkip);
+
+        // The pinned terminal closes: never the first one left.
+        pane.set_targets(vec![target(second, "B")]);
+        assert_eq!(pane.run_target(), RunTarget::Gone);
+        for message in [RunbookMessage::RunSend, RunbookMessage::RunInsert] {
+            assert_eq!(run_message(&mut pane, message), Outcome::None);
+        }
+        assert!(pane.awaited.is_empty());
+        // Picking a terminal is the user's decision.
+        pane.update(CommandLibraryMessage::Target(second));
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::Send { target, .. } if target == second
+        ));
+
+        // A session that changes mid-run blocks it the same way.
+        run_message(&mut pane, RunbookMessage::RunStop);
+        pane.set_targets(vec![target(first, "A"), target(second, "B")]);
+        start_run(&mut pane);
+        open_for(&mut pane, "other.lab", None, RemoteOs::Windows);
+        assert_eq!(pane.run_target(), RunTarget::Changed);
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::None
+        );
+        pane.update(CommandLibraryMessage::Target(first));
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::Send { target, .. } if target == first
+        ));
+    }
+
+    #[test]
+    fn a_double_press_cannot_deliver_the_step_after() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "A")]);
+        start_run(&mut pane);
+        pane.runbooks
+            .set_guard(std::time::Duration::from_secs(3600));
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunCopy),
+            Outcome::Copy(..)
+        ));
+        for message in [
+            RunbookMessage::RunCopy,
+            RunbookMessage::RunSend,
+            RunbookMessage::RunInsert,
+        ] {
+            assert_eq!(run_message(&mut pane, message), Outcome::None);
+        }
+        assert_eq!(pane.runbooks.status_of(1), Some(StepStatus::Pending));
+        assert!(pane.awaited.is_empty());
+    }
+
+    #[test]
+    fn a_text_sent_from_a_card_after_a_question_closed_is_not_the_run_step() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "A")]);
+        start_run(&mut pane);
+        // The question of the step is closed without sending.
+        assert!(matches!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::Send { .. }
+        ));
+        // The same text from the card of the action.
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Send(CommandRef::User(
+                "calm".to_owned()
+            ))),
+            Outcome::Send { .. }
+        ));
+        pane.record_sent(&[receipt(terminal, "A", "echo calm")]);
+        assert_eq!(
+            pane.runbooks.current_index(),
+            Some(0),
+            "the run did not move"
+        );
+        assert_eq!(pane.activity.history().len(), 1, "one row");
+
+        // A skip forgets a step still waited for.
+        run_message(&mut pane, RunbookMessage::RunSend);
+        run_message(&mut pane, RunbookMessage::RunSkip);
+        assert!(pane.awaited.is_empty());
+    }
+
+    #[test]
+    fn the_key_that_inserts_the_command_last_used_is_not_the_runbooks() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "A")]);
+        let mtr = trace(&mut pane, "10.0.0.1");
+        pane.update(CommandLibraryMessage::Copy(mtr));
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::InsertSelected),
+            Outcome::Insert { .. }
+        ));
+        pane.update(CommandLibraryMessage::Runbooks(RunbookMessage::Toggle));
+        assert_eq!(
+            pane.update(CommandLibraryMessage::InsertSelected),
+            Outcome::None
+        );
+    }
+
+    #[test]
+    fn a_step_the_generator_refuses_at_the_run_gives_nothing_to_send_insert_or_copy() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut runbook = Runbook::new("Trace");
+        runbook
+            .variables
+            .insert("target".to_owned(), "web.lab".to_owned());
+        runbook.steps = vec![Step::action(
+            TRACE,
+            "Trace",
+            BTreeMap::from([("target".to_owned(), "{{target}}".to_owned())]),
+        )];
+        let mut pane = run_pane(folder.path(), vec![runbook]);
+        let terminal = tab_ids()[0];
+        pane.set_targets(vec![target(terminal, "web-1")]);
+        // The session host fills the variable, and the generator judges it at the run.
+        open_for(&mut pane, "web.lab; reboot", None, RemoteOs::Linux);
+        let id = pane.runbooks.first_id().expect("a runbook");
+        pane.update(CommandLibraryMessage::Runbooks(RunbookMessage::Toggle));
+        run_message(&mut pane, RunbookMessage::Run(id));
+        run_message(&mut pane, RunbookMessage::RunBegin);
+        for message in [
+            RunbookMessage::RunSend,
+            RunbookMessage::RunInsert,
+            RunbookMessage::RunCopy,
+        ] {
+            assert_eq!(run_message(&mut pane, message), Outcome::None);
+        }
+        assert!(pane.awaited.is_empty());
+        assert!(pane.activity.history().is_empty());
+        assert_eq!(pane.runbooks.status_of(0), Some(StepStatus::Pending));
+    }
+
+    #[test]
+    fn a_session_opened_between_the_start_and_the_variables_being_confirmed_blocks_the_run() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut runbook = Runbook::new("Trace");
+        runbook
+            .variables
+            .insert("target".to_owned(), "web.lab".to_owned());
+        runbook.steps = vec![Step::action(
+            TRACE,
+            "Trace",
+            BTreeMap::from([("target".to_owned(), "{{target}}".to_owned())]),
+        )];
+        let mut pane = run_pane(folder.path(), vec![runbook]);
+        let [first, second, _] = tab_ids();
+        pane.set_targets(vec![target(first, "A"), target(second, "B")]);
+        open_for(&mut pane, "first.lab", None, RemoteOs::Linux);
+        let id = pane.runbooks.first_id().expect("a runbook");
+        run_message(&mut pane, RunbookMessage::Run(id));
+        pane.runbooks.set_guard(std::time::Duration::ZERO);
+
+        // A new session while the values are being confirmed.
+        open_for(&mut pane, "second.lab", None, RemoteOs::Windows);
+        run_message(&mut pane, RunbookMessage::RunBegin);
+        assert_eq!(pane.run_target(), RunTarget::Changed);
+        assert!(pane.run_warning().is_some());
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::None
+        );
+
+        // Picking a terminal takes the system of the session now open, not the first one's.
+        pane.update(CommandLibraryMessage::Target(second));
+        let Outcome::Send { command, .. } = run_message(&mut pane, RunbookMessage::RunSend) else {
+            panic!("asked");
+        };
+        assert_eq!(
+            command, "tracert first.lab",
+            "first session's value, new system"
+        );
+    }
+
+    #[test]
+    fn terminals_opened_after_a_run_began_without_one_are_to_be_picked() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        start_run(&mut pane);
+        assert_eq!(
+            pane.run_warning(),
+            None,
+            "no terminal at all: the usual hint"
+        );
+        pane.set_targets(vec![target(tab_ids()[0], "A")]);
+        assert_eq!(pane.run_target(), RunTarget::NoTerminal);
+        assert!(pane.run_warning().is_some());
+        assert_eq!(
+            run_message(&mut pane, RunbookMessage::RunSend),
+            Outcome::None
+        );
+    }
+
+    #[test]
+    fn opening_the_runbooks_clears_an_old_notice_and_leaves_the_history_and_the_editor_alone() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        pane.notice = Some(Notice::Inserted("A".to_owned()));
+        pane.update(CommandLibraryMessage::ToggleHistory);
+        assert!(pane.history_open);
+        pane.update(CommandLibraryMessage::Runbooks(RunbookMessage::Toggle));
+        assert_eq!(pane.notice, None);
+        assert!(!pane.history_open, "the history is not the view any more");
+
+        // And the other way round: the history takes the view back.
+        pane.update(CommandLibraryMessage::ToggleHistory);
+        assert!(pane.history_open);
+        assert!(!pane.runbooks.is_open());
+
+        // The editor takes the view from the history too.
+        pane.update(CommandLibraryMessage::New);
+        assert!(pane.editor.is_some());
+        assert!(!pane.history_open);
+    }
+
+    #[test]
+    fn a_run_started_clears_the_notice_of_an_insert() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = run_pane(folder.path(), vec![three_step_runbook()]);
+        start_run(&mut pane);
+        pane.notice = Some(Notice::Inserted("A".to_owned()));
+        let id = pane.runbooks.first_id().expect("a runbook");
+        run_message(&mut pane, RunbookMessage::RunStop);
+        run_message(&mut pane, RunbookMessage::Run(id));
+        assert_eq!(pane.notice, None);
     }
 }

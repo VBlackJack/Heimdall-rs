@@ -177,6 +177,35 @@ pub fn warning_lines(warnings: &[FileWarning]) -> Vec<String> {
                 session = session.as_str(),
                 host = host.as_str()
             ),
+            FileWarning::UnsupportedSessionType {
+                session, type_code, ..
+            } => fl!(
+                "ui-import-mobaxterm-unsupported-type",
+                session = session.as_str(),
+                kind = type_code.as_str()
+            ),
+            FileWarning::FtpNotSupported { session, .. } => {
+                fl!("ui-import-mobaxterm-ftp", session = session.as_str())
+            }
+            FileWarning::WslNotSupported { session, .. } => {
+                fl!("ui-import-mobaxterm-wsl", session = session.as_str())
+            }
+            FileWarning::JumpHostNotSupported { session, host, .. } => fl!(
+                "ui-import-mobaxterm-jump-host",
+                session = session.as_str(),
+                host = host.as_str()
+            ),
+            FileWarning::ProxyNotSupported { session, host, .. } if host.is_empty() => {
+                fl!(
+                    "ui-import-mobaxterm-proxy-no-host",
+                    session = session.as_str()
+                )
+            }
+            FileWarning::ProxyNotSupported { session, host, .. } => fl!(
+                "ui-import-mobaxterm-proxy",
+                session = session.as_str(),
+                host = host.as_str()
+            ),
         })
         .collect()
 }

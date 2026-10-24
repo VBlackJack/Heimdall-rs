@@ -1,0 +1,132 @@
+{
+  "id": "unified-tree",
+  "title": "Show a folder tree",
+  "description": "Show the hierarchical structure of a directory.",
+  "category": "files-storage",
+  "platform": 2,
+  "level": 0,
+  "tags": [
+    "linux",
+    "windows",
+    "tree",
+    "structure"
+  ],
+  "notes": "Windows: /F shows the files. /A uses ASCII characters. Use > to redirect to a file.\nLinux: -L limits the depth. -d for folders only. Install it with: sudo apt install tree.",
+  "links": [],
+  "windowsCommandTemplateId": "search-tree-windows-cmd",
+  "windowsCommandTemplate": {
+    "id": "search-tree-windows-cmd",
+    "platform": 0,
+    "name": "tree",
+    "commandPattern": "tree {path} /F /A",
+    "parameters": [
+      {
+        "name": "path",
+        "label": "Path",
+        "type": "string",
+        "defaultValue": ".",
+        "required": false,
+        "description": "Folder to show"
+      }
+    ]
+  },
+  "windowsExamples": [
+    {
+      "command": "tree C:\\Projects /F",
+      "description": "Show the tree with the files",
+      "platform": 0
+    },
+    {
+      "command": "tree /A > structure.txt",
+      "description": "Save the tree in ASCII to a file",
+      "platform": 0
+    }
+  ],
+  "linuxCommandTemplateId": "search-tree-linux-cmd",
+  "linuxCommandTemplate": {
+    "id": "search-tree-linux-cmd",
+    "platform": 1,
+    "name": "tree",
+    "commandPattern": "tree {path}",
+    "parameters": [
+      {
+        "name": "path",
+        "label": "Path",
+        "type": "string",
+        "defaultValue": ".",
+        "required": false,
+        "description": "Folder to show"
+      }
+    ]
+  },
+  "linuxExamples": [
+    {
+      "command": "tree -L 2",
+      "description": "Limit to 2 levels of depth",
+      "platform": 1
+    },
+    {
+      "command": "tree -d",
+      "description": "Show only the folders",
+      "platform": 1
+    },
+    {
+      "command": "tree -h",
+      "description": "Show sizes in a readable format",
+      "platform": 1
+    },
+    {
+      "command": "tree /var/www",
+      "description": "Tree of the web folder",
+      "platform": 1
+    },
+    {
+      "command": "tree -L 2 /home",
+      "description": "Limit to 2 levels",
+      "platform": 1
+    },
+    {
+      "command": "tree -d /etc",
+      "description": "Show only the folders",
+      "platform": 1
+    },
+    {
+      "command": "tree -h /var/log",
+      "description": "Show the sizes",
+      "platform": 1
+    }
+  ],
+  "examples": [],
+  "translations": {
+    "fr": {
+      "title": "Afficher l'arborescence de dossiers",
+      "description": "Affiche la structure hiérarchique d'un répertoire.",
+      "notes": "Windows: /F affiche les fichiers. /A utilise des caractères ASCII. Utiliser > pour rediriger vers un fichier.\nLinux: -L pour limiter la profondeur. -d pour dossiers seulement. Installer avec: sudo apt install tree.",
+      "parameters": {
+        "windows": {
+          "path": {
+            "label": "Chemin",
+            "description": "Dossier à afficher"
+          }
+        },
+        "linux": {
+          "path": {
+            "label": "Chemin",
+            "description": "Dossier à afficher"
+          }
+        }
+      },
+      "examples": {
+        "tree C:\\Projects /F": "Affiche l'arborescence avec les fichiers",
+        "tree /A > structure.txt": "Sauvegarde l'arborescence en ASCII dans un fichier",
+        "tree -L 2": "Limite à 2 niveaux de profondeur",
+        "tree -d": "Affiche uniquement les dossiers",
+        "tree -h": "Affiche les tailles en format lisible",
+        "tree /var/www": "Arborescence du dossier web",
+        "tree -L 2 /home": "Limiter à 2 niveaux",
+        "tree -d /etc": "Afficher uniquement les dossiers",
+        "tree -h /var/log": "Afficher les tailles"
+      }
+    }
+  }
+}

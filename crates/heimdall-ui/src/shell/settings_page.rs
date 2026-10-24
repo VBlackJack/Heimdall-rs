@@ -678,7 +678,11 @@ fn update_failure_text(failure: Failure) -> String {
 /// The check mark of what is as it should be, or the warning sign of what needs attention:
 /// the colour is never the only signal.
 fn posture_mark<'a>(risky: bool) -> Element<'a, Message> {
-    let style: fn(&Theme) -> text::Style = if risky { text::warning } else { text::success };
+    let style: fn(&Theme) -> text::Style = if risky {
+        styles::warning_text
+    } else {
+        styles::success_text
+    };
     text(if risky {
         POSTURE_RISKY_MARK
     } else {
@@ -701,7 +705,11 @@ fn posture_line<'a>(line: PostureLine) -> Element<'a, Message> {
     let warning = posture_warning(line.key).filter(|_| line.risky);
     let risky = warning.is_some();
     if let Some(warning) = warning {
-        said = said.push(text(warning).size(font_size::CAPTION).style(text::warning));
+        said = said.push(
+            text(warning)
+                .size(font_size::CAPTION)
+                .style(styles::warning_text),
+        );
     }
     let mut shown = row![posture_mark(risky), said]
         .spacing(spacing::SM)
@@ -1154,7 +1162,7 @@ impl Shell {
         .spacing(spacing::SM);
         if let Some(status) = status {
             let style: fn(&Theme) -> text::Style = if matches!(status, UpdateStatus::Failed(_)) {
-                text::warning
+                styles::warning_text
             } else {
                 text::secondary
             };
@@ -1256,7 +1264,7 @@ impl Shell {
             let style: fn(&Theme) -> text::Style = if status.is_active() {
                 text::secondary
             } else {
-                text::warning
+                styles::warning_text
             };
             body = body.push(
                 text(credential_guard_text(&status))
@@ -1269,7 +1277,7 @@ impl Shell {
             body = body.push(
                 text(fl!("ui-settings-require-windows-hello-windows-only"))
                     .size(font_size::CAPTION)
-                    .style(text::danger),
+                    .style(styles::error_text),
             );
         }
         body.into()
@@ -1441,7 +1449,7 @@ impl Shell {
             body = body.push(
                 text(field.refusal())
                     .size(font_size::CAPTION)
-                    .style(text::danger),
+                    .style(styles::error_text),
             );
         }
         body.into()
@@ -1476,7 +1484,7 @@ impl Shell {
                     max = heimdall_core::settings::TERMINAL_FONT_SIZE_MAX
                 ))
                 .size(font_size::CAPTION)
-                .style(text::danger),
+                .style(styles::error_text),
             );
         }
         body.into()
@@ -1517,7 +1525,7 @@ impl Shell {
                     fallback = crate::terminal_view::FONT_FAMILY
                 ))
                 .size(font_size::CAPTION)
-                .style(text::danger),
+                .style(styles::error_text),
             );
         }
         body.into()

@@ -33,7 +33,7 @@ use crate::metadata::{Environment, MacAddress, ProfileMetadata, ProfileOrigin};
 use crate::post_connect::PostConnectStep;
 use crate::profile::{
     CitrixProfile, FtpProfile, LocalApproval, LocalProfile, ProfileId, RdpMode, RdpProfile,
-    SshGateway, SshMode, SshProfile, TelnetProfile, ToolProfile, VncProfile, WebProfile,
+    RemoteOs, SshGateway, SshMode, SshProfile, TelnetProfile, ToolProfile, VncProfile, WebProfile,
     WinRmProfile,
 };
 
@@ -43,10 +43,11 @@ use crate::profile::{
 /// gateways and the gateway an SSH profile goes through, 8 folders of their own, empty ones
 /// included, 9 the favorites, 10 the folders' colours and a profile's own session logging,
 /// 11 the profiles' metadata, 12 Citrix profiles, 13 web consoles, 14 tool entries, 15 the
-/// defaults a folder gives its sessions. A build that knows an
+/// defaults a folder gives its sessions, 16 the operating system an SSH or Telnet profile
+/// declares for its far end. A build that knows an
 /// older version refuses a newer file rather than reading it, dropping what it does not
 /// know, and saving it back.
-pub const PROFILE_FILE_VERSION: u32 = 15;
+pub const PROFILE_FILE_VERSION: u32 = 16;
 
 /// Oldest format version still read; its files hold SSH profiles only.
 const OLDEST_READ_VERSION: u32 = 1;
@@ -719,6 +720,23 @@ impl ProfileStore {
             }
             None => false,
         }
+    }
+
+    /// The operating system profile `id` declares for its far end, as the C# `RemoteOs`;
+    /// `Auto` for a profile that declares none, has no such field, or is not in the store.
+    #[must_use]
+    pub fn remote_os_of(&self, id: &ProfileId) -> RemoteOs {
+        self.ssh
+            .iter()
+            .find(|profile| &profile.id == id)
+            .map(|profile| profile.remote_os)
+            .or_else(|| {
+                self.telnet
+                    .iter()
+                    .find(|profile| &profile.id == id)
+                    .map(|profile| profile.remote_os)
+            })
+            .unwrap_or_default()
     }
 
     /// Whether profile `id` is marked as a favorite.

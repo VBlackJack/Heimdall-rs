@@ -70,6 +70,16 @@ pub enum ToolsMessage {
         command: String,
         /// Marked dangerous.
         dangerous: bool,
+        /// A command typed as is, which no library action stands for.
+        typed_as_is: bool,
+    },
+    /// Type `command` at the prompt of terminal tab `target`, without Enter and without a
+    /// question: nothing runs until the user presses Enter themselves, as the C# Insert.
+    InsertCommand {
+        /// The terminal tab.
+        target: TabId,
+        /// The command, one line.
+        command: String,
     },
     /// Write `command` into each terminal tab of `targets`, once the user agrees to the one
     /// question it opens, which lists them all; `dangerous` for a command marked so.
@@ -179,6 +189,44 @@ impl App {
         (!host.is_empty()).then(|| host.to_owned())
     }
 
+    /// What the command library opened now starts with, as the C#
+    /// `EmbeddedSessionManager.WithSessionProfile` fills a tool opened from a session: the
+    /// host, the user and the platform of the session shown when it is one of a profile, else
+    /// of the profile selected in the tree. `None` when there is neither, or it gives nothing.
+    #[must_use]
+    pub fn session_context(&self) -> Option<ToolContext> {
+        let from_tab = self
+            .shown_tab()
+            .filter(|tab| tab.tool().is_none())
+            .map(|tab| {
+                let profile = &tab.profile;
+                ToolContext {
+                    session_tab: Some(tab.id),
+                    ..ToolContext::of_session(
+                        profile.endpoint().map(|(host, _)| host),
+                        profile.username(),
+                        profile.platform(),
+                    )
+                }
+            })
+            .filter(ToolContext::has_session);
+        if from_tab.is_some() {
+            return from_tab;
+        }
+        let id = self.selected_profile.as_ref()?;
+        let summary = self.profile_summary(id)?;
+        let platform = self
+            .store
+            .remote_os_of(id)
+            .or(summary.kind.platform_guess());
+        Some(ToolContext::of_session(
+            summary.endpoint.as_ref().map(|(host, _)| host.as_str()),
+            summary.username.as_deref(),
+            platform,
+        ))
+        .filter(ToolContext::has_session)
+    }
+
     /// The gateways a network tool can be routed through, as the C# "Route via" lists them.
     #[must_use]
     pub fn tool_gateways(&self) -> Vec<GatewayChoice> {
@@ -226,8 +274,13 @@ impl App {
                 target,
                 command,
                 dangerous,
+                typed_as_is,
             } => {
-                self.ask_send(target, command, dangerous);
+                self.ask_send(target, command, dangerous, typed_as_is);
+                Vec::new()
+            }
+            ToolsMessage::InsertCommand { target, command } => {
+                self.insert_command(target, &command);
                 Vec::new()
             }
             ToolsMessage::BroadcastCommand {

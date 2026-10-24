@@ -303,6 +303,7 @@ fn the_profile_form_has_the_vault_entry_name_and_takes_typing() {
         session_logging: None,
         ssh_mode: heimdall_core::profile::SshMode::Embedded,
         x11_forwarding: false,
+        remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());

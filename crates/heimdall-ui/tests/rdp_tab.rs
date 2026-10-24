@@ -462,6 +462,128 @@ fn ctrl_shift_a_on_a_desktop_is_left_to_the_window_and_never_reaches_the_server(
 }
 
 #[test]
+fn ctrl_shift_m_on_a_desktop_is_the_servers_and_the_masked_copy_stays_closed() {
+    use iced::event::Status;
+    use iced::keyboard::key::{Code, Physical};
+    use iced::keyboard::{Event, Key, Location, Modifiers};
+
+    // The C# gate leaves the chord to a remote desktop, which binds it: the window takes it
+    // for a session of text only.
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _received) = connected(dir.path());
+    let held = Modifiers::CTRL | Modifiers::SHIFT;
+    let m = |pressed: bool| {
+        let key = Key::Character("M".into());
+        let physical_key = Physical::Code(Code::KeyM);
+        iced::Event::Keyboard(if pressed {
+            Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key,
+                location: Location::Standard,
+                modifiers: held,
+                text: None,
+                repeat: false,
+            }
+        } else {
+            Event::KeyReleased {
+                key: key.clone(),
+                modified_key: key,
+                physical_key,
+                location: Location::Standard,
+                modifiers: held,
+            }
+        })
+    };
+    let mut ui = simulator(&shell);
+    let statuses = ui.simulate([m(true), m(false)]);
+    assert_eq!(statuses[0], Status::Captured, "the desktop's");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        !messages
+            .iter()
+            .any(|message| matches!(message, Message::Shortcut(_))),
+        "the window is told of no shortcut"
+    );
+    let sent = messages
+        .into_iter()
+        .filter_map(|message| match message {
+            Message::App(AppMessage::DesktopInput { inputs, .. }) => Some(inputs),
+            _ => None,
+        })
+        .flatten()
+        .filter(|input| matches!(input, DesktopInput::Key { .. }))
+        .count();
+    assert_eq!(sent, 2, "its M sent, down and up");
+    assert!(shell.app().dialog.is_none());
+}
+
+#[test]
+fn ctrl_shift_l_on_a_desktop_is_the_servers_and_the_capture_stays_closed() {
+    use iced::event::Status;
+    use iced::keyboard::key::{Code, Physical};
+    use iced::keyboard::{Event, Key, Location, Modifiers};
+
+    // The C# gate leaves the chord to a remote desktop, which binds it: the window takes it
+    // for a session of text only.
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _received) = connected(dir.path());
+    let held = Modifiers::CTRL | Modifiers::SHIFT;
+    let l = |pressed: bool| {
+        let key = Key::Character("L".into());
+        let physical_key = Physical::Code(Code::KeyL);
+        iced::Event::Keyboard(if pressed {
+            Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key,
+                location: Location::Standard,
+                modifiers: held,
+                text: None,
+                repeat: false,
+            }
+        } else {
+            Event::KeyReleased {
+                key: key.clone(),
+                modified_key: key,
+                physical_key,
+                location: Location::Standard,
+                modifiers: held,
+            }
+        })
+    };
+    let mut ui = simulator(&shell);
+    let statuses = ui.simulate([l(true), l(false)]);
+    assert_eq!(statuses[0], Status::Captured, "the desktop's");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        !messages
+            .iter()
+            .any(|message| matches!(message, Message::Shortcut(_))),
+        "the window is told of no shortcut"
+    );
+    let sent = messages
+        .into_iter()
+        .filter_map(|message| match message {
+            Message::App(AppMessage::DesktopInput { inputs, .. }) => Some(inputs),
+            _ => None,
+        })
+        .flatten()
+        .filter(|input| matches!(input, DesktopInput::Key { .. }))
+        .count();
+    assert_eq!(sent, 2, "its L sent, down and up");
+    assert!(shell.app().dialog.is_none());
+    assert!(
+        !shell
+            .app()
+            .tabs
+            .iter()
+            .any(|tab| tab.tool() == Some(heimdall_app::tools::ToolId::CmdLib)),
+        "no library opened"
+    );
+}
+
+#[test]
 fn a_key_is_released_with_the_keysym_it_was_pressed_with() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, attempt) = opened(dir.path());

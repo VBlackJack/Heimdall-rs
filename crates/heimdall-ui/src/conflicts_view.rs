@@ -33,8 +33,10 @@ use crate::tokens::{font_size, spacing};
 /// Tallest the list grows before it scrolls.
 const ROWS_HEIGHT: f32 = 300.0;
 
-/// Widths of the columns: destination, action (the C# one is 150).
-const COLUMNS: [f32; 2] = [520.0, 150.0];
+/// Widths of the columns: destination, action. The C# action column is 150, which clips the
+/// Spanish "Reemplazar si es más reciente" (C# `a3d4f58e`: drop-downs grow to the longest
+/// EN/FR/ES item); the destination gives up the difference, so the dialog keeps its width.
+const COLUMNS: [f32; 2] = [440.0, 230.0];
 
 /// Every answer, in the C# order.
 const CHOICES: [Choice; 4] = [
@@ -172,7 +174,7 @@ fn line(index: usize, row: &ConflictRow) -> Element<'_, Message> {
         target = target.push(
             text(fl!("ui-files-conflict-folder-skip"))
                 .size(font_size::CAPTION)
-                .style(text::warning),
+                .style(styles::warning_text),
         );
     }
     let allowed: Vec<Named> = CHOICES

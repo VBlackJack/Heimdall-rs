@@ -42,8 +42,9 @@ pub const MAX_BATCH_COUNT: usize = 100;
 /// The count a batch starts at, as the C# `DefaultBatchCount`.
 pub const DEFAULT_BATCH_COUNT: usize = 10;
 
-/// Width of the version's list, as the C# combo box's.
-const VERSION_WIDTH: f32 = 160.0;
+/// Width of the version's list: the C# combo box's 160 clips the Spanish "v7 (marca de
+/// tiempo)", so it grows to the longest EN/FR/ES item, as the C# `a3d4f58e`.
+const VERSION_WIDTH: f32 = 200.0;
 
 /// Width of the count's box, as the C#'s.
 const COUNT_WIDTH: f32 = 60.0;

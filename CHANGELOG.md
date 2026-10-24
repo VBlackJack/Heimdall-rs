@@ -21,6 +21,20 @@ work can be followed. It is not usable yet and no official release is published.
   PuTTY), agent and keyboard-interactive authentication, and a terminal with scrollback,
   selection, copy and paste, and mouse reporting.
 - SFTP: a Files tab, local and remote panes, transfers and edits.
+- Copy output, secrets masked (Ctrl+Shift+M, the tab menu): the session text is masked by
+  rule, reviewed in a preview and copied only on Copy. Best effort: the preview has to be read
+  before it is shared.
+- Capture a command from the terminal (Ctrl+Shift+L, or Shift+right-click then "Save
+  selection to Command Library"): the selection of an SSH, Telnet, WinRM or local shell opens
+  the editor of a new action, its pattern for the session's platform, risk at Run, the
+  protocol as a tag. A multi-line selection is joined with `;` (Windows) or `&&` (Linux) for
+  review. Terminal escape sequences and control characters are removed; nothing is sent or run.
+- Command Library Git synchronization (Pull, Push, Sync) through the installed `git` program,
+  called with an argument list and no shell: `https` and `ssh` URLs only, hooks and
+  prompts disabled, time limits, credentials masked in messages. The repository holds the
+  library's export (actions and runbooks); a pulled file is untrusted and goes through the
+  checks of an import. A copy newer here than the repository's is kept and listed. See
+  `docs/command-library-git-sync.md`.
 - RDP and VNC: remote desktop sessions, with an `mstsc` fallback on Windows.
 - Tools: the network and security tools ported from the C#.
 - Localisation: English, French and Spanish, every string a Fluent key.

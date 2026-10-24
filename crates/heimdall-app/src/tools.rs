@@ -23,6 +23,8 @@
 //! [`ToolId::descriptor`] arm here; its label, description, icon and view in the window
 //! crate, whose matches over [`ToolId`] say where.
 
+use heimdall_core::profile::RemoteOs;
+
 /// The categories of the tools, in the C# `ToolCategory` order (`Enums.cs:108-115`): the
 /// order the sidebar and the Tools page group them in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -582,6 +584,17 @@ pub struct ToolContext {
     /// The text typed after the tool's command word, as the C# `Argument`: plain text,
     /// never run.
     pub argument: Option<String>,
+    /// The account of the session the tool was opened from, as the C# `Username`.
+    pub user: Option<String>,
+    /// The platform of that session's far end, as the C# `RemoteOs`: what the profile
+    /// declares, else the protocol's guess; `Auto` when it cannot be told.
+    pub remote_os: RemoteOs,
+    /// The terminal tab of that session, when the tool was opened from one shown: the
+    /// command library types into it first.
+    pub session_tab: Option<crate::ids::TabId>,
+    /// A command captured from that session's terminal, for the command library to open its
+    /// editor on: the selection, cleaned and joined, never run.
+    pub capture: Option<crate::app::CapturedCommand>,
 }
 
 impl ToolContext {
@@ -606,12 +619,37 @@ impl ToolContext {
         }
     }
 
+    /// A context carrying the facts of a session: its host and account, trimmed and left out
+    /// when blank, and the platform of its far end.
+    #[must_use]
+    pub fn of_session(host: Option<&str>, user: Option<&str>, remote_os: RemoteOs) -> Self {
+        let given = |value: Option<&str>| {
+            value
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        };
+        Self {
+            host: given(host),
+            user: given(user),
+            remote_os,
+            ..Self::default()
+        }
+    }
+
     /// Whether it holds neither a host nor an argument, as the C# `hasContext` reads it
     /// (`MainViewModel.cs:1305`): such a tool reaching no host shows its open tab again.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         let blank = |value: &Option<String>| value.as_deref().is_none_or(|v| v.trim().is_empty());
         blank(&self.host) && blank(&self.argument)
+    }
+
+    /// Whether it carries a session's facts: a host, an account or a platform.
+    #[must_use]
+    pub fn has_session(&self) -> bool {
+        let blank = |value: &Option<String>| value.as_deref().is_none_or(|v| v.trim().is_empty());
+        !(blank(&self.host) && blank(&self.user) && self.remote_os.is_auto())
     }
 
     /// What its title names after the tool's: the host, else the argument.

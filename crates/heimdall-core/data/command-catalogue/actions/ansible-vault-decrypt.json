@@ -1,0 +1,113 @@
+{
+  "id": "ansible-vault-decrypt",
+  "title": "Decrypt an Ansible Vault file",
+  "description": "Permanently decrypt a file encrypted with Ansible Vault",
+  "category": "security",
+  "platform": 2,
+  "level": 1,
+  "tags": [
+    "ansible",
+    "vault",
+    "decrypt",
+    "security"
+  ],
+  "windowsCommandTemplateId": "ansible-vault-decrypt-win",
+  "windowsCommandTemplate": {
+    "id": "ansible-vault-decrypt-win",
+    "platform": 0,
+    "name": "ansible-vault",
+    "commandPattern": "ansible-vault decrypt {filePath}",
+    "parameters": [
+      {
+        "name": "filePath",
+        "label": "File to decrypt",
+        "type": "string",
+        "defaultValue": "secrets.yml",
+        "required": true,
+        "description": "Path of the file to decrypt"
+      }
+    ]
+  },
+  "linuxCommandTemplateId": "ansible-vault-decrypt-linux",
+  "linuxCommandTemplate": {
+    "id": "ansible-vault-decrypt-linux",
+    "platform": 1,
+    "name": "ansible-vault",
+    "commandPattern": "ansible-vault decrypt {filePath}",
+    "parameters": [
+      {
+        "name": "filePath",
+        "label": "File to decrypt",
+        "type": "string",
+        "defaultValue": "secrets.yml",
+        "required": true,
+        "description": "Path of the file"
+      }
+    ]
+  },
+  "examples": [],
+  "notes": "WARNING: this command decrypts the file permanently. Use 'view' or 'edit' for a temporary look.",
+  "links": [
+    {
+      "title": "Ansible Vault",
+      "url": "https://docs.ansible.com/ansible/latest/user_guide/vault.html"
+    }
+  ],
+  "windowsExamples": [
+    {
+      "command": "ansible-vault decrypt C:\\Data\\report.xlsx",
+      "description": "Windows example using ansible-vault. Replace the parameters between <> with your values.",
+      "platform": 0
+    }
+  ],
+  "linuxExamples": [
+    {
+      "command": "ansible-vault decrypt secrets.yml",
+      "description": "Decrypt the secrets file",
+      "platform": 1
+    },
+    {
+      "command": "ansible-vault decrypt --output=secrets-plain.yml secrets.yml",
+      "description": "Decrypt to a new file",
+      "platform": 1
+    },
+    {
+      "command": "ansible-vault decrypt --output=plain.yml secrets.yml",
+      "description": "Decrypt to another file",
+      "platform": 1
+    },
+    {
+      "command": "ansible-vault decrypt group_vars/*/vault.yml",
+      "description": "Decrypt several files",
+      "platform": 1
+    }
+  ],
+  "translations": {
+    "fr": {
+      "title": "Déchiffrer un fichier Ansible Vault",
+      "description": "Déchiffre définitivement un fichier chiffré avec Ansible Vault",
+      "notes": "ATTENTION: Cette commande déchiffre définitivement le fichier. Utilisez 'view' ou 'edit' pour une consultation temporaire.",
+      "parameters": {
+        "windows": {
+          "filePath": {
+            "label": "Fichier à déchiffrer",
+            "description": "Chemin du fichier à déchiffrer"
+          }
+        },
+        "linux": {
+          "filePath": {
+            "label": "Fichier à déchiffrer",
+            "description": "Chemin du fichier"
+          }
+        }
+      },
+      "examples": {
+        "ansible-vault decrypt C:\\Data\\report.xlsx": "Exemple Windows utilisant ansible-vault. Remplacez les paramètres entre <> par vos valeurs.",
+        "ansible-vault decrypt secrets.yml": "Déchiffre le fichier de secrets",
+        "ansible-vault decrypt --output=secrets-plain.yml secrets.yml": "Déchiffre vers un nouveau fichier",
+        "ansible-vault decrypt --output=plain.yml secrets.yml": "Déchiffrer vers un autre fichier",
+        "ansible-vault decrypt group_vars/*/vault.yml": "Déchiffrer plusieurs fichiers"
+      }
+    }
+  }
+}
