@@ -205,7 +205,8 @@ pub(crate) fn round_is_the_password(
 /// `true` when `question` asks for the account's password alone: exactly one prompt, typed
 /// hidden, made only of a plain password prompt's words and the user's own account, in a
 /// round whose title and instructions are empty or as plain, and name no one-time code.
-pub(crate) fn asks_for_the_account_password(question: &KeyboardInteractiveQuestion) -> bool {
+#[must_use]
+pub fn asks_for_the_account_password(question: &KeyboardInteractiveQuestion) -> bool {
     let [prompt] = question.prompts.as_slice() else {
         return false;
     };

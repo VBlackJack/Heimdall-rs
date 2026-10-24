@@ -112,9 +112,30 @@ ignoré. Les clés viennent de votre agent SSH (Pageant, l'agent OpenSSH de Wind
 agent).
 
 Quand aucune clé de l'agent n'est acceptée, Heimdall-rs demande le mot de passe du bastion,
-puis celui du serveur, à la connexion. Heimdall-rs ne retient pas encore le mot de passe d'une
-session partagée sur cet ordinateur : il est demandé à chaque connexion et n'est jamais écrit
-dans le fichier partagé, dans la copie hors ligne, ni dans les réglages.
+puis celui du serveur, à la connexion. Pour une session SSH, SFTP ou VNC, vous pouvez garder le
+mot de passe du serveur sur cet ordinateur :
+
+- **Sur demande.** L'invite a une case, **Mémoriser ce mot de passe sur cet ordinateur**. Elle
+  est décochée à chaque fois, et rien n'est retenu si vous ne la cochez pas.
+- **Gardé une fois accepté.** Le mot de passe est enregistré après que le serveur l'a accepté
+  (le shell est ouvert, les fichiers sont listés, le bureau est affiché), jamais avant. Un mot
+  de passe que le serveur refuse n'est pas gardé, et un mot de passe retenu qui est refusé est
+  oublié.
+- **Rangé selon ce qu'il ouvre.** Il est enregistré par source sous le protocole, l'hôte, le
+  port et le login, pas sous la session. Un fichier partagé qui déplace une session vers un
+  autre hôte, port ou compte ne trouve aucun mot de passe, et il vous est redemandé : un mot de
+  passe ne suit jamais une session vers un serveur pour lequel il n'a pas été saisi.
+- **Premier essai seulement.** Un mot de passe retenu répond au premier essai d'une connexion.
+  Si le serveur le redemande, celui qui est stocké est oublié et vous le saisissez.
+- **Où il vit.** Dans le coffre d'identifiants du système, ou dans le coffre-fort une fois un
+  mot de passe maître défini. Il n'est jamais écrit dans le fichier partagé, la copie hors
+  ligne, les réglages, un export ni le journal, et le journal ne dit pas qu'un mot de passe est
+  retenu.
+- **Oublier.** **Oublier les mots de passe mémorisés** dans les réglages des sources partagées
+  oublie les mots de passe d'une source, et les réglages indiquent combien sont retenus.
+  Retirer une source, ou remettre les réglages par défaut, les oublie aussi.
+- **Non couvert.** Le mot de passe d'un bastion sur la route n'est pas retenu, ni aucun mot de
+  passe RDP.
 
 - Une session SFTP partagée demande son mot de passe comme une session SSH.
 - Une session VNC demande son mot de passe quand le serveur en veut un. La connexion reste
@@ -183,7 +204,7 @@ dit dans son résumé. Les autres lignes ne concernent que les sources partagée
 
 ## 9. Limites connues
 
-- Les mots de passe RDP partagés ne sont pas retenus (section 6).
+- Les mots de passe RDP partagés et ceux d'un bastion sur la route ne sont pas retenus (section 6).
 - Les outils réseau (ping, scan de ports et les autres outils qui peuvent passer par une
   passerelle) n'empruntent que vos propres passerelles SSH des réglages, pas les bastions
   qu'une source partagée définit. Pour atteindre depuis un outil des hôtes derrière un bastion
