@@ -18,12 +18,13 @@
 //! it is never part of the shipped catalogue, and imported by the library's Import button it
 //! goes through the untrusted path, where a destructive command is marked dangerous.
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use heimdall_app::dangerous_command;
-use heimdall_core::tools::command_library;
+use heimdall_core::tools::command_library::{self, CommandIssue};
 use heimdall_core::tools::library_transfer;
-use heimdall_core::tools::user_commands::{Criticality, UserLibrary};
+use heimdall_core::tools::user_commands::{Criticality, TemplatePlatform, UserLibrary};
 
 /// The actions the C# pack holds.
 const PACK_ACTIONS: usize = 72;
@@ -32,6 +33,11 @@ const PACK_ACTIONS: usize = 72;
 /// parameter holds parentheses (`Program Files (x86)`), which the value generator will not
 /// put in a command. The pack stays as the C# ships it; the refusal is the import doing its job.
 const REFUSED_TITLE: &str = "Configurer exclusions Windows Defender";
+
+/// SHA-256 of the pack with its line ends as LF (the repository stores text with LF; the C#
+/// file on disk has CRLF, SHA-256 59f7504227be3a7887c86108ddf6f28510448875a988570d0609de61c11880c4).
+/// A change to the pack, which must stay as the C# ships it, fails here and asks for a decision.
+const PACK_SHA256: &str = "b731b20dbf31e2c9e990914538667d7a5feab62483e4e22c807827caef86eec9";
 
 /// Actions the pack marks dangerous itself (level 2 in the C# file).
 const PACK_DANGEROUS: usize = 12;
@@ -58,6 +64,17 @@ fn pack_ids(text: &str) -> Vec<String> {
 }
 
 #[test]
+fn the_pack_is_the_file_the_csharp_ships() {
+    let normalized = pack_text().replace("\r\n", "\n");
+    let digest = sealvault::hash::sha256(normalized.as_bytes());
+    let hex = digest.iter().fold(String::new(), |mut out, byte| {
+        let _ = write!(out, "{byte:02x}");
+        out
+    });
+    assert_eq!(hex, PACK_SHA256);
+}
+
+#[test]
 fn the_pack_is_not_in_the_shipped_catalogue() {
     let ids = pack_ids(&pack_text());
     assert_eq!(ids.len(), PACK_ACTIONS);
@@ -79,11 +96,11 @@ fn the_pack_imports_through_the_untrusted_path_but_for_one_default() {
         (PACK_ACTIONS - 1, 0, 1)
     );
     assert_eq!(
-        report
-            .first_skipped
-            .as_ref()
-            .map(|(title, _)| title.as_str()),
-        Some(REFUSED_TITLE)
+        report.first_skipped,
+        Some((
+            REFUSED_TITLE.to_owned(),
+            CommandIssue::RefusedDefault(TemplatePlatform::Windows)
+        ))
     );
     let ids = pack_ids(&text);
     assert!(library.commands().iter().all(|c| ids.contains(&c.id)));

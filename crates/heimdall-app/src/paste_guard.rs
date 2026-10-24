@@ -31,8 +31,9 @@ use crate::text::visible_text;
 /// Whether a line, in lower case, holds a command.
 type Matcher = fn(&str) -> bool;
 
-/// The C# commands, by the label it gives them.
-const COMMANDS: [(&str, Matcher); 25] = [
+/// The C# commands, by the label it gives them, and one more the C# lacks: a Defender
+/// exclusion hides a folder from the antivirus (the debloat pack in `data/packs` has one).
+const COMMANDS: [(&str, Matcher); 26] = [
     ("rm -rf", |line| rm_flags(line, 'r', 'f')),
     ("rm -fr", |line| rm_flags(line, 'f', 'r')),
     ("mkfs", |line| has_word(line, "mkfs")),
@@ -62,6 +63,7 @@ const COMMANDS: [(&str, Matcher); 25] = [
     ("chown -R", chown_recursive),
     ("wget | sh", |line| fetch_into_shell(line, "wget")),
     ("curl | sh", |line| fetch_into_shell(line, "curl")),
+    ("Add-MpPreference -Exclusion", defender_exclusion),
 ];
 
 /// The label of the first destructive command `text` holds, as the C# names it; `None` when
@@ -203,6 +205,16 @@ fn remove_item_recurse_force(line: &str) -> bool {
     })
 }
 
+/// `Add-MpPreference` with an `-Exclusion...` flag after it (`-ExclusionPath`, `-ExclusionProcess`
+/// and the like), the flag starting after a blank.
+fn defender_exclusion(line: &str) -> bool {
+    word_positions(line, "add-mppreference").any(|at| {
+        line[at..]
+            .match_indices("-exclusion")
+            .any(|(flag, _)| line[at..][..flag].ends_with(char::is_whitespace))
+    })
+}
+
 /// `reg` or `reg.exe`, blanks, then `delete` as a word.
 fn reg_delete(line: &str) -> bool {
     ["reg", "reg.exe"].iter().any(|name| {
@@ -337,6 +349,11 @@ mod tests {
                 "curl | sh",
                 "curl -fsSL https://x.example | sudo bash",
                 "curl https://x.example | jq .",
+            ),
+            (
+                "Add-MpPreference -Exclusion",
+                "Add-MpPreference -ExclusionPath 'C:\\Games'",
+                "Add-MpPreference -DisableRealtimeMonitoring $false",
             ),
         ];
         assert_eq!(cases.len(), COMMANDS.len(), "one case per command");
