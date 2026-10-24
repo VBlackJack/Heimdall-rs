@@ -86,15 +86,16 @@ fn assert_nothing_logged() {
 
 // ---- Files ---------------------------------------------------------------------------------
 
-/// A session line of a `MobaXterm` file: the protocol `code`, and each `(index, value)` of
+/// A session line of a `MobaXterm` file: the session `kind` (the type, read from the type and
+/// not the icon: 0 SSH, 5 VNC, 7 SFTP), and each `(index, value)` of
 /// `fields` at its place in the `%` list, the others empty.
-fn line(name: &str, code: u32, fields: &[(usize, &str)]) -> String {
+fn line(name: &str, kind: u32, fields: &[(usize, &str)]) -> String {
     const FIELD_COUNT: usize = 32;
     let mut values = vec![""; FIELD_COUNT];
     for (at, value) in fields {
         values[*at] = value;
     }
-    format!("{name}= #{code}#0%{}\r\n", values.join("%"))
+    format!("{name}= #109#{kind}%{}\r\n", values.join("%"))
 }
 
 /// A file with an SSH session `web` at `host`:`port` for `login`, an SFTP session `files` at
@@ -104,9 +105,9 @@ fn file(host: &str, port: u16, login: &str, vnc_port: u16) -> String {
     let vnc_port = vnc_port.to_string();
     format!(
         "[Bookmarks]\r\nSubRep=Ops\r\n{}{}{}{}",
-        line("web", 109, &[(0, host), (1, &port), (2, login)]),
-        line("files", 140, &[(0, host), (1, &port), (2, login)]),
-        line("desk", 128, &[(0, "127.0.0.1"), (1, &vnc_port)]),
+        line("web", 0, &[(0, host), (1, &port), (2, login)]),
+        line("files", 7, &[(0, host), (1, &port), (2, login)]),
+        line("desk", 5, &[(0, "127.0.0.1"), (1, &vnc_port)]),
         "rdp= #91#4%rdp.example.com%3390%admin%0%-1%-1%\r\n",
     )
 }

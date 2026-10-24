@@ -24,6 +24,7 @@
 //! twice in any case; an absolute path; an identifier of its own) is applied as it is edited;
 //! one that does not stays edited here, each row saying why, until it does.
 
+use heimdall_app::shared_sessions::SourceState;
 use heimdall_core::shared_sessions::{
     IdProblem, NameProblem, PathProblem, SharedSource, SourceProblems, new_source_id,
     source_problems,
@@ -220,39 +221,12 @@ impl SharedSourcesEditor {
                     .on_press(send(SourcesEdit::Remove(at))),
             );
             content = content.push(actions);
-            if let Some(state) = state {
-                content = content.push(
-                    text(fl!("ui-shared-sources-status", count = state.sessions))
-                        .size(font_size::CAPTION)
-                        .style(text::secondary),
-                );
-                if remembered > 0 {
-                    content = content.push(
-                        text(fl!("ui-shared-sources-passwords", count = remembered))
-                            .size(font_size::CAPTION)
-                            .style(text::secondary),
-                    );
-                }
-                for (note, warning) in source_notes(state) {
-                    content = content.push(text(note).size(font_size::CAPTION).style(if warning {
-                        styles::warning_text
-                    } else {
-                        text::secondary
-                    }));
-                }
-            }
-            for message in problems
-                .get(at)
-                .copied()
-                .map(problem_texts)
-                .unwrap_or_default()
-            {
-                content = content.push(
-                    text(message)
-                        .size(font_size::CAPTION)
-                        .style(styles::error_text),
-                );
-            }
+            content = status_lines(
+                content,
+                state.copied(),
+                remembered,
+                problems.get(at).copied(),
+            );
         }
         content = content.push(column![
             button(text(fl!("ui-shared-sources-add")))
@@ -267,6 +241,45 @@ impl SharedSourcesEditor {
             .style(styles::panel)
             .into()
     }
+}
+
+/// What is said under a row: what became of its file, the passwords remembered for it, the
+/// notes on its file and the problems of its fields.
+fn status_lines<'a>(
+    mut content: Column<'a, Message>,
+    state: Option<&SourceState>,
+    remembered: usize,
+    problems: Option<SourceProblems>,
+) -> Column<'a, Message> {
+    if let Some(state) = state {
+        content = content.push(
+            text(fl!("ui-shared-sources-status", count = state.sessions))
+                .size(font_size::CAPTION)
+                .style(text::secondary),
+        );
+        if remembered > 0 {
+            content = content.push(
+                text(fl!("ui-shared-sources-passwords", count = remembered))
+                    .size(font_size::CAPTION)
+                    .style(text::secondary),
+            );
+        }
+        for (note, warning) in source_notes(state) {
+            content = content.push(text(note).size(font_size::CAPTION).style(if warning {
+                styles::warning_text
+            } else {
+                text::secondary
+            }));
+        }
+    }
+    for message in problems.map(problem_texts).unwrap_or_default() {
+        content = content.push(
+            text(message)
+                .size(font_size::CAPTION)
+                .style(styles::error_text),
+        );
+    }
+    content
 }
 
 /// What to say of each problem of a row.
