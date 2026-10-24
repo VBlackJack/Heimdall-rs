@@ -52,7 +52,29 @@ fn labels() -> ListingLabels {
         index_of: "Index of".to_owned(),
         name: "Name".to_owned(),
         size: "Size".to_owned(),
+        not_served: "not served".to_owned(),
     }
+}
+
+/// A request the share refused for going through a link.
+fn link_refusal() -> ShareUpdate {
+    ShareUpdate::Event(ShareEvent::Request(heimdall_app::share::RequestRecord {
+        client: std::net::Ipv4Addr::LOCALHOST.into(),
+        method: "GET".to_owned(),
+        path: "/onedrive/report.docx".to_owned(),
+        status: 403,
+        link_refused: Some("/onedrive".to_owned()),
+    }))
+}
+
+/// A request refused for going through a link is counted, with its path only.
+fn a_link_refusal_is_counted_with_its_path_only(app: &mut App, run: u64) {
+    assert!(app.share_link_refusals().is_none());
+    let before = app.share_requests();
+    let update = Some(link_refusal());
+    share(app, ShareMessage::Update { run, update });
+    assert_eq!(app.share_requests(), before + 1);
+    assert_eq!(app.share_link_refusals(), Some((1, "/onedrive")));
 }
 
 fn share(app: &mut App, message: ShareMessage) -> Vec<Effect> {
@@ -225,6 +247,7 @@ async fn a_share_runs_is_copied_and_is_stopped_by_the_toggle() {
         },
     );
     assert_eq!(app.share_requests(), 1);
+    a_link_refusal_is_counted_with_its_path_only(&mut app, run);
 
     // The toggle stops it: at once for the bar, and the server follows.
     share(&mut app, ShareMessage::Toggle);

@@ -106,9 +106,28 @@ when MobaXterm stored some, and the source header in the tree says how many it i
 your SSH agent (Pageant, the Windows OpenSSH agent, or another agent).
 
 When no agent key is accepted, Heimdall-rs asks for the password of the bastion, then of the
-server, when you connect. Heimdall-rs does not remember the password of a shared session on this
-computer yet: it is asked at each connection and is never written to the shared file, to the
-offline copy, or to the settings.
+server, when you connect. For an SSH, SFTP or VNC session you can keep the password of the
+server on this computer:
+
+- **Opt in.** The prompt has a box, **Remember this password on this computer**. It starts
+  cleared every time, and nothing is remembered unless you tick it.
+- **Kept once accepted.** The password is stored after the server accepted it (the shell is
+  open, the files are listed, the desktop is shown), never before. A password the server
+  refuses is not kept, and a remembered one that is refused is forgotten.
+- **Filed by what it opens.** It is stored per source under the protocol, the host, the port
+  and the login, not under the session. A shared file that moves a session to another host,
+  port or account finds no password, and you are asked again: a password never follows a
+  session to a server it was not typed for.
+- **First try only.** A remembered password answers the first try of a connection. If the
+  server asks again, the stored one is forgotten and you type it.
+- **Where it lives.** In the system's credential store, or in the vault once a master
+  password is set. It is never written to the shared file, the offline copy, the settings, an
+  export or the log, and the log does not say that a password is remembered.
+- **Forget.** **Forget remembered passwords** in the shared sources settings forgets the
+  passwords of one source, and the settings show how many are remembered. Taking a source out,
+  or resetting the settings to their defaults, forgets them too.
+- **Not covered.** The password of a bastion on the route is not remembered, and neither is
+  any RDP password.
 
 - A shared SFTP session asks for its password like an SSH session.
 - A VNC session asks for its password when the server wants one. The connection stays open while
@@ -175,7 +194,7 @@ its summary. The other rows concern shared sources only.
 
 ## 9. Known limits
 
-- Shared RDP passwords are not remembered (section 6).
+- Shared RDP passwords and the passwords of a bastion on the route are not remembered (section 6).
 - Network tools (ping, port scan and the other tools that can go through a gateway) route only
   through your own SSH gateways from the settings, not through the bastions a shared source
   defines. To reach hosts behind a shared bastion from a tool, define that bastion as one of

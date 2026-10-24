@@ -6133,8 +6133,29 @@ ui-share-notice-failed-random = No se pudo crear ningún token de acceso
 ui-share-listing-index-of = Índice de
 ui-share-listing-name = Nombre
 ui-share-listing-size = Tamaño (bytes)
+ui-share-listing-not-served = no se sirve: enlace de Windows o marcador de posición de la nube
+ui-share-refused-count = { $count ->
+    [one] { $count } enlace rechazado
+   *[other] { $count } enlaces rechazados
+}
+ui-share-refused-tooltip = No se sirve (enlace de Windows o marcador de posición de la nube), último: { $path }
 ui-profile-from-folder = Tomado de la carpeta "{ $folder }".
 
+ui-prompt-remember-password = Recordar esta contraseña en este equipo
+ui-shared-sources-forget-passwords = Olvidar las contraseñas recordadas
+ui-shared-sources-passwords =
+    { $count ->
+        [one] { $count } contraseña recordada en este equipo.
+       *[other] { $count } contraseñas recordadas en este equipo.
+    }
+ui-shared-sources-forget-failed-title = Algunas contraseñas recordadas no se pudieron olvidar.
+ui-shared-sources-forget-failed-body =
+    { $count ->
+        [one] { $count } contraseña recordada no se pudo eliminar del almacén de credenciales. Sigue en la lista: use Olvidar de nuevo para reintentar.
+       *[other] { $count } contraseñas recordadas no se pudieron eliminar del almacén de credenciales. Siguen en la lista: use Olvidar de nuevo para reintentar.
+    }
+ui-shared-sources-purge-unrecorded-title = Las contraseñas recordadas aún no se han olvidado.
+ui-shared-sources-purge-unrecorded-body = La eliminación de las contraseñas recordadas de las sesiones compartidas espera a la bóveda, y no se pudo escribir la nota que la haría sobrevivir a un reinicio. Se hace en cuanto se desbloquea la bóveda durante esta ejecución; de lo contrario, siguen en este equipo.
 ## Copy output, secrets masked (Ctrl+Shift+M): the review dialog, its menu entry and its status words.
 ui-masked-copy-menu = Copiar la salida, secretos enmascarados...
 ui-menu-keys-masked-copy = Ctrl+Shift+M

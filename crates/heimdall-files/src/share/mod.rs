@@ -25,7 +25,10 @@
 //!   unspecified address (every interface) is refused. HTTP is cleartext: the caller says so
 //!   before it starts.
 //! - **Files**: only `GET` and `HEAD`; a path is checked segment by segment and on disk, and
-//!   a link or junction anywhere under the root is refused (see [`paths`]).
+//!   a link, junction or other reparse point (a cloud placeholder, a deduplicated file)
+//!   anywhere under the root is refused (see [`paths`]). Unlike the C#, which followed them.
+//!   The refusal is visible: a listing shows such an entry with the reason instead of
+//!   dropping it, the 403 page states the reason, and the event carries the flag.
 //! - **Limits**: the request line, the head, the number of headers, the time to send a head
 //!   (slowloris), the time to take a chunk, and the connections at once are all bounded.
 //! - **Life**: it stops when told to or when its lifetime is over, and drops its connections.
@@ -181,6 +184,10 @@ pub struct RequestRecord {
     pub path: String,
     /// The status answered.
     pub status: u16,
+    /// Set when the request was refused because its path goes through a link (symbolic
+    /// link, junction, cloud placeholder or another reparse point): the path up to and
+    /// including the component that is the link, never what lies below it.
+    pub link_refused: Option<String>,
 }
 
 /// Why a share ended.
@@ -378,6 +385,8 @@ struct Reply {
     status: u16,
     headers: Vec<(&'static str, String)>,
     body: Body,
+    /// Set for the refusal of a link: the path up to the link, as in [`RequestRecord`].
+    link_refused: Option<String>,
 }
 
 impl Reply {
@@ -403,6 +412,31 @@ impl Reply {
                 ("Content-Length", bytes.len().to_string()),
             ],
             body: Body::Bytes(bytes),
+            link_refused: None,
+        }
+    }
+
+    /// The 403 page of a link, with the reason in the user's language; `shown` is the path
+    /// up to the link, for the log and the events.
+    fn link_refused(labels: &ListingLabels, shown: String) -> Self {
+        let page = listing::render_not_served(labels);
+        let mut reply = Self::bytes(403, "text/html; charset=utf-8", page.into_bytes());
+        reply.link_refused = Some(shown);
+        reply
+    }
+
+    /// The answer to a failed path: a link gets its own page, the rest a bare status.
+    fn refused(error: PathError, context: &Context, segments: &[String]) -> Self {
+        match error {
+            PathError::Link => {
+                let depth = paths::link_depth(&context.root, segments);
+                let shown: String = format!("/{}", segments[..depth].join("/"))
+                    .chars()
+                    .take(LOGGED_PATH_CHARS)
+                    .collect();
+                Self::link_refused(&context.labels, shown)
+            }
+            other => Self::status(other.status()),
         }
     }
 }
@@ -505,13 +539,19 @@ async fn serve(mut stream: TcpStream, peer: SocketAddr, context: &Context) {
         },
     };
     let status = reply.status;
+    let link_refused = reply.link_refused.clone();
     let head_only = method == "HEAD";
     log::info!("share: {} {method} {path} -> {status}", peer.ip());
+    if let Some(link) = &link_refused {
+        // The path up to the link only, never the query or any content.
+        log::warn!("share: link refused (not served): {link}");
+    }
     let record = ShareEvent::Request(RequestRecord {
         client: peer.ip(),
         method,
         path,
         status,
+        link_refused,
     });
     // Never waits: a full queue costs the report, counted, not the answer.
     if context.events.try_send(record).is_err() {
@@ -541,7 +581,7 @@ async fn answer(request: &Request, context: &Context) -> Reply {
     let resolved = tokio::task::spawn_blocking(move || paths::resolve(&root, &wanted)).await;
     let resolved: Resolved = match resolved {
         Ok(Ok(resolved)) => resolved,
-        Ok(Err(error)) => return Reply::status(error.status()),
+        Ok(Err(error)) => return Reply::refused(error, context, &segments),
         Err(_) => return Reply::status(500),
     };
     if resolved.metadata.is_dir() {
@@ -555,7 +595,7 @@ async fn answer(request: &Request, context: &Context) -> Reply {
         .await;
         let entries = match entries {
             Ok(Ok(entries)) => entries,
-            Ok(Err(error)) => return Reply::status(error.status()),
+            Ok(Err(error)) => return Reply::refused(error, context, &segments),
             Err(_) => return Reply::status(500),
         };
         let page = listing::render(&segments, &entries, &context.token, &context.labels);
@@ -568,7 +608,7 @@ async fn answer(request: &Request, context: &Context) -> Reply {
     let opened = tokio::task::spawn_blocking(move || paths::open_file(&root, &resolved)).await;
     let file = match opened {
         Ok(Ok(file)) => tokio::fs::File::from_std(file),
-        Ok(Err(error)) => return Reply::status(error.status()),
+        Ok(Err(error)) => return Reply::refused(error, context, &segments),
         Err(_) => return Reply::status(500),
     };
     let Ok(metadata) = file.metadata().await else {
@@ -586,6 +626,7 @@ async fn answer(request: &Request, context: &Context) -> Reply {
             ("Content-Disposition", content_disposition(name)),
         ],
         body: Body::File(file, metadata.len()),
+        link_refused: None,
     }
 }
 
