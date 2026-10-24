@@ -175,3 +175,35 @@ pub fn select<'a, Message: 'a>(
     .align_x(Alignment::Center);
     card(SELECT_WIDTH, content.into())
 }
+
+/// Width of a tab's empty-state card, as the "select a session" card it shares its look with.
+pub const TAB_EMPTY_WIDTH: f32 = SELECT_WIDTH;
+
+/// Space between a tab's empty-state hint and its action.
+const TAB_HINT_GAP: f32 = 16.0;
+
+/// The empty state of the Tunnels and Scheduled tabs, as the C# `EmptyStateStyle` card
+/// (`5b97e7b7`, the look of the Sessions card): a badge holding `icon`, the `title`, an
+/// optional `hint` (a link or a line, under the title) and the tab's primary `action`.
+#[must_use]
+pub fn tab_empty<'a, Message: 'a>(
+    icon: Icon,
+    title: String,
+    hint: Option<Element<'a, Message>>,
+    action: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let mut content = column![
+        badge(icon, false, SELECT_BADGE, SELECT_GLYPH),
+        gap(SELECT_BADGE_GAP),
+        text(title)
+            .size(font_size::SUBTITLE)
+            .font(styles::SEMIBOLD)
+            .align_x(Alignment::Center),
+    ]
+    .align_x(Alignment::Center);
+    if let Some(hint) = hint {
+        content = content.push(hint);
+    }
+    content = content.push(gap(TAB_HINT_GAP)).push(action);
+    card(TAB_EMPTY_WIDTH, content.into())
+}
