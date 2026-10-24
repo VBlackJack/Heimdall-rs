@@ -1706,6 +1706,12 @@ impl Shell {
             self.shared_report_status = None;
             return Vec::new();
         }
+        if let crate::shared_sources_view::SourcesEdit::ForgetPasswords(at) = edit {
+            return match self.shared_sources.id_at(at).map(str::to_owned) {
+                Some(source) => self.app.update(AppMessage::ForgetSharedPasswords(source)),
+                None => Vec::new(),
+            };
+        }
         // A source taken out has no report to show any more.
         let removed = match &edit {
             crate::shared_sources_view::SourcesEdit::Remove(at) => {

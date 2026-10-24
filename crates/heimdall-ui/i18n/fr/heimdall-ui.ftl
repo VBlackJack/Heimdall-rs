@@ -6152,6 +6152,21 @@ ui-share-refused-count = { $count ->
 ui-share-refused-tooltip = Non servi (lien Windows ou espace réservé cloud), dernier : { $path }
 ui-profile-from-folder = Repris du dossier "{ $folder }".
 
+ui-prompt-remember-password = Mémoriser ce mot de passe sur cet ordinateur
+ui-shared-sources-forget-passwords = Oublier les mots de passe mémorisés
+ui-shared-sources-passwords =
+    { $count ->
+        [one] { $count } mot de passe mémorisé sur cet ordinateur.
+       *[other] { $count } mots de passe mémorisés sur cet ordinateur.
+    }
+ui-shared-sources-forget-failed-title = Certains mots de passe mémorisés n'ont pas pu être oubliés.
+ui-shared-sources-forget-failed-body =
+    { $count ->
+        [one] { $count } mot de passe mémorisé n'a pas pu être supprimé du magasin d'identifiants. Il reste listé : utilisez Oublier à nouveau pour réessayer.
+       *[other] { $count } mots de passe mémorisés n'ont pas pu être supprimés du magasin d'identifiants. Ils restent listés : utilisez Oublier à nouveau pour réessayer.
+    }
+ui-shared-sources-purge-unrecorded-title = Les mots de passe mémorisés ne sont pas encore oubliés.
+ui-shared-sources-purge-unrecorded-body = La suppression des mots de passe mémorisés des sessions partagées attend le coffre, et la note qui la ferait survivre à un redémarrage n'a pas pu être écrite. Elle est faite dès que le coffre est déverrouillé pendant cette exécution ; sinon, ils restent sur cet ordinateur.
 ## Copy output, secrets masked (Ctrl+Shift+M): the review dialog, its menu entry and its status words.
 ui-masked-copy-menu = Copier la sortie, secrets masqués...
 ui-menu-keys-masked-copy = Ctrl+Shift+M

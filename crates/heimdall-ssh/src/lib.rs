@@ -66,6 +66,7 @@ pub use known_hosts::{
 };
 pub use known_hosts_export::KnownHostsExport;
 pub use options::{AgentSource, ConnectOptions, TerminalSize};
+pub use password_prompt::asks_for_the_account_password;
 pub use pins::{Carried, PinVerdict, Pins, carry_over, is_fingerprint, pin_verdict};
 pub use prompter::{
     KeyboardInteractivePrompt, KeyboardInteractiveQuestion, PassphraseQuestion, PasswordQuestion,

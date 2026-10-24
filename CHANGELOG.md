@@ -41,6 +41,9 @@ work can be followed. It is not usable yet and no official release is published.
 - `--data-dir <full path>` in every build: an alternate instance (a hand test, a demo
   profile) with its own configuration, data and saved passwords, as the C# `--data-dir`. The
   automated UI tests keep their own sandbox, the debug-only `test-data-dir` feature.
+- Shared sessions: the password of a shared SSH, SFTP or VNC session can be remembered on this
+  computer (opt in, kept once the server accepted it, filed under protocol, host, port and
+  login, forgotten when refused, forgettable per source in the settings), as the C#.
 - No official release is published until the build artifacts are signed (issue #454).
   Unsigned pre-release builds exist for personal testing only.
 
