@@ -51,6 +51,7 @@ pub fn listing_labels() -> ListingLabels {
         index_of: fl!("ui-share-listing-index-of"),
         name: fl!("ui-share-listing-name"),
         size: fl!("ui-share-listing-size"),
+        not_served: fl!("ui-share-listing-not-served"),
     }
 }
 

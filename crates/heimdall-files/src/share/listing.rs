@@ -36,6 +36,9 @@ pub struct ListingLabels {
     pub name: String,
     /// The heading of the sizes, in bytes.
     pub size: String,
+    /// Why a link is not served ("not served: Windows link or cloud placeholder"): shown
+    /// beside its name in a listing, and as the page of the 403 answer for it.
+    pub not_served: String,
 }
 
 /// An entry of a listing.
@@ -47,10 +50,16 @@ pub struct Entry {
     pub is_dir: bool,
     /// Its size in bytes; 0 for a folder.
     pub len: u64,
+    /// Whether it is a link of any kind (symbolic link, junction, cloud placeholder,
+    /// deduplicated file): shown with the reason, never linked, since a request for it is
+    /// refused. The C# server followed such links.
+    pub not_served: bool,
 }
 
-/// The entries of `dir` that can be served: links are left out, and so are names a request
-/// for them would be refused. Folders come first, then files, each by name.
+/// The entries of `dir`: those that can be served, and the links, flagged
+/// [`Entry::not_served`] so that the listing says why they cannot be fetched instead of
+/// dropping them. Names a request would refuse for their form are left out. Folders come
+/// first, then files, then the links, each by name.
 ///
 /// # Errors
 ///
@@ -65,24 +74,34 @@ pub fn read_entries(dir: &Path) -> std::io::Result<Vec<Entry>> {
         let Ok(metadata) = std::fs::symlink_metadata(item.path()) else {
             continue;
         };
-        if is_link(&metadata)
-            || !segment_allowed(&name)
-            || !(metadata.is_dir() || metadata.is_file())
-        {
+        if !segment_allowed(&name) {
             continue;
         }
-        entries.push(Entry {
-            name,
-            is_dir: metadata.is_dir(),
-            len: if metadata.is_dir() { 0 } else { metadata.len() },
-        });
+        if is_link(&metadata) {
+            entries.push(Entry {
+                name,
+                is_dir: false,
+                len: 0,
+                not_served: true,
+            });
+        } else if metadata.is_dir() || metadata.is_file() {
+            entries.push(Entry {
+                name,
+                is_dir: metadata.is_dir(),
+                len: if metadata.is_dir() { 0 } else { metadata.len() },
+                not_served: false,
+            });
+        } else {
+            continue;
+        }
         if entries.len() >= MAX_LISTING_ENTRIES {
             break;
         }
     }
     entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
+        a.not_served
+            .cmp(&b.not_served)
+            .then_with(|| b.is_dir.cmp(&a.is_dir))
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
             .then_with(|| a.name.cmp(&b.name))
     });
@@ -161,6 +180,16 @@ pub fn render(
         );
     }
     for entry in entries {
+        if entry.not_served {
+            // No link: the entry cannot be fetched, and says why.
+            let _ = writeln!(
+                page,
+                "<tr><td>{shown}</td><td>{reason}</td></tr>",
+                shown = html_escape(&entry.name),
+                reason = html_escape(&labels.not_served),
+            );
+            continue;
+        }
         let encoded = encode_segment(&entry.name);
         let (href, shown, size) = if entry.is_dir {
             (
@@ -187,6 +216,19 @@ pub fn render(
     page
 }
 
+/// The page answering a request for a link: the reason, and nothing about the target.
+#[must_use]
+pub fn render_not_served(labels: &ListingLabels) -> String {
+    let reason = html_escape(&labels.not_served);
+    format!(
+        "<!DOCTYPE html>
+<html><head><meta charset=\"utf-8\"><title>{reason}</title></head>
+         <body><h1>403</h1>
+<p>{reason}</p></body></html>
+"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +238,7 @@ mod tests {
             index_of: "Index of".to_owned(),
             name: "Name".to_owned(),
             size: "Size".to_owned(),
+            not_served: "not served: link".to_owned(),
         }
     }
 
@@ -204,7 +247,22 @@ mod tests {
             name: name.to_owned(),
             is_dir,
             len: 3,
+            not_served: false,
         }
+    }
+
+    #[test]
+    fn a_link_is_listed_with_its_reason_and_without_a_link() {
+        let mut link = entry("<b>cloud</b>", false);
+        link.not_served = true;
+        let page = render(&[], &[entry("a.txt", false), link], "tok", &labels());
+        assert!(
+            page.contains("<tr><td>&lt;b&gt;cloud&lt;/b&gt;</td><td>not served: link</td></tr>")
+        );
+        assert!(!page.contains("cloud%"), "no href for a link");
+        assert!(page.contains("href=\"/a.txt?token=tok\""));
+        let refusal = render_not_served(&labels());
+        assert!(refusal.contains("<p>not served: link</p>"));
     }
 
     #[test]
@@ -248,5 +306,23 @@ mod tests {
             .map(|e| e.name)
             .collect();
         assert_eq!(names, ["zdir", "A.txt", "b.txt"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_is_read_as_not_served_and_sorted_last() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("b.txt"), "bb").unwrap();
+        std::fs::write(dir.path().join("target"), "t").unwrap();
+        std::os::unix::fs::symlink(dir.path().join("target"), dir.path().join("a-link")).unwrap();
+        let entries = read_entries(dir.path()).unwrap();
+        let summary: Vec<(&str, bool)> = entries
+            .iter()
+            .map(|e| (e.name.as_str(), e.not_served))
+            .collect();
+        assert_eq!(
+            summary,
+            [("b.txt", false), ("target", false), ("a-link", true)]
+        );
     }
 }

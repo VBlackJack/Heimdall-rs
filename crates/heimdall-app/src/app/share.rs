@@ -77,6 +77,11 @@ pub(super) struct ShareRun {
     started: Option<(ShareInfo, Instant)>,
     /// Requests answered so far.
     requests: u64,
+    /// Requests refused because their path goes through a link (symbolic link, junction,
+    /// cloud placeholder), so that the bar can say so.
+    link_refusals: u64,
+    /// The path of the last such request, as logged: no query, no content.
+    last_link_refusal: Option<String>,
 }
 
 /// What the bar says of the share.
@@ -183,6 +188,8 @@ impl App {
             lifetime,
             started: None,
             requests: 0,
+            link_refusals: 0,
+            last_link_refusal: None,
         });
         vec![Effect::StartShare {
             run,
@@ -214,7 +221,13 @@ impl App {
                 self.share = None;
                 self.tell(Notice::Share(ShareNotice::Failed(failure)));
             }
-            Some(ShareUpdate::Event(ShareEvent::Request(_))) => current.requests += 1,
+            Some(ShareUpdate::Event(ShareEvent::Request(record))) => {
+                current.requests += 1;
+                if record.link_refused {
+                    current.link_refusals += 1;
+                    current.last_link_refusal = Some(record.path);
+                }
+            }
             Some(ShareUpdate::Event(ShareEvent::Dropped(lost))) => current.requests += lost,
             Some(ShareUpdate::Event(ShareEvent::Stopped(reason))) => {
                 self.share = None;
@@ -268,5 +281,14 @@ impl App {
     #[must_use]
     pub fn share_requests(&self) -> u64 {
         self.share.as_ref().map_or(0, |share| share.requests)
+    }
+
+    /// How many requests the running share refused because their path goes through a link,
+    /// and the path of the last one (a name only, never a query or content).
+    #[must_use]
+    pub fn share_link_refusals(&self) -> Option<(u64, &str)> {
+        let share = self.share.as_ref()?;
+        let path = share.last_link_refusal.as_deref()?;
+        Some((share.link_refusals, path))
     }
 }

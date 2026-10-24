@@ -49,11 +49,14 @@ impl Response {
     }
 }
 
+const NOT_SERVED: &str = "not served: Windows link or cloud placeholder";
+
 fn labels() -> ListingLabels {
     ListingLabels {
         index_of: "Index of".to_owned(),
         name: "Name".to_owned(),
         size: "Size".to_owned(),
+        not_served: NOT_SERVED.to_owned(),
     }
 }
 
@@ -330,10 +333,38 @@ async fn a_symlink_is_refused_and_not_listed() {
         let response = send(share.addr, &get(target, Some(token))).await;
         assert_eq!(response.status, 403, "{target}");
         assert!(!response.text().contains("secret"), "{target}");
+        assert!(response.text().contains(NOT_SERVED), "{target}");
     }
-    let listing = send(share.addr, &get("/", Some(token))).await;
-    assert!(!listing.text().contains("out"));
-    assert!(!listing.text().contains("alias"));
+    // Listed with the reason and no link, not dropped.
+    let listing = send(share.addr, &get("/", Some(token))).await.text();
+    assert!(listing.contains(&format!("<td>out</td><td>{NOT_SERVED}</td>")));
+    assert!(listing.contains(&format!("<td>alias</td><td>{NOT_SERVED}</td>")));
+    assert!(!listing.contains("href=\"/out"));
+    assert!(!listing.contains("href=\"/alias"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_refused_link_is_reported_as_such_without_the_token() {
+    let mut share = start().await;
+    std::os::unix::fs::symlink(share.root.join("hello.txt"), share.root.join("alias")).unwrap();
+    let target = format!("/alias?token={}", share.token);
+    let _ = send(share.addr, &get(&target, None)).await;
+    let _ = send(share.addr, &get("/hello.txt", Some(&share.token))).await;
+    let mut seen = Vec::new();
+    while seen.len() < 2 {
+        match share.events.recv().await {
+            Some(ShareEvent::Request(record)) => seen.push(record),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert_eq!((seen[0].path.as_str(), seen[0].status), ("/alias", 403));
+    assert!(seen[0].link_refused);
+    assert!(
+        !seen[1].link_refused,
+        "an ordinary file is not a link refusal"
+    );
+    assert!(!seen[0].path.contains(&share.token));
 }
 
 #[tokio::test]

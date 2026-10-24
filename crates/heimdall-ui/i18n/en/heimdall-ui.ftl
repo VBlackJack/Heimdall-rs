@@ -6088,6 +6088,12 @@ ui-share-notice-failed-random = No access token could be made
 ui-share-listing-index-of = Index of
 ui-share-listing-name = Name
 ui-share-listing-size = Size (bytes)
+ui-share-listing-not-served = not served: Windows link or cloud placeholder
+ui-share-refused-count = { $count ->
+    [one] { $count } link refused
+   *[other] { $count } links refused
+}
+ui-share-refused-tooltip = Not served (Windows link or cloud placeholder), last: { $path }
 ui-profile-from-folder = Taken from folder "{ $folder }".
 
 ## Copy output, secrets masked (Ctrl+Shift+M): the review dialog, its menu entry and its status words.

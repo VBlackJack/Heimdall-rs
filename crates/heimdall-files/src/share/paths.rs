@@ -33,6 +33,11 @@ pub enum PathError {
     Malformed,
     /// 403: the path leaves the folder, or goes through a link.
     Forbidden,
+    /// 403: the path goes through a link of any kind (symbolic link, junction, or another
+    /// reparse point such as a cloud placeholder or a deduplicated file). Refused as
+    /// [`Self::Forbidden`] is, but told apart so that the answer and the log can say why:
+    /// the C# server followed such links, this one never does.
+    Link,
     /// 404: nothing is there.
     NotFound,
 }
@@ -43,7 +48,7 @@ impl PathError {
     pub fn status(self) -> u16 {
         match self {
             Self::Malformed => 400,
-            Self::Forbidden => 403,
+            Self::Forbidden | Self::Link => 403,
             Self::NotFound => 404,
         }
     }
@@ -209,7 +214,7 @@ pub fn resolve(root: &Path, segments: &[String]) -> Result<Resolved, PathError> 
         current.push(segment);
         metadata = std::fs::symlink_metadata(&current).map_err(|_| PathError::NotFound)?;
         if is_link(&metadata) {
-            return Err(PathError::Forbidden);
+            return Err(PathError::Link);
         }
     }
     let canonical = std::fs::canonicalize(&current).map_err(|_| PathError::NotFound)?;
@@ -272,10 +277,12 @@ fn same_file(a: &Metadata, b: &Metadata) -> bool {
 /// link, or the file replaced, in between is refused.
 fn recheck(root: &Path, resolved: &Resolved, opened: Option<&Metadata>) -> Result<(), PathError> {
     let after = std::fs::symlink_metadata(&resolved.path).map_err(|_| PathError::NotFound)?;
-    if is_link(&after) || !same_file(&after, &resolved.metadata) {
-        return Err(PathError::Forbidden);
+    if is_link(&after) || opened.is_some_and(is_link) {
+        return Err(PathError::Link);
     }
-    if opened.is_some_and(|opened| is_link(opened) || !same_file(opened, &resolved.metadata)) {
+    if !same_file(&after, &resolved.metadata)
+        || opened.is_some_and(|opened| !same_file(opened, &resolved.metadata))
+    {
         return Err(PathError::Forbidden);
     }
     let canonical = std::fs::canonicalize(&resolved.path).map_err(|_| PathError::NotFound)?;
@@ -454,7 +461,7 @@ mod tests {
             vec!["out".to_owned()],
             vec!["alias".to_owned()],
         ] {
-            assert_eq!(resolve(&root, &path).unwrap_err(), PathError::Forbidden);
+            assert_eq!(resolve(&root, &path).unwrap_err(), PathError::Link);
         }
     }
 
@@ -470,8 +477,14 @@ mod tests {
         }
         assert_eq!(
             resolve(&root, &["out".to_owned(), "secret".to_owned()]).unwrap_err(),
-            PathError::Forbidden
+            PathError::Link
         );
+    }
+
+    #[test]
+    fn a_link_error_answers_403_like_a_forbidden_path() {
+        assert_eq!(PathError::Link.status(), 403);
+        assert_eq!(PathError::Link.status(), PathError::Forbidden.status());
     }
 
     #[test]

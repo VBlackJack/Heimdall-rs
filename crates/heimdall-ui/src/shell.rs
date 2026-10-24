@@ -6254,8 +6254,21 @@ impl Shell {
                 crate::share_view::remaining_text(remaining)
             }
         };
+        // Links are never served: say so, with the last path refused, so that a missing
+        // file is not a mystery.
+        let refused: Element<'static, Message> = match self.app.share_link_refusals() {
+            Some((count, path)) => tip(
+                text(fl!("ui-share-refused-count", count = count))
+                    .size(font_size::CAPTION)
+                    .into(),
+                fl!("ui-share-refused-tooltip", path = path.to_owned()),
+            )
+            .into(),
+            None => iced::widget::space().into(),
+        };
         Some(
             row![
+                refused,
                 tip(
                     crate::status_bar::glyph_button(
                         Icon::FolderGlyph,
