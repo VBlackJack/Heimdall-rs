@@ -108,7 +108,7 @@ impl App {
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
-        tab.attempt = attempt;
+        tab.begin_attempt(attempt);
         tab.cancel = cancel;
         tab.phase = Phase::Connecting;
         tab.desktop = None;

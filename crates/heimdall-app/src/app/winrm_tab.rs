@@ -120,7 +120,7 @@ impl App {
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
-        tab.attempt = attempt;
+        tab.begin_attempt(attempt);
         tab.cancel = cancel;
         tab.winrm_password_given = stored_password_given(request.as_ref(), attempt);
         // Read afresh: what the last attempt said is not this one's.

@@ -273,6 +273,9 @@ pub async fn open_vault(
     })
 }
 
+/// What a test credential store holds, by entry name.
+pub type MemoryEntries = Arc<Mutex<HashMap<String, Zeroizing<Vec<u8>>>>>;
+
 /// Where saved passwords go while no master password is set.
 #[derive(Clone)]
 pub enum SystemCredentials {
@@ -281,7 +284,68 @@ pub enum SystemCredentials {
     /// The system's credential store, under this application's name.
     Keyring(SystemKeyring),
     /// Kept in this process only, lost on exit: for tests.
-    Memory(Arc<Mutex<HashMap<String, Zeroizing<Vec<u8>>>>>),
+    Memory(MemoryEntries),
+    /// As [`SystemCredentials::Memory`], with switches that make reads or deletions fail, as a
+    /// credential store that refuses can: for tests.
+    MemoryFaulty {
+        /// What is held.
+        entries: MemoryEntries,
+        /// The failures asked for.
+        faults: Arc<StoreFaults>,
+    },
+}
+
+/// The failures a faulty test credential store is asked to show.
+#[derive(Debug, Default)]
+pub struct StoreFaults {
+    /// While set, a read fails.
+    pub reads: std::sync::atomic::AtomicBool,
+    /// While set, a deletion fails.
+    pub removals: std::sync::atomic::AtomicBool,
+    /// While set, a write of an entry whose name starts with it fails.
+    pub writes_under: Mutex<Option<String>>,
+    /// While set, a deletion of an entry whose name starts with it fails.
+    pub removals_under: Mutex<Option<String>>,
+}
+
+impl StoreFaults {
+    /// Makes reads fail, or work again.
+    pub fn fail_reads(&self, on: bool) {
+        self.reads.store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Makes deletions fail, or work again.
+    pub fn fail_removals(&self, on: bool) {
+        self.removals.store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Makes the writes of entries named from `prefix` fail; `None` makes them work again.
+    pub fn fail_writes_under(&self, prefix: Option<&str>) {
+        if let Ok(mut held) = self.writes_under.lock() {
+            *held = prefix.map(str::to_owned);
+        }
+    }
+
+    /// Makes the deletions of entries named from `prefix` fail; `None` makes them work again.
+    pub fn fail_removals_under(&self, prefix: Option<&str>) {
+        if let Ok(mut held) = self.removals_under.lock() {
+            *held = prefix.map(str::to_owned);
+        }
+    }
+
+    fn refuses_removal(&self, name: &str) -> bool {
+        self.removals_under.lock().is_ok_and(|held| {
+            held.as_deref()
+                .is_some_and(|prefix| name.starts_with(prefix))
+        })
+    }
+
+    fn refuses_write(&self, name: &str) -> bool {
+        self.writes_under.lock().is_ok_and(|held| {
+            held.as_deref()
+                .is_some_and(|prefix| name.starts_with(prefix))
+        })
+    }
 }
 
 impl SystemCredentials {
@@ -304,6 +368,26 @@ impl SystemCredentials {
         Self::Memory(Arc::default())
     }
 
+    /// An empty store kept in this process whose reads and deletions fail while the returned
+    /// switches are set: for tests of what happens when the store misbehaves.
+    #[must_use]
+    pub fn memory_faulty() -> (Self, Arc<StoreFaults>) {
+        let faults = Arc::new(StoreFaults::default());
+        let store = Self::MemoryFaulty {
+            entries: Arc::default(),
+            faults: Arc::clone(&faults),
+        };
+        (store, faults)
+    }
+
+    /// The map a test store keeps its entries in.
+    fn held(&self) -> Option<&MemoryEntries> {
+        match self {
+            Self::Memory(entries) | Self::MemoryFaulty { entries, .. } => Some(entries),
+            Self::Unavailable | Self::Keyring(_) => None,
+        }
+    }
+
     fn available(&self) -> bool {
         !matches!(self, Self::Unavailable)
     }
@@ -312,11 +396,16 @@ impl SystemCredentials {
         match self {
             Self::Unavailable => Ok(None),
             Self::Keyring(keyring) => keyring.get(name).map_err(|error| error.to_string()),
-            Self::Memory(entries) => Ok(entries
-                .lock()
-                .map_err(|error| error.to_string())?
-                .get(name)
-                .cloned()),
+            Self::MemoryFaulty { faults, .. }
+                if faults.reads.load(std::sync::atomic::Ordering::SeqCst) =>
+            {
+                Err("the credential store could not be read".to_owned())
+            }
+            Self::Memory(_) | Self::MemoryFaulty { .. } => Ok(self
+                .held()
+                .into_iter()
+                .filter_map(|entries| entries.lock().ok())
+                .find_map(|entries| entries.get(name).cloned())),
         }
     }
 
@@ -324,7 +413,10 @@ impl SystemCredentials {
         match self {
             Self::Unavailable => Err("no system credential store".to_owned()),
             Self::Keyring(keyring) => keyring.set(name, secret).map_err(|error| error.to_string()),
-            Self::Memory(entries) => {
+            Self::MemoryFaulty { faults, .. } if faults.refuses_write(name) => {
+                Err("the credential store refused the write".to_owned())
+            }
+            Self::Memory(entries) | Self::MemoryFaulty { entries, .. } => {
                 entries
                     .lock()
                     .map_err(|error| error.to_string())?
@@ -348,6 +440,18 @@ impl SystemCredentials {
                     .remove(name);
                 Ok(())
             }
+            Self::MemoryFaulty { entries, faults } => {
+                if faults.removals.load(std::sync::atomic::Ordering::SeqCst)
+                    || faults.refuses_removal(name)
+                {
+                    return Err("the credential store refused the deletion".to_owned());
+                }
+                entries
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .remove(name);
+                Ok(())
+            }
         }
     }
 }
@@ -358,6 +462,7 @@ impl std::fmt::Debug for SystemCredentials {
             Self::Unavailable => "SystemCredentials::Unavailable",
             Self::Keyring(_) => "SystemCredentials::Keyring",
             Self::Memory(_) => "SystemCredentials::Memory",
+            Self::MemoryFaulty { .. } => "SystemCredentials::MemoryFaulty",
         })
     }
 }
@@ -378,6 +483,8 @@ pub(super) struct VaultState {
     lock_screen: Lockout,
     /// The last vault job's ticket.
     last_ticket: u64,
+    /// The passwords of shared sessions remembered in it, and what is known of them.
+    pub(super) shared: super::shared_passwords::Remembered,
 }
 
 impl VaultState {
@@ -395,6 +502,7 @@ impl VaultState {
             refused_passphrases: HashSet::new(),
             lock_screen: Lockout::default(),
             last_ticket: 0,
+            shared: super::shared_passwords::Remembered::default(),
         }
     }
 
@@ -455,7 +563,7 @@ impl VaultState {
     }
 
     /// Whether passwords can be read and saved now.
-    fn usable(&self) -> bool {
+    pub(super) fn usable(&self) -> bool {
         if self.exists() {
             self.open.is_some()
         } else {
@@ -477,6 +585,26 @@ impl VaultState {
             .inspect_err(|error| log::warn!("a saved password could not be read: {error}"))
             .ok()
             .flatten()
+    }
+
+    /// The entry `name`, telling a failure to read (a locked vault, a failing store) from an
+    /// entry that is not there: what is then done to its index must not take a read that
+    /// failed for an index that is empty.
+    pub(super) fn read_checked(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+        if self.exists() {
+            let vault = self
+                .open
+                .as_ref()
+                .ok_or_else(|| "the vault is locked".to_owned())?;
+            return Ok(vault.get(name).map(|bytes| Zeroizing::new(bytes.to_vec())));
+        }
+        self.system.get(name)
+    }
+
+    /// The entry `name` of the system's store, whether or not a vault exists: for what is
+    /// moved into a vault being created.
+    pub(super) fn read_system(&self, name: &str) -> Option<Zeroizing<Vec<u8>>> {
+        self.system.get(name).ok().flatten()
     }
 
     /// Writes entry `name`, or removes it for `None`.
@@ -593,10 +721,19 @@ impl VaultState {
             self.remove_files();
             return Err(VaultProblem::System { detail });
         }
-        for name in moved {
+        // Last first: the entries before the indexes that list them, so that a deletion that
+        // fails leaves the listing a later clean-up follows.
+        // Once a remembered password's copy stays, the indexes that list it stay too (and
+        // the list of sources): a later clean-up follows them to the copy.
+        let mut listing_kept = false;
+        for name in moved.into_iter().rev() {
+            if listing_kept && super::shared_passwords::is_shared_password_entry(name) {
+                continue;
+            }
             // Left behind, it is only a copy the vault makes unused.
             if let Err(error) = self.system.remove(name) {
                 log::warn!("a password moved into the vault stays in the system's store: {error}");
+                listing_kept |= super::shared_passwords::is_shared_password_entry(name);
             }
         }
         self.open = Some(vault);
@@ -607,10 +744,21 @@ impl VaultState {
     /// system's store, then deletes the vault. On a failure the vault stays where passwords
     /// are, whole; trying again finishes.
     fn move_out(&mut self, vault: &Vault) -> Result<(), VaultProblem> {
+        // Copies of remembered passwords a past `move_in` could not delete: forgotten in the
+        // vault since, they must not come back to life in the system's store.
+        let stale: Vec<String> = super::shared_passwords::system_entry_names(self)
+            .into_iter()
+            .filter(|name| vault.get(name).is_none())
+            .collect();
         for name in vault.names() {
             let bytes = vault.get(name).unwrap_or_default();
             self.system
                 .set(name, bytes)
+                .map_err(|detail| VaultProblem::System { detail })?;
+        }
+        for name in &stale {
+            self.system
+                .remove(name)
                 .map_err(|detail| VaultProblem::System { detail })?;
         }
         std::fs::remove_file(&self.path).map_err(|error| VaultProblem::System {
@@ -705,7 +853,10 @@ pub fn master_password_problem(password: &str) -> Option<VaultProblem> {
 /// The profile and server a question in a tab is about, when it is the tab's own server
 /// asking for its account's password; `None` for anything else (a gateway, a passphrase, a
 /// keyboard-interactive round).
-fn asked_endpoint(profile: &TabProfile, kind: &QuestionKind) -> Option<(ProfileId, Endpoint)> {
+pub(super) fn asked_endpoint(
+    profile: &TabProfile,
+    kind: &QuestionKind,
+) -> Option<(ProfileId, Endpoint)> {
     let (id, protocol, host, port, username) = match (profile, kind) {
         (TabProfile::Ssh(profile), QuestionKind::Password(question)) => (
             &profile.id,
@@ -755,7 +906,7 @@ fn asked_endpoint(profile: &TabProfile, kind: &QuestionKind) -> Option<(ProfileI
 }
 
 /// Which try of the attempt a question is: only passwords count them.
-fn try_number(kind: &QuestionKind) -> u32 {
+pub(super) fn try_number(kind: &QuestionKind) -> u32 {
     match kind {
         QuestionKind::Password(question) => question.attempt,
         _ => 1,
@@ -1050,7 +1201,7 @@ impl App {
     /// passphrase, a Citrix profile's cache launch line. The system's store cannot be listed.
     fn password_entries(&self) -> Vec<String> {
         let store = &self.store;
-        store
+        let mut names: Vec<String> = store
             .ssh_profiles()
             .iter()
             .map(|profile| &profile.id)
@@ -1065,7 +1216,9 @@ impl App {
                     .iter()
                     .map(|profile| citrix_launch_entry(&profile.id)),
             )
-            .collect()
+            .collect();
+        names.extend(self.shared_password_entries());
+        names
     }
 
     /// Closes the vault: its saved passwords leave memory, and nothing is answered from it.
@@ -1119,6 +1272,9 @@ impl App {
         if let QuestionKind::Passphrase(question) = kind {
             let owner = self.key_owner(tab_id, &question.key_path)?;
             return self.saved_passphrase(&owner, &question.key_path, question.attempt);
+        }
+        if let Some(answer) = self.shared_stored_answer(tab_id, kind) {
+            return Some(answer);
         }
         let tab = self.tab(tab_id)?;
         let (profile, endpoint) = usable_endpoint(tab, kind).or_else(|| {

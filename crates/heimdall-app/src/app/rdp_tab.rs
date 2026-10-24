@@ -364,7 +364,7 @@ impl App {
         tab.profile = TabProfile::Rdp(profile.clone());
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
-        tab.attempt = attempt;
+        tab.begin_attempt(attempt);
         tab.cancel = cancel.clone();
         tab.phase = Phase::Connecting;
         tab.rdp_step = None;

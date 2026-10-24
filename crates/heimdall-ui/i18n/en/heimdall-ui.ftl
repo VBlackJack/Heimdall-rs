@@ -6090,6 +6090,21 @@ ui-share-listing-name = Name
 ui-share-listing-size = Size (bytes)
 ui-profile-from-folder = Taken from folder "{ $folder }".
 
+ui-prompt-remember-password = Remember this password on this computer
+ui-shared-sources-forget-passwords = Forget remembered passwords
+ui-shared-sources-passwords =
+    { $count ->
+        [one] { $count } password remembered on this computer.
+       *[other] { $count } passwords remembered on this computer.
+    }
+ui-shared-sources-forget-failed-title = Some remembered passwords could not be forgotten.
+ui-shared-sources-forget-failed-body =
+    { $count ->
+        [one] { $count } remembered password could not be deleted from the credential store. It stays listed: use Forget again to retry.
+       *[other] { $count } remembered passwords could not be deleted from the credential store. They stay listed: use Forget again to retry.
+    }
+ui-shared-sources-purge-unrecorded-title = The remembered passwords are not forgotten yet.
+ui-shared-sources-purge-unrecorded-body = Deleting the remembered passwords of shared sessions waits for the vault, and the note that would carry it over a restart could not be written. It is done once the vault is unlocked in this run; otherwise they stay on this computer.
 ## Copy output, secrets masked (Ctrl+Shift+M): the review dialog, its menu entry and its status words.
 ui-masked-copy-menu = Copy output, secrets masked...
 ui-menu-keys-masked-copy = Ctrl+Shift+M
