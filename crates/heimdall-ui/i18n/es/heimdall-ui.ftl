@@ -6133,6 +6133,12 @@ ui-share-notice-failed-random = No se pudo crear ningún token de acceso
 ui-share-listing-index-of = Índice de
 ui-share-listing-name = Nombre
 ui-share-listing-size = Tamaño (bytes)
+ui-share-listing-not-served = no se sirve: enlace de Windows o marcador de posición de la nube
+ui-share-refused-count = { $count ->
+    [one] { $count } enlace rechazado
+   *[other] { $count } enlaces rechazados
+}
+ui-share-refused-tooltip = No se sirve (enlace de Windows o marcador de posición de la nube), último: { $path }
 ui-profile-from-folder = Tomado de la carpeta "{ $folder }".
 
 ui-prompt-remember-password = Recordar esta contraseña en este equipo
