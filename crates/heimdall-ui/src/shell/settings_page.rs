@@ -62,8 +62,8 @@ use crate::icons::{self, Icon, Tint};
 use crate::mobaxterm_variables_view::VariablesEdit;
 use crate::search_keys::SearchKeys;
 use crate::settings_rows::{
-    Applies, ApplyGlyph, PostureKey, PostureLine, PostureState, SettingRow, SettingsCard,
-    SettingsSection, posture,
+    Applies, PostureKey, PostureLine, PostureState, SettingRow, SettingsCard, SettingsSection,
+    posture,
 };
 use crate::styles;
 use crate::themes::{AccentChoice, ThemeChoice};
@@ -132,7 +132,8 @@ const RAIL_LEGEND_PADDING: iced::Padding = iced::Padding {
     left: spacing::MD,
 };
 
-/// Side of the glyph beside a card's title, as the C# `SettingsApplyGlyphStyle`.
+/// Side of the glyph beside a setting read when a session opens, as the C#
+/// `SettingsApplyGlyphStyle`.
 const APPLY_GLYPH_SIDE: f32 = 14.0;
 
 /// Width of the outline of the row a "Go to setting" showed.
@@ -255,30 +256,19 @@ fn scrolled(body: Column<'_, Message>) -> Element<'_, Message> {
     .into()
 }
 
-/// The glyph that stands for `glyph` beside a card's title and in the rail's legend.
-const fn apply_icon(glyph: ApplyGlyph) -> Icon {
-    match glyph {
-        ApplyGlyph::Immediate => Icon::Lightning,
-        ApplyGlyph::SavedAtOnce => Icon::Disk,
-        ApplyGlyph::NextConnection => Icon::NewWindow,
-    }
-}
-
-/// What a card that `applies` says of when its settings take effect: the glyph's tooltip.
+/// What a setting that `applies` says of when it takes effect: the glyph's tooltip.
 fn applies_text(applies: Applies) -> String {
     match applies {
-        Applies::Immediately => fl!("ui-settings-applies-immediately"),
-        Applies::SavedAtOnce => fl!("ui-settings-saved-immediately"),
         Applies::NewConnections => fl!("ui-settings-applies-new-connections"),
         Applies::NewSessions => fl!("ui-settings-applies-new-sessions"),
     }
 }
 
-/// The glyph of `applies`, in the accent, its text in a tooltip, as the C# glyph beside a card's
-/// title.
+/// The glyph beside a setting read when a session or connection opens, in the accent, its text
+/// in a tooltip. iced exposes no text for a screen reader, so the tooltip is all there is.
 fn applies_glyph<'a>(applies: Applies) -> Element<'a, Message> {
     styles::tip(
-        icons::icon(apply_icon(applies.glyph()), Tint::Accent, APPLY_GLYPH_SIDE),
+        icons::icon(Icon::NewWindow, Tint::Accent, APPLY_GLYPH_SIDE),
         text(applies_text(applies)).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
@@ -287,24 +277,27 @@ fn applies_glyph<'a>(applies: Applies) -> Element<'a, Message> {
     .into()
 }
 
-/// The three glyphs and what each says, once, as the C# legend at the foot of its rail.
+/// What the glyph means, once, at the foot of the rail, under a line that says every setting
+/// applies as it is changed.
 fn apply_legend<'a>() -> Element<'a, Message> {
-    let mut legend = Column::new().spacing(spacing::XS);
-    for glyph in ApplyGlyph::ALL {
-        legend = legend.push(
+    container(
+        column![
+            text(fl!("ui-settings-applies-as-changed"))
+                .size(font_size::CAPTION)
+                .style(text::secondary),
             row![
-                icons::icon(apply_icon(glyph), Tint::Accent, APPLY_GLYPH_SIDE),
-                text(applies_text(glyph.applies()))
+                icons::icon(Icon::NewWindow, Tint::Accent, APPLY_GLYPH_SIDE),
+                text(applies_text(Applies::NewConnections))
                     .size(font_size::CAPTION)
                     .style(text::secondary),
             ]
             .spacing(spacing::SM),
-        );
-    }
-    container(legend)
-        .padding(RAIL_LEGEND_PADDING)
-        .width(RAIL_WIDTH)
-        .into()
+        ]
+        .spacing(spacing::XS)
+        .width(RAIL_WIDTH),
+    )
+    .padding(RAIL_LEGEND_PADDING)
+    .into()
 }
 
 /// The rail down the left, as the C# `SettingsRailTabControlStyle` of the single rail: every
@@ -356,7 +349,8 @@ fn section_rail<'a>(open: SettingsSection) -> Element<'a, Message> {
         }
     }
     column![
-        styles::scroll(rail.padding(RAIL_PADDING))
+        // The padding is a wrapper's: the names keep the whole of RAIL_WIDTH.
+        styles::scroll(container(rail).padding(RAIL_PADDING))
             .id(rail_scroll_id())
             .height(Length::Fill),
         apply_legend(),
@@ -1166,17 +1160,12 @@ impl Shell {
             body = body.push(unreadable);
         }
         // Its heading semi-bold at its top, as the C# card's section title.
-        // and, beside it, the glyph that says when its settings take effect.
         let mut shown = Column::new().spacing(spacing::MD);
         if let Some(heading) = card_heading(card) {
-            let title = text(heading)
-                .size(font_size::SUBTITLE)
-                .font(styles::SEMIBOLD);
             shown = shown.push(
-                row![title]
-                    .push(card.applies().map(applies_glyph))
-                    .spacing(spacing::SM)
-                    .align_y(iced::Alignment::Center),
+                text(heading)
+                    .size(font_size::SUBTITLE)
+                    .font(styles::SEMIBOLD),
             );
         }
         let shown = shown.push(body);
@@ -1194,7 +1183,15 @@ impl Shell {
     /// `row`, with its "Modified" marker when its value is not the default, outlined when a
     /// "Go to setting" showed it.
     fn setting_row(&self, row: SettingRow) -> Element<'_, Message> {
-        let mut shown = column![self.row_body(row)].spacing(spacing::SM);
+        // The glyph beside a setting read when a session opens, as the C# one beside a title.
+        let body: Element<'_, Message> = match row.applies() {
+            Some(applies) => iced::widget::row![self.row_body(row), applies_glyph(applies)]
+                .spacing(spacing::SM)
+                .align_y(iced::Alignment::Start)
+                .into(),
+            None => self.row_body(row),
+        };
+        let mut shown = column![body].spacing(spacing::SM);
         if row.is_modified(self.app.settings()) {
             shown = shown.push(self.marker(row));
         }
@@ -2354,7 +2351,7 @@ impl Shell {
 
     /// The rail scrolled to the name of the open section's group, so the section is in sight
     /// after a jump on a window too short to show the whole rail.
-    fn rail_in_sight(&self) -> Task<Message> {
+    pub(super) fn rail_in_sight(&self) -> Task<Message> {
         operation::scroll_to(
             rail_scroll_id(),
             AbsoluteOffset {
@@ -2366,12 +2363,15 @@ impl Shell {
 
     /// `key`, when it is Up or Down while the rail has the keyboard, over the Settings page
     /// with no search, dialog, menu, tour or gate: the section above or below opened, across
-    /// the groups' names and cycling round as the C# rail's `DirectionalNavigation="Cycle"`.
+    /// the groups' names and cycling round as the C# rail's `DirectionalNavigation="Cycle"`;
+    /// Home and End open the first and the last.
     /// The task that shows it, when the key was the rail's.
     pub(super) fn settings_rail_key(&mut self, key: FilesKey) -> Option<Task<Message>> {
-        let step = match key {
-            FilesKey::Previous => -1,
-            FilesKey::Next => 1,
+        let target = match key {
+            FilesKey::Previous => self.settings_section.moved(-1),
+            FilesKey::Next => self.settings_section.moved(1),
+            FilesKey::First => SettingsSection::ALL[0],
+            FilesKey::Last => SettingsSection::ALL[SettingsSection::ALL.len() - 1],
             _ => return None,
         };
         if !self.settings_rail_focused
@@ -2384,7 +2384,7 @@ impl Shell {
         {
             return None;
         }
-        self.settings_section = self.settings_section.moved(step);
+        self.settings_section = target;
         self.settings_highlight = None;
         // A section opens at its top.
         Some(Task::batch([
@@ -2454,32 +2454,12 @@ mod tests {
 
     #[test]
     fn each_way_of_applying_has_its_own_text() {
-        let texts = [
-            Applies::Immediately,
-            Applies::SavedAtOnce,
-            Applies::NewConnections,
-            Applies::NewSessions,
-        ]
-        .map(applies_text);
+        let texts = [Applies::NewConnections, Applies::NewSessions].map(applies_text);
         for (index, said) in texts.iter().enumerate() {
             assert!(!said.is_empty());
             assert!(!texts[..index].contains(said), "{said} twice");
         }
-    }
-
-    #[test]
-    fn the_glyphs_are_three_distinct_icons_and_the_legend_text_is_the_card_text() {
-        let icons = ApplyGlyph::ALL.map(apply_icon);
-        assert_eq!(icons, [Icon::Lightning, Icon::Disk, Icon::NewWindow]);
-        // A card that applies to sessions shows the legend's glyph, with its own words.
-        assert_eq!(
-            apply_icon(Applies::NewSessions.glyph()),
-            apply_icon(ApplyGlyph::NextConnection)
-        );
-        assert_ne!(
-            applies_text(Applies::NewSessions),
-            applies_text(ApplyGlyph::NextConnection.applies())
-        );
+        assert!(!fl!("ui-settings-applies-as-changed").is_empty());
     }
 
     #[test]

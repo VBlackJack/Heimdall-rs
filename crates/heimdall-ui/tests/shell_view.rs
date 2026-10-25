@@ -2354,8 +2354,10 @@ fn the_settings_page_has_the_terminal_appearance_section() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(
-        heimdall_ui::shell::SettingsTab::Terminal,
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(
+            heimdall_ui::shell::SettingsTab::Terminal,
+        ),
     ));
     snapshot(&shell, "settings-terminal.png");
     let mut ui = simulator(&shell);
@@ -2433,8 +2435,10 @@ fn the_settings_page_turns_session_logging_on_and_applies_its_folder_with_enter(
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(
-        heimdall_ui::shell::SettingsTab::Terminal,
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(
+            heimdall_ui::shell::SettingsTab::Terminal,
+        ),
     ));
     {
         let mut ui = tall_settings(&shell);
@@ -2623,8 +2627,10 @@ fn the_font_size_set_starts_new_terminals_and_ctrl_0_comes_back_to_it() {
     let (mut shell, tab, _) = connected_shell(dir.path());
     let same = |a: f32, b: f32| (a - b).abs() < f32::EPSILON;
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(
-        heimdall_ui::shell::SettingsTab::Terminal,
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(
+            heimdall_ui::shell::SettingsTab::Terminal,
+        ),
     ));
     for (typed, refused) in [("7", true), ("big", true), ("73", true), (" 20 ", false)] {
         let _ = shell.update(Message::FontSizeEdited(typed.to_owned()));
@@ -2680,8 +2686,10 @@ fn the_font_family_chosen_draws_every_terminal_and_one_missing_falls_back_visibl
         )
     );
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(
-        heimdall_ui::shell::SettingsTab::Terminal,
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(
+            heimdall_ui::shell::SettingsTab::Terminal,
+        ),
     ));
     {
         let mut ui = simulator(&shell);
@@ -3812,7 +3820,9 @@ fn the_settings_page_has_one_rail_under_the_csharp_group_names_and_keeps_the_sec
             Message::SettingsSection(SettingsSection::Appearance)
         )));
     }
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Security),
+    ));
     let _ = shell.update(Message::ShowSettings);
     let mut ui = simulator(&shell);
     ui.find("Security overview")
@@ -3829,7 +3839,9 @@ fn the_rdp_tab_sets_the_global_rdp_defaults_as_the_csharp_settings() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Rdp));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Rdp),
+    ));
     let mut ui = simulator(&shell);
     for said in [
         "RDP Defaults",
@@ -5216,7 +5228,9 @@ fn transcript_retention_is_typed_under_the_transcripts_folder_within_the_csharp_
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Terminal));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Terminal),
+    ));
     let refusal = "Transcript retention must be 0 (keep all) or between 7 and 3650 days.";
     {
         let mut ui = tall_settings(&shell);

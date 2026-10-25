@@ -37,9 +37,9 @@ use iced::{Settings, Size};
 
 /// A window tall enough for the whole Settings page, as wide as the application's first one:
 /// the lists' columns fit beside the section rail.
-const WINDOW: Size = Size::new(1400.0, 2400.0);
+const WINDOW: Size = Size::new(1100.0, 2400.0);
 /// A window tall enough for the whole SSH tab, the FTPS certificates at its end.
-const TALL_WINDOW: Size = Size::new(1400.0, 3200.0);
+const TALL_WINDOW: Size = Size::new(1100.0, 3200.0);
 const ED25519: &str =
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEdv/0kqpfKUkuXCpQIlyU34zlRbf2MM2wBP+uTTnDTR";
 const PIN: &str = "SHA256:rgJ0Y04RcqyBpgUaWIbkDqk3bEPjR9jNUxyEc7cvFq0";

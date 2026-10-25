@@ -156,13 +156,13 @@ impl SettingsCard {
             | Self::Sftp
             | Self::X11
             | Self::ExternalEditor
-            | Self::SshTrusted => SettingsTab::Ssh,
+            | Self::SshTrusted
+            | Self::Gateways => SettingsTab::Ssh,
             Self::RdpDefaults
             | Self::RdpSession
             | Self::RdpPresets
             | Self::RdpReset
             | Self::RdpTrusted => SettingsTab::Rdp,
-            Self::Gateways => SettingsTab::Gateways,
             Self::Pin | Self::Vault | Self::Provider | Self::ConnectionChecks => {
                 SettingsTab::Security
             }
@@ -209,70 +209,35 @@ impl SettingsCard {
             Self::RdpReset => return None,
         })
     }
-
-    /// When what it holds takes effect, as the C# glyph beside the card's title; none for a
-    /// card the C# marks nothing on, and for one that has no title of its own to carry it.
-    #[must_use]
-    pub fn applies(self) -> Option<Applies> {
-        match self {
-            Self::Appearance => Some(Applies::Immediately),
-            Self::SessionTree => Some(Applies::SavedAtOnce),
-            Self::Terminal => Some(Applies::NewSessions),
-            Self::SshReconnect | Self::SshSession | Self::RdpDefaults => {
-                Some(Applies::NewConnections)
-            }
-            _ => None,
-        }
-    }
 }
 
-/// When a card's settings take effect, as the C# glyphs beside a card's title.
+/// When a setting takes effect, if not as soon as it is changed. Every setting applies and is
+/// saved as it is changed; these few are read when a session or connection is opened, so the
+/// ones already open keep the old value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Applies {
-    /// At once, in the window shown.
-    Immediately,
-    /// Written at once; nothing else changes with it.
-    SavedAtOnce,
     /// On the connections opened after the change.
     NewConnections,
     /// On the sessions opened after the change.
     NewSessions,
 }
 
-impl Applies {
-    /// The glyph that stands for it: sessions and connections share the new window.
+impl SettingRow {
+    /// Whether it is read when a session or connection opens, checked in the code that reads
+    /// it: the `PowerShell` policy when a local shell starts, the agent preference, the SSH
+    /// keep-alive and the `PuTTY` path when a connection or launch is made, the RDP logon
+    /// timeout and keep-alive when an RDP session opens. Everything else, the auto-reconnect
+    /// attempts and delays, the terminal's font, size, keys and colours, applies at once.
     #[must_use]
-    pub const fn glyph(self) -> ApplyGlyph {
+    pub fn applies(self) -> Option<Applies> {
         match self {
-            Self::Immediately => ApplyGlyph::Immediate,
-            Self::SavedAtOnce => ApplyGlyph::SavedAtOnce,
-            Self::NewConnections | Self::NewSessions => ApplyGlyph::NextConnection,
-        }
-    }
-}
-
-/// The glyphs of [`Applies`], each explained once at the foot of the rail.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApplyGlyph {
-    /// A lightning bolt: applies at once.
-    Immediate,
-    /// A disk: saved at once.
-    SavedAtOnce,
-    /// A new window: applies to what is opened next.
-    NextConnection,
-}
-
-impl ApplyGlyph {
-    /// Every glyph, in the legend's order.
-    pub const ALL: [Self; 3] = [Self::Immediate, Self::SavedAtOnce, Self::NextConnection];
-
-    /// What the legend says of it: the text its connections' cards carry.
-    #[must_use]
-    pub const fn applies(self) -> Applies {
-        match self {
-            Self::Immediate => Applies::Immediately,
-            Self::SavedAtOnce => Applies::SavedAtOnce,
-            Self::NextConnection => Applies::NewConnections,
+            Self::PowerShellPolicy => Some(Applies::NewSessions),
+            Self::SshAgentPreference
+            | Self::KeepAlive
+            | Self::PuttyPath
+            | Self::RdpConnectTimeout
+            | Self::RdpKeepAlive => Some(Applies::NewConnections),
+            _ => None,
         }
     }
 }
@@ -339,10 +304,10 @@ impl SettingsSection {
         Self::SshSession,
         Self::SftpX11,
         Self::SshHostKeys,
+        Self::Gateways,
         Self::RdpDisplay,
         Self::RdpBehavior,
         Self::RdpCertificates,
-        Self::Gateways,
         Self::Overview,
         Self::Vault,
         Self::Provider,
@@ -361,11 +326,12 @@ impl SettingsSection {
             | Self::Tools
             | Self::Onboarding => SettingsTab::General,
             Self::Terminal => SettingsTab::Terminal,
-            Self::SshConnection | Self::SshSession | Self::SftpX11 | Self::SshHostKeys => {
-                SettingsTab::Ssh
-            }
+            Self::SshConnection
+            | Self::SshSession
+            | Self::SftpX11
+            | Self::SshHostKeys
+            | Self::Gateways => SettingsTab::Ssh,
             Self::RdpDisplay | Self::RdpBehavior | Self::RdpCertificates => SettingsTab::Rdp,
-            Self::Gateways => SettingsTab::Gateways,
             Self::Overview | Self::Vault | Self::Provider | Self::ConnectionChecks => {
                 SettingsTab::Security
             }
@@ -1466,7 +1432,14 @@ mod tests {
         );
         assert_eq!(
             SettingsSection::of_tab(SettingsTab::Ssh),
-            [S::SshConnection, S::SshSession, S::SftpX11, S::SshHostKeys]
+            [
+                S::SshConnection,
+                S::SshSession,
+                S::SftpX11,
+                S::SshHostKeys,
+                S::Gateways
+            ],
+            "the gateways close the SSH group, as the C#"
         );
         assert_eq!(
             SettingsSection::of_tab(SettingsTab::Rdp),
@@ -1476,14 +1449,10 @@ mod tests {
             SettingsSection::of_tab(SettingsTab::Security),
             [S::Overview, S::Vault, S::Provider, S::ConnectionChecks]
         );
-        // One section each, as the C# Terminal and the gateways.
+        // One section, as the C# Terminal.
         assert_eq!(
             SettingsSection::of_tab(SettingsTab::Terminal),
             [S::Terminal]
-        );
-        assert_eq!(
-            SettingsSection::of_tab(SettingsTab::Gateways),
-            [S::Gateways]
         );
         assert_eq!(
             SettingsSection::first_of(SettingsTab::Ssh),
@@ -1498,7 +1467,8 @@ mod tests {
         // them being a heading and no stop.
         assert_eq!(S::Onboarding.moved(1), S::Terminal);
         assert_eq!(S::Terminal.moved(1), S::SshConnection);
-        assert_eq!(S::SshHostKeys.moved(1), S::RdpDisplay);
+        assert_eq!(S::SshHostKeys.moved(1), S::Gateways);
+        assert_eq!(S::Gateways.moved(1), S::RdpDisplay);
         assert_eq!(S::SshConnection.moved(-1), S::Terminal);
         // Round the ends.
         assert_eq!(S::ConnectionChecks.moved(1), S::Appearance);
@@ -1515,43 +1485,37 @@ mod tests {
     }
 
     #[test]
-    fn a_card_that_says_when_it_applies_has_a_title_to_carry_the_glyph() {
-        // The titles drawn by the Settings page itself; the cards that have none say nothing.
-        let titled = [
-            SettingsCard::Appearance,
-            SettingsCard::SessionTree,
-            SettingsCard::Terminal,
-            SettingsCard::SshReconnect,
-            SettingsCard::SshSession,
-            SettingsCard::RdpDefaults,
-        ];
-        for card in SettingsCard::ALL {
-            assert_eq!(card.applies().is_some(), titled.contains(&card), "{card:?}");
+    fn only_the_rows_read_when_a_session_opens_carry_the_glyph() {
+        let carrying: Vec<(SettingRow, Applies)> = SettingRow::ALL
+            .into_iter()
+            .filter_map(|row| row.applies().map(|applies| (row, applies)))
+            .collect();
+        assert_eq!(
+            carrying,
+            [
+                (SettingRow::PowerShellPolicy, Applies::NewSessions),
+                (SettingRow::SshAgentPreference, Applies::NewConnections),
+                (SettingRow::KeepAlive, Applies::NewConnections),
+                (SettingRow::PuttyPath, Applies::NewConnections),
+                (SettingRow::RdpConnectTimeout, Applies::NewConnections),
+                (SettingRow::RdpKeepAlive, Applies::NewConnections),
+            ]
+        );
+        // What is read while it runs applies at once: no glyph.
+        for row in [
+            SettingRow::SshAutoReconnect,
+            SettingRow::SshAutoReconnectAttempts,
+            SettingRow::TmoutReset,
+            SettingRow::AntiIdle,
+            SettingRow::FontSize,
+            SettingRow::FontFamily,
+            SettingRow::ColorScheme,
+            SettingRow::CtrlVPaste,
+            SettingRow::CtrlKTerminal,
+            SettingRow::RdpAutoReconnectAttempts,
+        ] {
+            assert_eq!(row.applies(), None, "{row:?}");
         }
-        assert_eq!(
-            SettingsCard::Appearance.applies(),
-            Some(Applies::Immediately)
-        );
-        assert_eq!(
-            SettingsCard::SessionTree.applies(),
-            Some(Applies::SavedAtOnce)
-        );
-        assert_eq!(SettingsCard::Terminal.applies(), Some(Applies::NewSessions));
-    }
-
-    #[test]
-    fn each_glyph_stands_for_one_text_and_the_legend_has_all_three() {
-        assert_eq!(ApplyGlyph::ALL.len(), 3);
-        for glyph in ApplyGlyph::ALL {
-            // The legend says what its glyph says on the cards.
-            assert_eq!(glyph.applies().glyph(), glyph);
-        }
-        // Sessions and connections opened after the change share the new window.
-        assert_eq!(
-            Applies::NewSessions.glyph(),
-            Applies::NewConnections.glyph()
-        );
-        assert_ne!(Applies::Immediately.glyph(), Applies::SavedAtOnce.glyph());
     }
 
     #[test]

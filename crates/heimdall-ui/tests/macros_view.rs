@@ -68,7 +68,9 @@ fn shell(dir: &Path) -> Shell {
         system_credentials: SystemCredentials::memory(),
     }));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Terminal));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Terminal),
+    ));
     shell
 }
 

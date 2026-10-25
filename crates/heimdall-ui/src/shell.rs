@@ -871,8 +871,6 @@ pub enum Message {
     FocusBulkPasswordField(usize),
     /// Hand the password typed twice in the bulk password dialog to the core.
     SubmitBulkPassword,
-    /// Open the first section of this group of the Settings rail.
-    SettingsTab(SettingsTab),
     /// Open this section of the Settings rail.
     SettingsSection(SettingsSection),
     /// Show this tab of the profile form.
@@ -1257,7 +1255,6 @@ impl fmt::Debug for Message {
             Self::BulkPasswordField { index, .. } => write!(f, "BulkPasswordField({index}, ..)"),
             Self::FocusBulkPasswordField(index) => write!(f, "FocusBulkPasswordField({index})"),
             Self::SubmitBulkPassword => f.write_str("SubmitBulkPassword"),
-            Self::SettingsTab(tab) => write!(f, "SettingsTab({tab:?})"),
             Self::SettingsSection(section) => write!(f, "SettingsSection({section:?})"),
             Self::ProfileTab(tab) => write!(f, "ProfileTab({tab:?})"),
             Self::RefreshMonitors => f.write_str("RefreshMonitors"),
@@ -1573,8 +1570,7 @@ fn config() -> AppConfig {
     }
 }
 
-/// The window's state.
-/// A tab of the Settings page, as the C# Settings tabs group them.
+/// A group of the Settings rail, as the C# Settings tabs group them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SettingsTab {
     /// The language.
@@ -1587,20 +1583,17 @@ pub enum SettingsTab {
     Ssh,
     /// The trusted RDP certificates.
     Rdp,
-    /// The SSH gateways and what goes through each.
-    Gateways,
     /// The PIN, the master password and the external credential provider.
     Security,
 }
 
 impl SettingsTab {
     /// Every tab, in the C# order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 5] = [
         Self::General,
         Self::Terminal,
         Self::Ssh,
         Self::Rdp,
-        Self::Gateways,
         Self::Security,
     ];
 
@@ -1610,12 +1603,12 @@ impl SettingsTab {
             Self::Terminal => fl!("ui-settings-tab-terminal"),
             Self::Ssh => fl!("ui-settings-tab-ssh"),
             Self::Rdp => fl!("ui-settings-tab-rdp"),
-            Self::Gateways => fl!("ui-settings-tab-gateways"),
             Self::Security => fl!("ui-settings-tab-security"),
         }
     }
 }
 
+/// The window's state.
 #[expect(
     clippy::struct_excessive_bools,
     reason = "the window's independent states: focus, panels, drags"
@@ -2977,7 +2970,6 @@ impl Shell {
             | Message::FocusVaultField(_)
             | Message::ProviderUnlock(_)
             | Message::Search(_)
-            | Message::SettingsTab(_)
             | Message::SettingsSection(_)
             | Message::ProfileTab(_)
             | Message::ProfilePassword(_)
@@ -3390,13 +3382,6 @@ impl Shell {
             }
             Message::FocusVaultField(index) => return operation::focus(vault_field_id(index)),
             Message::Search(term) => self.search = term,
-            Message::SettingsTab(tab) => {
-                self.settings_section = SettingsSection::first_of(tab);
-                self.settings_rail_focused = false;
-                // A section chosen is shown whole: the search, and the row outlined, give way.
-                self.settings_search.clear();
-                self.settings_highlight = None;
-            }
             Message::SettingsSection(section) => {
                 self.settings_section = section;
                 // A click on the rail gives it the keyboard; the press before it took it
@@ -3462,6 +3447,33 @@ impl Shell {
         Task::none()
     }
 
+    /// The Settings page shown over the tab in view, its trusted keys and the vault's Windows
+    /// Hello status read again, the rail at the open section's group, as it was left.
+    fn show_settings(&mut self) -> Task<Message> {
+        self.menu = None;
+        self.page = Page::Settings {
+            over: self.shown_tab_id(),
+        };
+        // The trusted keys as they are now: another program may have changed them.
+        let _ = self
+            .app
+            .update(AppMessage::Settings(SettingsMessage::TrustedKeys(
+                TrustedKeysMessage::Refresh,
+            )));
+        // Whether Windows Hello can unlock the vault, asked again as the C# settings ask it
+        // when they load.
+        let effects = self
+            .app
+            .update(AppMessage::VaultHello(VaultHelloMessage::Refresh));
+        let rail = self.rail_in_sight();
+        Task::batch(
+            effects
+                .into_iter()
+                .map(|effect| self.run(effect))
+                .chain([rail]),
+        )
+    }
+
     /// Applies a message about what the window shows: the settings, full screen, how a
     /// desktop is drawn.
     fn view_message(&mut self, message: &Message) -> Task<Message> {
@@ -3511,7 +3523,10 @@ impl Shell {
             }
             Message::ManageGateways => {
                 self.settings_section = SettingsSection::Gateways;
-                self.view_message(&Message::ShowSettings)
+                Task::batch([
+                    self.view_message(&Message::ShowSettings),
+                    self.rail_in_sight(),
+                ])
             }
             Message::Navigate(destination) => {
                 self.menu = None;
@@ -3525,24 +3540,7 @@ impl Shell {
                 }
                 Task::none()
             }
-            Message::ShowSettings => {
-                self.menu = None;
-                self.page = Page::Settings {
-                    over: self.shown_tab_id(),
-                };
-                // The trusted keys as they are now: another program may have changed them.
-                let _ = self
-                    .app
-                    .update(AppMessage::Settings(SettingsMessage::TrustedKeys(
-                        TrustedKeysMessage::Refresh,
-                    )));
-                // Whether Windows Hello can unlock the vault, asked again as the C# settings
-                // ask it when they load.
-                let effects = self
-                    .app
-                    .update(AppMessage::VaultHello(VaultHelloMessage::Refresh));
-                Task::batch(effects.into_iter().map(|effect| self.run(effect)))
-            }
+            Message::ShowSettings => self.show_settings(),
             Message::LanguageChosen(language) => {
                 crate::i18n::apply(Some(*language));
                 let _ = self

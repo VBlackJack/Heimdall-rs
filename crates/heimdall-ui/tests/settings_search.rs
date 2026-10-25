@@ -264,7 +264,9 @@ fn nothing_found_is_said_and_clearing_or_a_tab_shows_the_page_again() {
     }
     // A tab chosen while searching is shown whole.
     let _ = shell.update(Message::SettingsSearch("dracula".to_owned()));
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Terminal));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Terminal),
+    ));
     let mut ui = simulator(&shell);
     for said in ["Terminal Appearance", "Session Logging", "Font size"] {
         ui.find(said).expect(said);
@@ -365,7 +367,9 @@ fn a_marker_shows_on_exactly_the_settings_off_their_default() {
         let mut ui = simulator(&shell);
         assert!(ui.find("Modified").is_err(), "none on the General tab");
     }
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Terminal));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Terminal),
+    ));
     {
         let mut ui = simulator(&shell);
         ui.find("Modified").expect("the colour scheme's");
@@ -423,7 +427,9 @@ fn a_number_is_applied_once_typed_in_its_range_without_enter() {
     assert_eq!(shell.app().settings().ssh_keep_alive_interval, 60);
 
     // The terminals' font size the same way.
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Terminal));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Terminal),
+    ));
     let _ = shell.update(Message::FontSizeEdited("7".to_owned()));
     assert_eq!(
         shell.app().settings().terminal_font_size,
@@ -567,7 +573,9 @@ fn the_security_overview_reflects_the_settings_and_leads_to_them() {
     let _english = english();
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Security),
+    ));
     {
         let mut ui = simulator(&shell);
         for said in [
@@ -710,7 +718,9 @@ fn without_a_master_password_the_lock_settings_say_so_and_cannot_change() {
         shell.settings_found("disconnect sessions"),
         [SettingRow::DisconnectOnLock]
     );
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Security),
+    ));
     {
         let mut ui = simulator(&shell);
         for said in [
@@ -748,7 +758,9 @@ fn the_lock_settings_are_marked_reset_and_shown_in_the_security_overview() {
     let mut core = app(dir.path());
     create_vault(&mut core);
     let mut shell = settings_of(core);
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Security),
+    ));
     {
         let mut ui = simulator(&shell);
         for said in [
@@ -836,7 +848,9 @@ fn ctrl_k_in_a_terminal_is_chosen_found_marked_and_reset_on_the_terminal_tab() {
         "a choice of its list"
     );
     assert_eq!(SettingRow::CtrlKTerminal.card(), SettingsCard::Terminal);
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Terminal));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Terminal),
+    ));
     {
         let mut ui = simulator(&shell);
         ui.find("Ctrl+K in a terminal").expect("its row");
@@ -879,7 +893,9 @@ fn putty_and_the_x_server_are_typed_applied_found_and_reset_on_the_ssh_tab() {
         SettingsCard::X11.rows(),
         "the card's heading finds its rows"
     );
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Ssh),
+    ));
     simulator(&shell)
         .find("PuTTY path (for External SSH mode)")
         .expect("on Connection, the SSH rail's first");
@@ -978,7 +994,9 @@ fn the_default_ssh_mode_is_chosen_found_reset_and_applied_to_all_once_asked() {
             .contains(&SettingRow::SshDefaultMode),
         "its button"
     );
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Ssh),
+    ));
     {
         let mut ui = simulator(&shell);
         for said in [
@@ -1365,7 +1383,9 @@ fn the_default_rdp_mode_is_chosen_found_reset_and_applied_to_all_once_asked() {
             .contains(&SettingRow::RdpDefaultMode),
         "by what is said of it"
     );
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Rdp));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Rdp),
+    ));
     {
         let mut ui = simulator(&shell);
         for said in [
@@ -1502,7 +1522,9 @@ fn the_known_hosts_import_is_found_marked_flagged_in_the_overview_and_reset() {
         )
         .expect("the C# hint");
     }
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Security),
+    ));
     {
         let mut ui = simulator(&shell);
         ui.find("known_hosts import at startup: Off")
@@ -1819,7 +1841,9 @@ fn one_rail_lists_every_section_under_its_group_and_opens_one_alone() {
     let _english = english();
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Security),
+    ));
     {
         let mut ui = simulator(&shell);
         // The six group names are headings, and every section of every group is listed.
@@ -1857,27 +1881,31 @@ fn one_rail_lists_every_section_under_its_group_and_opens_one_alone() {
     assert!(shows(&shell, "Require Credential Guard"));
     assert!(!shows(&shell, "No risky setting"), "the overview gave way");
     // A group's name opens its first section.
-    let _ = shell.update(Message::SettingsTab(SettingsTab::General));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::General),
+    ));
     assert!(shows(&shell, "Language"), "General opens on Appearance");
     assert!(!shows(&shell, "Check for updates automatically"));
     assert!(!shows(&shell, "Show the tour again"));
 }
 
 #[test]
-fn the_apply_glyphs_are_explained_once_at_the_foot_of_the_rail() {
+fn the_glyph_is_explained_once_at_the_foot_of_the_rail_and_every_setting_applies_as_changed() {
     let _english = english();
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
     let _ = shell.update(Message::SettingsSection(SettingsSection::Terminal));
     let mut ui = simulator(&shell);
     for said in [
-        "Applies immediately",
-        "Saved immediately",
+        "Settings apply as you change them",
         "Applies to connections opened after the change",
     ] {
         ui.find(said).expect(said);
     }
-    // The cards carry the glyph alone: the old line under a title is gone.
+    // Nothing says "Save" or "saved immediately": there is no Save here.
+    assert!(ui.find("Saved immediately").is_err());
+    assert!(ui.find("Applies immediately").is_err());
+    // The glyph is per setting: the sessions' wording is in its tooltip, not on the page.
     assert!(
         ui.find("Applies to sessions opened after the change")
             .is_err()
@@ -1885,11 +1913,79 @@ fn the_apply_glyphs_are_explained_once_at_the_foot_of_the_rail() {
 }
 
 #[test]
+fn home_and_end_open_the_first_and_the_last_section_once_the_rail_is_clicked() {
+    use heimdall_app::files::FilesKey;
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Provider));
+    let _ = shell.update(Message::FilesKey(FilesKey::First));
+    assert!(shows(&shell, "Language"), "Appearance, the first");
+    let _ = shell.update(Message::FilesKey(FilesKey::Last));
+    assert!(shows(&shell, "Require Credential Guard"), "the last");
+}
+
+#[test]
+fn the_longest_french_and_spanish_section_names_stay_on_one_line_in_the_rail() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    for language in [Language::French, Language::Spanish] {
+        heimdall_ui::i18n::apply(Some(language));
+        let mut shell = shell(dir.path());
+        for section in SettingsSection::ALL {
+            // Open, so its name is the semi-bold one, the widest.
+            let _ = shell.update(Message::SettingsSection(section));
+            let mut ui = simulator(&shell);
+            let name = ui.find(section_name(section, language)).expect("its name");
+            // One line of the body text is well under 24 px; two lines are over 30.
+            assert!(
+                name.bounds().height < 24.0,
+                "{language:?} {section:?}: {:?}",
+                name.bounds()
+            );
+        }
+    }
+}
+
+/// The name of `section` on the rail in `language`, as the catalogue says it.
+fn section_name(section: SettingsSection, language: Language) -> &'static str {
+    use SettingsSection as S;
+    let (french, spanish) = match section {
+        S::Appearance => ("Apparence", "Apariencia"),
+        S::Behavior | S::RdpBehavior => ("Comportement", "Comportamiento"),
+        S::Updates => ("Mises à jour", "Actualizaciones"),
+        S::Import => ("Import", "Importación"),
+        S::SharedSources => ("Sources partagées", "Orígenes compartidos"),
+        S::Tools => ("Outils et intégrations", "Herramientas e integraciones"),
+        S::Onboarding => ("Visite guidée", "Recorrido de bienvenida"),
+        S::Terminal => ("Terminal", "Terminal"),
+        S::SshConnection => ("Connexion", "Conexión"),
+        S::SshSession => ("Session", "Sesión"),
+        S::SftpX11 => ("SFTP et X11", "SFTP y X11"),
+        S::SshHostKeys => ("Clés d'hôtes", "Claves de host"),
+        S::Gateways => ("Passerelles", "Pasarelas"),
+        S::RdpDisplay => ("Affichage et audio", "Pantalla y audio"),
+        S::RdpCertificates => ("Certificats", "Certificados"),
+        S::Overview => ("Vue d'ensemble", "Resumen"),
+        S::Vault => ("Mot de passe maître et PIN", "Contraseña maestra y PIN"),
+        S::Provider => ("Fournisseur d'identifiants", "Proveedor de credenciales"),
+        S::ConnectionChecks => ("Contrôles à la connexion", "Comprobaciones al conectar"),
+    };
+    if language == Language::French {
+        french
+    } else {
+        spanish
+    }
+}
+
+#[test]
 fn the_rdp_reset_shows_under_each_rdp_section_and_under_no_other() {
     let _english = english();
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Rdp));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Rdp),
+    ));
     assert!(shows(&shell, "Default RDP mode"), "Display & Audio first");
     for section in SettingsSection::ALL {
         let _ = shell.update(Message::SettingsSection(section));
@@ -1906,7 +2002,9 @@ fn go_to_setting_opens_the_section_that_shows_the_row() {
     let _english = english();
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Security),
+    ));
     let _ = shell.update(Message::GoToSetting(SettingRow::RequireCredentialGuard));
     assert!(shows(&shell, "Require Credential Guard"));
     // From another group, into a section that is not its group's first.
@@ -1923,8 +2021,11 @@ fn up_and_down_move_along_the_one_rail_once_clicked_and_round() {
     let _english = english();
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
-    let _ = shell.update(Message::SettingsTab(SettingsTab::General));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::General),
+    ));
     // Before the rail is clicked, a field or a list may have the keys: they move nothing.
+    let _ = shell.update(Message::PointerPressed);
     let _ = shell.update(Message::FilesKey(FilesKey::Next));
     assert!(
         shows(&shell, "Language"),
@@ -1978,7 +2079,9 @@ fn the_search_finds_a_row_of_a_section_that_is_not_open() {
     let _english = english();
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::first_of(SettingsTab::Security),
+    ));
     assert!(!shows(&shell, "Require Credential Guard"));
     let _ = shell.update(Message::SettingsSearch("credential guard".to_owned()));
     assert!(shows(&shell, "Require Credential Guard"));
