@@ -540,3 +540,60 @@ fn every_scheme_draws_its_sixteen_colours_above_the_ratio() {
         }
     }
 }
+
+#[test]
+fn powerline_and_box_glyphs_keep_their_colours() {
+    let mut off = contrast_terminal(None);
+    let mut on = contrast_terminal(Some(45));
+    for term in [&mut off, &mut on] {
+        term.feed("\x1b[30m\u{E0B0}\u{2500}\u{2588}A".as_bytes());
+    }
+    let (plain, adjusted) = (off.snapshot(), on.snapshot());
+    for col in 0..3 {
+        assert_eq!(
+            adjusted.cell(0, col).expect("cell").fg,
+            plain.cell(0, col).expect("cell").fg,
+            "column {col}"
+        );
+    }
+    assert_ne!(
+        adjusted.cell(0, 3).expect("cell").fg,
+        plain.cell(0, 3).expect("cell").fg,
+        "text beside them still moves"
+    );
+}
+
+#[test]
+fn faint_text_asks_half_the_ratio() {
+    use heimdall_term::contrast_ratio;
+
+    let mut term = contrast_terminal(Some(45));
+    term.feed(b"\x1b[2;38;2;120;120;140mA\x1b[0m\x1b[38;2;120;120;140mB");
+    let screen = term.snapshot();
+    let faint = screen.cell(0, 0).expect("cell");
+    let normal = screen.cell(0, 1).expect("cell");
+    let faint_ratio = contrast_ratio(faint.fg, faint.bg);
+    assert!((2.2..4.5).contains(&faint_ratio), "{faint_ratio}");
+    assert!(contrast_ratio(normal.fg, normal.bg) >= 4.5);
+}
+
+#[test]
+fn hidden_inverse_text_stays_hidden() {
+    let mut term = contrast_terminal(Some(45));
+    term.feed(b"\x1b[30;7;8mA");
+    let cell = term.snapshot().cell(0, 0).expect("cell").clone();
+    assert_eq!(cell.fg, cell.bg);
+}
+
+#[test]
+fn the_underline_colour_is_not_adjusted() {
+    let mut off = contrast_terminal(None);
+    let mut on = contrast_terminal(Some(45));
+    for term in [&mut off, &mut on] {
+        term.feed(b"\x1b[4;58;2;40;42;54mA");
+    }
+    assert_eq!(
+        on.snapshot().cell(0, 0).expect("cell").underline_color,
+        off.snapshot().cell(0, 0).expect("cell").underline_color
+    );
+}

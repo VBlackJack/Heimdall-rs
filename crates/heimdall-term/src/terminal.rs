@@ -464,6 +464,17 @@ impl EventListener for Listener {
     }
 }
 
+/// Private-use powerline symbols, first and last.
+const POWERLINE_RANGE: std::ops::RangeInclusive<char> = '\u{E0A0}'..='\u{E0D4}';
+
+/// Box drawing, block elements: first and last.
+const BOX_BLOCK_RANGE: std::ops::RangeInclusive<char> = '\u{2500}'..='\u{259F}';
+
+/// Whether a glyph keeps its colour whatever the minimum contrast, as xterm.js leaves them.
+fn is_excluded_from_contrast(ch: char) -> bool {
+    POWERLINE_RANGE.contains(&ch) || BOX_BLOCK_RANGE.contains(&ch)
+}
+
 /// A terminal emulator.
 pub struct Terminal {
     term: Term<Listener>,
@@ -952,11 +963,18 @@ impl Terminal {
         }
         // Selected cells keep their colours, hidden text stays hidden, and only the text
         // moves: the background, inverse video's included, is what it is measured against.
+        // Powerline and box or block glyphs are drawn to meet their neighbours' colours, as
+        // xterm.js's `excludeFromContrastRatioDemands`; faint text asks half the ratio.
         let minimum = self
             .palette
             .minimum_contrast
-            .filter(|_| !selected && !hidden);
+            .filter(|_| !selected && !hidden && !is_excluded_from_contrast(cell.c));
         if let Some(minimum) = minimum {
+            let minimum = if flags.contains(Flags::DIM) {
+                minimum.halved()
+            } else {
+                minimum
+            };
             fg = memo.adjust(fg, bg, minimum);
         }
         let width = if flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
@@ -996,10 +1014,9 @@ impl Terminal {
             bold: flags.contains(Flags::BOLD),
             italic: flags.contains(Flags::ITALIC),
             underline,
-            underline_color: cell.underline_color().map(|color| {
-                let color = self.resolve(color, Flags::empty(), true);
-                minimum.map_or(color, |minimum| memo.adjust(color, bg, minimum))
-            }),
+            underline_color: cell
+                .underline_color()
+                .map(|color| self.resolve(color, Flags::empty(), true)),
             strikeout: flags.contains(Flags::STRIKEOUT),
             width,
             selected,

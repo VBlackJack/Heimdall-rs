@@ -79,6 +79,14 @@ impl MinimumContrast {
         Self { tenths }
     }
 
+    /// Half the ratio, which faint text asks as xterm.js does.
+    #[must_use]
+    pub const fn halved(self) -> Self {
+        Self {
+            tenths: self.tenths / 2,
+        }
+    }
+
     /// The ratio, such as 4.5 for 4.5:1.
     #[must_use]
     pub fn ratio(self) -> f64 {
@@ -408,6 +416,36 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_memo_stays_within_its_cap_and_keeps_answering() {
+        let minimum = MinimumContrast::from_tenths(45);
+        let mut memo = ContrastMemo::default();
+        let bg = rgb(0x28, 0x2A, 0x36);
+        for n in 0..(super::MEMO_CAPACITY + 10) {
+            let n = u32::try_from(n).expect("small");
+            let fg = rgb(
+                u8::try_from(n % 256).expect("byte"),
+                u8::try_from(n / 256 % 256).expect("byte"),
+                0x30,
+            );
+            assert_eq!(
+                memo.adjust(fg, bg, minimum),
+                adjust_foreground(fg, bg, minimum)
+            );
+            assert!(memo.answers.len() <= super::MEMO_CAPACITY);
+        }
+        assert!(
+            memo.answers.len() < super::MEMO_CAPACITY,
+            "it started again"
+        );
+    }
+
+    #[test]
+    fn half_the_ratio_is_half_in_tenths() {
+        assert!((MinimumContrast::from_tenths(45).halved().ratio() - 2.2).abs() < 1e-9);
+        assert!((MinimumContrast::from_tenths(70).halved().ratio() - 3.5).abs() < 1e-9);
     }
 
     #[test]
