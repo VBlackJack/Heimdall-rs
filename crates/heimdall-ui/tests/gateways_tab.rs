@@ -27,7 +27,7 @@ use heimdall_core::profile::{ProfileId, SshGateway, SshProfile};
 use heimdall_core::store::ProfileStore;
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, SettingsTab, Shell};
+use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings, Size};
 
@@ -83,7 +83,9 @@ fn shell(dir: &Path) -> Shell {
         system_credentials: SystemCredentials::memory(),
     }));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Gateways));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::Gateways,
+    ));
     shell
 }
 

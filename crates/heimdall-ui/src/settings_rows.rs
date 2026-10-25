@@ -156,13 +156,13 @@ impl SettingsCard {
             | Self::Sftp
             | Self::X11
             | Self::ExternalEditor
-            | Self::SshTrusted => SettingsTab::Ssh,
+            | Self::SshTrusted
+            | Self::Gateways => SettingsTab::Ssh,
             Self::RdpDefaults
             | Self::RdpSession
             | Self::RdpPresets
             | Self::RdpReset
             | Self::RdpTrusted => SettingsTab::Rdp,
-            Self::Gateways => SettingsTab::Gateways,
             Self::Pin | Self::Vault | Self::Provider | Self::ConnectionChecks => {
                 SettingsTab::Security
             }
@@ -176,6 +176,209 @@ impl SettingsCard {
             .into_iter()
             .filter(|row| row.card() == self)
             .collect()
+    }
+
+    /// The section of the rail it is shown in; none for a card drawn under every section of
+    /// its group, as the C# "Reset RDP defaults" under the RDP sections.
+    #[must_use]
+    pub fn section(self) -> Option<SettingsSection> {
+        Some(match self {
+            Self::Appearance | Self::SessionTree => SettingsSection::Appearance,
+            // The C# keeps the background check on its Advanced tab, which this version
+            // does not have: it is a behaviour of the window.
+            Self::Behavior | Self::Reachability => SettingsSection::Behavior,
+            Self::Updates => SettingsSection::Updates,
+            Self::MobaxtermVariables => SettingsSection::Import,
+            Self::SharedSources => SettingsSection::SharedSources,
+            Self::ExternalTools | Self::Citrix => SettingsSection::Tools,
+            Self::Onboarding => SettingsSection::Onboarding,
+            // The C# gives Terminal one section for its single card.
+            Self::Terminal | Self::SessionLogging | Self::Macros => SettingsSection::Terminal,
+            Self::Putty => SettingsSection::SshConnection,
+            Self::SshReconnect | Self::SshSession => SettingsSection::SshSession,
+            // The editor opens a server's file over SFTP; the C# keeps it on Advanced.
+            Self::Sftp | Self::X11 | Self::ExternalEditor => SettingsSection::SftpX11,
+            Self::SshTrusted => SettingsSection::SshHostKeys,
+            Self::RdpDefaults => SettingsSection::RdpDisplay,
+            Self::RdpSession | Self::RdpPresets => SettingsSection::RdpBehavior,
+            Self::RdpTrusted => SettingsSection::RdpCertificates,
+            Self::Gateways => SettingsSection::Gateways,
+            Self::Pin | Self::Vault => SettingsSection::Vault,
+            Self::Provider => SettingsSection::Provider,
+            Self::ConnectionChecks => SettingsSection::ConnectionChecks,
+            Self::RdpReset => return None,
+        })
+    }
+}
+
+/// When a setting takes effect, if not as soon as it is changed. Every setting applies and is
+/// saved as it is changed; these few are read when a session or connection is opened, so the
+/// ones already open keep the old value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Applies {
+    /// On the connections opened after the change.
+    NewConnections,
+    /// On the sessions opened after the change.
+    NewSessions,
+}
+
+impl SettingRow {
+    /// Whether it is read when a session or connection opens, checked in the code that reads
+    /// it: the `PowerShell` policy when a local shell starts, the agent preference, the SSH
+    /// keep-alive and the `PuTTY` path when a connection or launch is made, the RDP logon
+    /// timeout and keep-alive when an RDP session opens. Everything else, the auto-reconnect
+    /// attempts and delays, the terminal's font, size, keys and colours, applies at once.
+    #[must_use]
+    pub fn applies(self) -> Option<Applies> {
+        match self {
+            Self::PowerShellPolicy
+            | Self::SessionLogging
+            | Self::SftpAutoOpen
+            | Self::DockLocalBrowser => Some(Applies::NewSessions),
+            Self::SshAgentPreference
+            | Self::KeepAlive
+            | Self::PuttyPath
+            | Self::RdpConnectTimeout
+            | Self::RdpKeepAlive
+            | Self::RdpBuiltinCompression => Some(Applies::NewConnections),
+            _ => None,
+        }
+    }
+}
+
+/// A section of the Settings rail, as the C# `SettingsRail` items: the cards of a group,
+/// split so each is read without scrolling a whole tab. One rail lists every section under
+/// the name of its group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SettingsSection {
+    /// The language, theme and accent, and the session tree's view.
+    Appearance,
+    /// The tunnels panel, the computer's sleep, the most sessions, the background check.
+    Behavior,
+    /// The look for a newer release.
+    Updates,
+    /// The values of a `MobaXterm` file's variables.
+    Import,
+    /// The shared session sources.
+    SharedSources,
+    /// The user's external tools, as the C# "Tools & integrations".
+    Tools,
+    /// "Show the tour again", last as the C# "Welcome tour".
+    Onboarding,
+    /// The terminals' text and colours, the transcripts and the macros.
+    Terminal,
+    /// `PuTTY` and the default SSH mode, as the C# SSH "Connection".
+    SshConnection,
+    /// Auto-reconnect and the session's numbers, as the C# SSH "Session".
+    SshSession,
+    /// The SFTP browser, the X server and the external editor, as the C# "SFTP & X11".
+    SftpX11,
+    /// The trusted host keys and certificates.
+    SshHostKeys,
+    /// The RDP options profiles take, as the C# "Display & Audio".
+    RdpDisplay,
+    /// Reconnecting, waiting, and the sizes offered, as the C# RDP "Behavior".
+    RdpBehavior,
+    /// The trusted RDP certificates.
+    RdpCertificates,
+    /// The SSH gateways.
+    Gateways,
+    /// The security overview, first as the C# "Overview".
+    Overview,
+    /// The PIN and the master password.
+    Vault,
+    /// The external credential provider.
+    Provider,
+    /// What a connection passes first.
+    ConnectionChecks,
+}
+
+impl SettingsSection {
+    /// Every section, in the rail's order: group by group, in the order the tabs had.
+    pub const ALL: [Self; 20] = [
+        Self::Appearance,
+        Self::Behavior,
+        Self::Updates,
+        Self::Import,
+        Self::SharedSources,
+        Self::Tools,
+        Self::Onboarding,
+        Self::Terminal,
+        Self::SshConnection,
+        Self::SshSession,
+        Self::SftpX11,
+        Self::SshHostKeys,
+        Self::Gateways,
+        Self::RdpDisplay,
+        Self::RdpBehavior,
+        Self::RdpCertificates,
+        Self::Overview,
+        Self::Vault,
+        Self::Provider,
+        Self::ConnectionChecks,
+    ];
+
+    /// The group whose name heads it on the rail.
+    #[must_use]
+    pub const fn tab(self) -> SettingsTab {
+        match self {
+            Self::Appearance
+            | Self::Behavior
+            | Self::Updates
+            | Self::Import
+            | Self::SharedSources
+            | Self::Tools
+            | Self::Onboarding => SettingsTab::General,
+            Self::Terminal => SettingsTab::Terminal,
+            Self::SshConnection
+            | Self::SshSession
+            | Self::SftpX11
+            | Self::SshHostKeys
+            | Self::Gateways => SettingsTab::Ssh,
+            Self::RdpDisplay | Self::RdpBehavior | Self::RdpCertificates => SettingsTab::Rdp,
+            Self::Overview | Self::Vault | Self::Provider | Self::ConnectionChecks => {
+                SettingsTab::Security
+            }
+        }
+    }
+
+    /// The sections of `tab`, in the rail's order.
+    #[must_use]
+    pub fn of_tab(tab: SettingsTab) -> Vec<Self> {
+        Self::ALL
+            .into_iter()
+            .filter(|section| section.tab() == tab)
+            .collect()
+    }
+
+    /// The first section of `tab`: the one a name of the old tab strip opens.
+    #[must_use]
+    pub fn first_of(tab: SettingsTab) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|section| section.tab() == tab)
+            .unwrap_or(Self::Appearance)
+    }
+
+    /// Its cards, in the page's order.
+    #[must_use]
+    pub fn cards(self) -> Vec<SettingsCard> {
+        SettingsCard::ALL
+            .into_iter()
+            .filter(|card| card.section() == Some(self))
+            .collect()
+    }
+
+    /// The section `steps` after it down the rail, across the groups' names, cycling round
+    /// as the C# rail's `DirectionalNavigation="Cycle"`; `steps` may be negative.
+    #[must_use]
+    pub fn moved(self, steps: isize) -> Self {
+        let count = Self::ALL.len().cast_signed();
+        let index = Self::ALL
+            .iter()
+            .position(|section| *section == self)
+            .map_or(0, usize::cast_signed);
+        Self::ALL[(index + steps).rem_euclid(count).cast_unsigned()]
     }
 }
 
@@ -1169,6 +1372,158 @@ mod tests {
             row.toggled(&defaults, true),
             Some(SettingsMessage::RdpBuiltinCompression(true))
         );
+    }
+
+    #[test]
+    fn every_section_is_listed_once_and_every_card_but_the_reset_is_in_one() {
+        for (index, section) in SettingsSection::ALL.into_iter().enumerate() {
+            assert!(
+                !SettingsSection::ALL[..index].contains(&section),
+                "{section:?} twice"
+            );
+        }
+        for card in SettingsCard::ALL {
+            match card.section() {
+                Some(section) => {
+                    assert_eq!(section.tab(), card.tab(), "{card:?}");
+                    assert!(section.cards().contains(&card), "{card:?}");
+                }
+                // Drawn under every section of its group, as the C# reset under the RDP
+                // sections.
+                None => assert_eq!(card, SettingsCard::RdpReset),
+            }
+        }
+        // A section with no card is the overview, drawn from the settings and not from rows.
+        for section in SettingsSection::ALL {
+            assert_eq!(
+                section.cards().is_empty(),
+                section == SettingsSection::Overview,
+                "{section:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_rail_lists_the_old_tabs_sections_group_by_group_in_the_old_tab_order() {
+        use SettingsSection as S;
+        let groups: Vec<SettingsTab> = SettingsSection::ALL
+            .into_iter()
+            .map(SettingsSection::tab)
+            .fold(Vec::new(), |mut groups, tab| {
+                // A group is one run of the rail, never split in two.
+                assert!(
+                    groups.last() == Some(&tab) || !groups.contains(&tab),
+                    "{tab:?} split"
+                );
+                if groups.last() != Some(&tab) {
+                    groups.push(tab);
+                }
+                groups
+            });
+        assert_eq!(groups, SettingsTab::ALL);
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::General),
+            [
+                S::Appearance,
+                S::Behavior,
+                S::Updates,
+                S::Import,
+                S::SharedSources,
+                S::Tools,
+                S::Onboarding
+            ],
+            "Appearance first, the tour last, as the C# rail"
+        );
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::Ssh),
+            [
+                S::SshConnection,
+                S::SshSession,
+                S::SftpX11,
+                S::SshHostKeys,
+                S::Gateways
+            ],
+            "the gateways close the SSH group, as the C#"
+        );
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::Rdp),
+            [S::RdpDisplay, S::RdpBehavior, S::RdpCertificates]
+        );
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::Security),
+            [S::Overview, S::Vault, S::Provider, S::ConnectionChecks]
+        );
+        // One section, as the C# Terminal.
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::Terminal),
+            [S::Terminal]
+        );
+        assert_eq!(
+            SettingsSection::first_of(SettingsTab::Ssh),
+            S::SshConnection
+        );
+    }
+
+    #[test]
+    fn up_and_down_walk_the_sections_across_the_groups_and_cycle() {
+        use SettingsSection as S;
+        // Down from the last of a group goes to the first of the next, the name between
+        // them being a heading and no stop.
+        assert_eq!(S::Onboarding.moved(1), S::Terminal);
+        assert_eq!(S::Terminal.moved(1), S::SshConnection);
+        assert_eq!(S::SshHostKeys.moved(1), S::Gateways);
+        assert_eq!(S::Gateways.moved(1), S::RdpDisplay);
+        assert_eq!(S::SshConnection.moved(-1), S::Terminal);
+        // Round the ends.
+        assert_eq!(S::ConnectionChecks.moved(1), S::Appearance);
+        assert_eq!(S::Appearance.moved(-1), S::ConnectionChecks);
+        // A full turn comes back, and every section is reached.
+        let mut section = S::Appearance;
+        let mut seen = Vec::new();
+        for _ in 0..SettingsSection::ALL.len() {
+            seen.push(section);
+            section = section.moved(1);
+        }
+        assert_eq!(section, S::Appearance);
+        assert_eq!(seen, SettingsSection::ALL);
+    }
+
+    #[test]
+    fn only_the_rows_read_when_a_session_opens_carry_the_glyph() {
+        let carrying: Vec<(SettingRow, Applies)> = SettingRow::ALL
+            .into_iter()
+            .filter_map(|row| row.applies().map(|applies| (row, applies)))
+            .collect();
+        assert_eq!(
+            carrying,
+            [
+                (SettingRow::PowerShellPolicy, Applies::NewSessions),
+                (SettingRow::SessionLogging, Applies::NewSessions),
+                (SettingRow::SshAgentPreference, Applies::NewConnections),
+                (SettingRow::KeepAlive, Applies::NewConnections),
+                (SettingRow::PuttyPath, Applies::NewConnections),
+                (SettingRow::SftpAutoOpen, Applies::NewSessions),
+                (SettingRow::DockLocalBrowser, Applies::NewSessions),
+                (SettingRow::RdpConnectTimeout, Applies::NewConnections),
+                (SettingRow::RdpKeepAlive, Applies::NewConnections),
+                (SettingRow::RdpBuiltinCompression, Applies::NewConnections),
+            ]
+        );
+        // What is read while it runs applies at once: no glyph.
+        for row in [
+            SettingRow::SshAutoReconnect,
+            SettingRow::SshAutoReconnectAttempts,
+            SettingRow::TmoutReset,
+            SettingRow::AntiIdle,
+            SettingRow::FontSize,
+            SettingRow::FontFamily,
+            SettingRow::ColorScheme,
+            SettingRow::CtrlVPaste,
+            SettingRow::CtrlKTerminal,
+            SettingRow::RdpAutoReconnectAttempts,
+        ] {
+            assert_eq!(row.applies(), None, "{row:?}");
+        }
     }
 
     #[test]
