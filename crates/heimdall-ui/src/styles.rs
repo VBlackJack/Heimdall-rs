@@ -412,9 +412,13 @@ pub fn tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
             },
             text_color: if lit { brushes.text } else { brushes.secondary },
             // `BorderThickness="1,1,1,0"` (`CommonControls.xaml:1218`): transparent at
-            // rest, the border colour once hovered or selected (`:1237`, `:1242`).
+            // rest, the border colour once hovered (`:1237`). Selected, the strong border
+            // as the C# `fix(tabs)` (v2026.102201): the plain one is the card colour on
+            // every shipped theme, which left the selected tab without an outline.
             border: Border {
-                color: if lit {
+                color: if selected {
+                    crate::themes::derived(theme, crate::themes::Derived::BorderStrong)
+                } else if lit {
                     brushes.edge
                 } else {
                     brushes.quiet_edge
@@ -1262,6 +1266,30 @@ mod tests {
     const SMALL_TEXT_CONTRAST: f64 = crate::themes::MIN_TEXT_CONTRAST;
 
     #[test]
+    fn the_selected_tab_is_outlined_at_3_to_1_on_the_card_and_the_window_in_every_theme() {
+        for each in AppTheme::ALL {
+            for accent in Accent::ALL {
+                let theme = themes::theme(each, accent);
+                let style = tab(true)(&theme, ButtonStatus::Active);
+                let Some(Background::Color(card)) = style.background else {
+                    panic!("{each:?}: the selected tab is a card");
+                };
+                assert!(style.border.width > 0.0, "{each:?}: no outline width");
+                // The tab sits on the card strip of a session and on the window's
+                // background in the headers of the Settings page and the server dialog.
+                for (what, ground) in [("card", card), ("window", theme.palette().background)] {
+                    let ratio = contrast(style.border.color, ground);
+                    assert!(
+                        ratio >= 3.0,
+                        "{each:?}/{accent:?}: the outline is {ratio:.2}:1 on the {what}"
+                    );
+                }
+                assert_ne!(style.border.color, card, "{each:?}: outline is the card");
+            }
+        }
+    }
+
+    #[test]
     fn the_quick_connect_label_and_the_counter_read_at_4_5_to_1_in_every_theme() {
         for each in AppTheme::ALL {
             for accent in Accent::ALL {
@@ -1325,13 +1353,16 @@ mod tests {
         let colors = themes::colors(AppTheme::Magellan);
         let rest = tab(false)(&theme, ButtonStatus::Active);
         assert_eq!(rest.border.color, Color::TRANSPARENT);
-        for style in [
-            tab(true)(&theme, ButtonStatus::Active),
-            tab(false)(&theme, ButtonStatus::Hovered),
-        ] {
-            assert_eq!(style.border.color, colors.current_line);
-            assert!((style.border.width - BORDER_WIDTH).abs() < f32::EPSILON);
-        }
+        let hovered = tab(false)(&theme, ButtonStatus::Hovered);
+        assert_eq!(hovered.border.color, colors.current_line);
+        assert!((hovered.border.width - BORDER_WIDTH).abs() < f32::EPSILON);
+        // Selected, the strong border (v2026.102201): the plain one is the card colour.
+        let selected = tab(true)(&theme, ButtonStatus::Active);
+        assert_eq!(
+            selected.border.color,
+            themes::derived(&theme, themes::Derived::BorderStrong)
+        );
+        assert!((selected.border.width - BORDER_WIDTH).abs() < f32::EPSILON);
     }
 
     #[test]
