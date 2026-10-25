@@ -635,7 +635,9 @@ fn preferences_table() -> Vec<Preference> {
             "DefaultTheme",
             |value, settings| choice(
                 value,
-                ("Drakul", false),
+                // No name is "the default" here: ours is Magellan, not the C# Drakul
+                // (an intentional divergence), so an imported Drakul is a choice kept.
+                ("", false),
                 &named_options(AppTheme::ALL, AppTheme::name),
                 &mut settings.theme
             ),

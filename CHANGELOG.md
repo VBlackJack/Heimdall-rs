@@ -50,6 +50,9 @@ work can be followed. It is not usable yet and no official release is published.
   keeping names, folders and notes, and says how many were added, updated or already up to
   date; optional `SelfService.exe` path, cache folder and store file-name prefix in Settings,
   checked and carried by the settings export.
+- Default theme: Magellan, an intentional divergence from the C# default (Drakul). It applies
+  when no theme is set or the name is unknown; a theme already chosen is kept, and an imported
+  C# theme is kept as it is. Reset to defaults on the theme goes back to Magellan.
 - No official release is published until the build artifacts are signed (issue #454).
   Unsigned pre-release builds exist for personal testing only.
 
