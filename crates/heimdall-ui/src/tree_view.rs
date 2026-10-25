@@ -45,6 +45,7 @@ use crate::ellipsis;
 use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
 use crate::menu_column::{MenuColumn, menu_column};
+use crate::name_first::NameFirst;
 use crate::press_tooltip::hide_on_press;
 use crate::shell::Message;
 use crate::styles;
@@ -205,6 +206,10 @@ const SEMIBOLD: iced::Font = iced::Font {
 
 /// Widest a gateway badge's text grows beside a name, as the C# `SessionTreeGatewayBadgeMaxWidth`.
 const BADGE_MAX_WIDTH: f32 = 140.0;
+
+/// Least room a row's trailing marks are shown in, as the C# `SessionTreeGatewayBadgeMinWidth`;
+/// with less left after the name they are not shown at all.
+const BADGE_MIN_WIDTH: f32 = 56.0;
 
 /// Corner radius of a badge, as the C# `SessionTreeBadgeCornerRadius`.
 const BADGE_RADIUS: f32 = 3.0;
@@ -565,35 +570,47 @@ pub fn owned_row(
 ) -> Element<'static, Message> {
     let id = profile.id.clone();
     let (glyph, tint) = profile_icon(profile);
-    let mut label = row![
-        container(icons::icon(glyph, tint, PROTOCOL_ICON_SIDE)).center_y(ROW_CONTENT_HEIGHT),
-        container(profile_dot(state, reach.as_ref())).padding(DOT_HIT_PADDING),
-        // On one line each, ended with an ellipsis where the badges' room starts, as the
-        // C#'s: the tooltip opens with the whole name.
-        column![ellipsis::text(profile.name.clone()).width(Length::Fill)]
-            .push(context.map(|context| {
-                ellipsis::text(context)
-                    .width(Length::Fill)
-                    .size(font_size::SMALL_CAPTION)
-                    .style(text::secondary)
-            }))
-            .width(Length::Fill),
-    ]
-    .spacing(spacing::XS)
-    .align_y(iced::Alignment::Center);
+    // The C# `NameFirstPanel`s: the name is laid out against the whole row and keeps what it
+    // needs; the marks (favorite, origin) get what is left, then the gateway badge gets what
+    // those leave, ellipsized; below the minimum a part is not shown at all.
+    let name = column![ellipsis::text(profile.name.clone())]
+        .push(context.map(|context| {
+            ellipsis::text(context)
+                .size(font_size::SMALL_CAPTION)
+                .style(text::secondary)
+        }))
+        .width(Length::Shrink);
+    let mut marks = row![].spacing(spacing::XS).align_y(iced::Alignment::Center);
     if profile.favorite {
-        label = label.push(
+        marks = marks.push(
             text(FAVORITE_MARK)
                 .size(font_size::SMALL_CAPTION)
                 .style(styles::warning_text),
         );
     }
-    if let Some(badge) = &profile.gateway {
-        label = label.push(gateway_badge(badge));
-    }
     if let Some(origin) = profile.metadata.origin {
-        label = label.push(origin_badge(origin));
+        marks = marks.push(origin_badge(origin));
     }
+    let has_marks = profile.favorite || profile.metadata.origin.is_some();
+    let trailing: Option<Element<'static, Message>> = match (&profile.gateway, has_marks) {
+        (Some(badge), _) => Some(
+            NameFirst::new(
+                marks,
+                Some(after_gap(gateway_badge(badge))),
+                BADGE_MIN_WIDTH,
+            )
+            .into(),
+        ),
+        (None, true) => Some(marks.into()),
+        (None, false) => None,
+    };
+    let label = row![
+        container(icons::icon(glyph, tint, PROTOCOL_ICON_SIDE)).center_y(ROW_CONTENT_HEIGHT),
+        container(profile_dot(state, reach.as_ref())).padding(DOT_HIT_PADDING),
+        NameFirst::new(name, trailing.map(after_gap), BADGE_MIN_WIDTH,).width(Length::Fill),
+    ]
+    .spacing(spacing::XS)
+    .align_y(iced::Alignment::Center);
     let body = RowChrome::new(
         container(label).width(Length::Fill).padding(iced::Padding {
             top: 2.0,
@@ -625,14 +642,29 @@ pub fn owned_row(
     .into()
 }
 
+/// `content` with the gap that sets it off from what comes before it.
+fn after_gap(content: Element<'static, Message>) -> Element<'static, Message> {
+    container(content)
+        .padding(iced::Padding {
+            left: spacing::XS,
+            ..iced::Padding::ZERO
+        })
+        .into()
+}
+
+/// The badge's whole text, also its row tooltip's line.
+fn gateway_badge_text(badge: &GatewayBadge) -> String {
+    match badge {
+        GatewayBadge::Via(name) => fl!("ui-tree-gateway-via", name = name.as_str()),
+        GatewayBadge::Missing => fl!("ui-tree-gateway-missing"),
+    }
+}
+
 /// "via name" when a gateway is on the way, "gateway missing" in the warning colour when it
 /// is not saved: the C# tree's badge.
 fn gateway_badge(badge: &GatewayBadge) -> Element<'static, Message> {
     let missing = matches!(badge, GatewayBadge::Missing);
-    let label = match badge {
-        GatewayBadge::Via(name) => fl!("ui-tree-gateway-via", name = name.as_str()),
-        GatewayBadge::Missing => fl!("ui-tree-gateway-missing"),
-    };
+    let label = gateway_badge_text(badge);
     // On one line, ended with an ellipsis: a long gateway name must not fold the row.
     container(
         ellipsis::text(label)
@@ -723,6 +755,10 @@ fn row_tooltip(profile: &ProfileSummary, reach: Option<&Verdict>) -> String {
     }
     if let Some(origin) = profile.metadata.origin {
         lines.push(crate::texts::origin_name(origin));
+    }
+    // The gateway badge in full: the row ends a long one with an ellipsis or hides it.
+    if let Some(badge) = &profile.gateway {
+        lines.push(gateway_badge_text(badge));
     }
     // What the background check found, as the C# dot's tooltip.
     if let Some(reach) = reach {
@@ -2922,6 +2958,17 @@ mod tests {
             profile_icon(&ssh),
             (Icon::Ssh, Tint::Protocol(ProfileKind::Ssh))
         );
+    }
+
+    #[test]
+    fn the_row_tooltip_carries_the_gateway_badge_in_full() {
+        let mut via = entry(ProfileKind::Ssh, None);
+        via.gateway = Some(GatewayBadge::Via("Heimdall TestEnv Gateway".to_owned()));
+        assert!(row_tooltip(&via, None).contains("via Heimdall TestEnv Gateway"));
+        let mut gone = entry(ProfileKind::Ssh, None);
+        gone.gateway = Some(GatewayBadge::Missing);
+        assert!(row_tooltip(&gone, None).contains("gateway missing"));
+        assert!(!row_tooltip(&entry(ProfileKind::Ssh, None), None).contains("gateway"));
     }
 
     #[test]
