@@ -50,11 +50,12 @@ pub enum SettingsCard {
     MobaxtermVariables,
     /// The shared session sources, as the C# card of its "Shared session sources".
     SharedSources,
-    /// The Citrix Workspace paths and store filter, as the C# Advanced tab's optional
-    /// `SelfService.exe` path, cache folder and store prefix.
-    Citrix,
     /// "Show the tour again", as the C# "Welcome tour" card.
     Onboarding,
+    /// The Citrix Workspace paths and store filter, as the C# Advanced tab's optional
+    /// `SelfService.exe` path, cache folder and store prefix. After the tour so that the
+    /// tour's card keeps its place on the page.
+    Citrix,
     /// The terminals' text and colours, Ctrl+V and the `PowerShell` policy.
     Terminal,
     /// The session transcripts.
@@ -109,8 +110,8 @@ impl SettingsCard {
         Self::ExternalTools,
         Self::MobaxtermVariables,
         Self::SharedSources,
-        Self::Citrix,
         Self::Onboarding,
+        Self::Citrix,
         Self::Terminal,
         Self::SessionLogging,
         Self::Macros,
@@ -146,8 +147,8 @@ impl SettingsCard {
             | Self::ExternalTools
             | Self::MobaxtermVariables
             | Self::SharedSources
-            | Self::Citrix
-            | Self::Onboarding => SettingsTab::General,
+            | Self::Onboarding
+            | Self::Citrix => SettingsTab::General,
             Self::Terminal | Self::SessionLogging | Self::Macros => SettingsTab::Terminal,
             Self::SshReconnect
             | Self::SshSession
@@ -218,14 +219,14 @@ pub enum SettingRow {
     MobaxtermVariables,
     /// The shared session sources, listed and edited.
     SharedSources,
+    /// "Show the tour again", which shows the welcome tour from its first step.
+    Onboarding,
     /// The `SelfService.exe` Citrix cache launches go through.
     CitrixSelfServicePath,
     /// The folder the Citrix Workspace cache is read from.
     CitrixCacheDirectory,
     /// The store file-name prefix of the Citrix cache files read.
     CitrixCacheStorePrefix,
-    /// "Show the tour again", which shows the welcome tour from its first step.
-    Onboarding,
     /// The size of the terminals' text.
     FontSize,
     /// The family of the terminals' text.
@@ -363,10 +364,10 @@ impl SettingRow {
         Self::ExternalTools,
         Self::MobaxtermVariables,
         Self::SharedSources,
+        Self::Onboarding,
         Self::CitrixSelfServicePath,
         Self::CitrixCacheDirectory,
         Self::CitrixCacheStorePrefix,
-        Self::Onboarding,
         Self::FontSize,
         Self::FontFamily,
         Self::ColorScheme,

@@ -3651,7 +3651,7 @@ ui-citrix-import-confirm = { $count ->
     [one] Importer { $count } application Citrix depuis le cache Workspace local ?
    *[other] Importer { $count } applications Citrix depuis le cache Workspace local ?
 }
-ui-citrix-import-summary = Import Citrix terminé : { $added } ajoutée(s), { $updated } mise(s) à jour, { $unchanged } déjà à jour.
+ui-citrix-import-summary = Import Citrix terminé. Ajoutées : { $added }, mises à jour : { $updated }, déjà à jour : { $unchanged }.
 ui-citrix-import-no-launch-lines = Le coffre est verrouillé ou indisponible : les lignes de lancement du cache Workspace n'ont pas été enregistrées. Ces applications se lancent par leur StoreFront.
 ui-citrix-cache-folder-missing = Dossier du cache Citrix SelfService introuvable.
 ui-citrix-cache-no-files = Aucun fichier de cache Citrix trouvé. Ouvrez Citrix Workspace et connectez-vous à un magasin.

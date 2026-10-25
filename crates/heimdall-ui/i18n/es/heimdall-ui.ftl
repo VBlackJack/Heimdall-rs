@@ -3645,7 +3645,7 @@ ui-citrix-import-confirm = { $count ->
     [one] ¿Importar { $count } aplicación de Citrix desde la caché local de Workspace?
    *[other] ¿Importar { $count } aplicaciones de Citrix desde la caché local de Workspace?
 }
-ui-citrix-import-summary = Importación de Citrix terminada: { $added } añadidas, { $updated } actualizadas, { $unchanged } ya al día.
+ui-citrix-import-summary = Importación de Citrix terminada. Añadidas: { $added }, actualizadas: { $updated }, ya al día: { $unchanged }.
 ui-citrix-import-no-launch-lines = El almacén está bloqueado o no disponible: no se guardaron las líneas de inicio de la caché de Workspace. Estas aplicaciones se inician a través de su StoreFront.
 ui-citrix-cache-folder-missing = No se encontró la carpeta de caché de Citrix SelfService.
 ui-citrix-cache-no-files = No se encontraron archivos de caché de Citrix. Abre Citrix Workspace y conecta primero a una tienda.

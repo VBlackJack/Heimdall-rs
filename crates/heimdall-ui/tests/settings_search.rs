@@ -1043,6 +1043,14 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
         ("external editor path", BrowseTarget::ExternalEditor),
         ("session log directory", BrowseTarget::SessionLogDirectory),
         ("database path", BrowseTarget::ProviderDatabase),
+        (
+            "selfservice.exe path",
+            BrowseTarget::Tool(ToolPath::CitrixSelfService),
+        ),
+        (
+            "selfservice cache folder",
+            BrowseTarget::Tool(ToolPath::CitrixCacheDirectory),
+        ),
     ] {
         let messages = browse_clicked(&mut shell, query);
         assert!(
@@ -1058,8 +1066,8 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
     // the RDP disconnect confirmation and redirection indicators, hold no path; the external
     // tools' card holds the Browse buttons of the tool chosen, which its own tests cover, and
     // the MobaXterm variables' card holds none; the shared sources' card holds one per source,
-    // which its own test covers.
-    assert_eq!(SettingRow::ALL.len(), 76, "no row added");
+    // which its own test covers; the Citrix store prefix is a name, not a path.
+    assert_eq!(SettingRow::ALL.len(), 79, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(
@@ -1069,6 +1077,14 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
     for (target, picked) in [
         (BrowseTarget::Tool(ToolPath::Putty), "/opt/putty/putty"),
         (BrowseTarget::Tool(ToolPath::X11Server), "/opt/x/vcxsrv"),
+        (
+            BrowseTarget::Tool(ToolPath::CitrixSelfService),
+            "/opt/citrix/SelfService.exe",
+        ),
+        (
+            BrowseTarget::Tool(ToolPath::CitrixCacheDirectory),
+            "/var/cache/citrix",
+        ),
         (BrowseTarget::ExternalEditor, "/opt/editor/edit"),
         (BrowseTarget::SessionLogDirectory, "/var/log/heimdall"),
         (BrowseTarget::ProviderDatabase, "/home/me/vault.kdbx"),
@@ -1080,6 +1096,11 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
     let saved = Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("saved");
     assert_eq!(saved.putty_path, "/opt/putty/putty", "the typed text went");
     assert_eq!(saved.x11_server_path, "/opt/x/vcxsrv");
+    assert_eq!(
+        saved.citrix_self_service_path,
+        "/opt/citrix/SelfService.exe"
+    );
+    assert_eq!(saved.citrix_cache_directory, "/var/cache/citrix");
     assert_eq!(saved.external_editor, "/opt/editor/edit");
     assert_eq!(saved.session_log_directory, "/var/log/heimdall");
     assert_eq!(saved.credential_provider.database, "/home/me/vault.kdbx");
@@ -1095,7 +1116,9 @@ fn a_browse_dialog_picks_a_folder_or_a_file_with_the_csharp_filters_where_the_pa
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("putty.exe");
     assert!(BrowseTarget::SessionLogDirectory.picks_folder());
+    assert!(BrowseTarget::Tool(ToolPath::CitrixCacheDirectory).picks_folder());
     for target in [
+        BrowseTarget::Tool(ToolPath::CitrixSelfService),
         BrowseTarget::Tool(ToolPath::Putty),
         BrowseTarget::Tool(ToolPath::X11Server),
         BrowseTarget::ExternalEditor,
