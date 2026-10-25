@@ -2879,3 +2879,46 @@ cache_store_prefix = ''
     // Nothing dropped, nothing said.
     assert!(Settings::default().citrix_ignored.is_empty());
 }
+
+#[test]
+fn minimum_contrast_is_off_by_default_and_is_kept_and_carried() {
+    use heimdall_core::settings::TerminalMinimumContrast;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(
+        settings.terminal_minimum_contrast,
+        TerminalMinimumContrast::Off,
+        "the C# draws the scheme as it is"
+    );
+    assert_eq!(TerminalMinimumContrast::Off.tenths(), None);
+    assert_eq!(TerminalMinimumContrast::Low.tenths(), Some(30));
+    assert_eq!(TerminalMinimumContrast::Standard.tenths(), Some(45));
+    assert_eq!(TerminalMinimumContrast::High.tenths(), Some(70));
+
+    for choice in TerminalMinimumContrast::ALL {
+        assert_eq!(TerminalMinimumContrast::named(choice.name()), choice);
+    }
+    assert_eq!(
+        TerminalMinimumContrast::named("bogus"),
+        TerminalMinimumContrast::Off
+    );
+
+    settings.terminal_minimum_contrast = TerminalMinimumContrast::Standard;
+    settings.save(&path).expect("save");
+    assert_eq!(
+        Settings::load(&path)
+            .expect("load")
+            .terminal_minimum_contrast,
+        TerminalMinimumContrast::Standard
+    );
+
+    let (text, _) = settings.export(None, false);
+    assert!(text.contains("minimum_contrast = \"4.5:1\""), "{text}");
+    let read = Settings::default().import(&text).expect("read");
+    assert_eq!(
+        read.settings.terminal_minimum_contrast,
+        TerminalMinimumContrast::Standard
+    );
+}

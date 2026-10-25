@@ -124,6 +124,7 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ),
     ("terminal.ctrl_v_paste", PLAIN),
     ("terminal.ctrl_k", PLAIN),
+    ("terminal.minimum_contrast", PLAIN),
     // Every session's transcript written to disk, what was typed and shown included.
     ("session_log.enabled", OFF_STRICT),
     ("session_log.directory", PLAIN),

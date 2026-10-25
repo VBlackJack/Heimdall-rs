@@ -42,7 +42,7 @@ use heimdall_core::settings::{
     Accent, AgentPreference, AppTheme, ColorScheme, CtrlKTerminal, CtrlVPaste, ExecutionPolicy,
     Language, MAX_SESSIONS_MAX, MAX_SESSIONS_MIN, RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
     RDP_AUTO_RECONNECT_ATTEMPTS_MIN, SSH_AUTO_RECONNECT_ATTEMPTS_MAX,
-    SSH_AUTO_RECONNECT_ATTEMPTS_MIN, Settings, settings_path,
+    SSH_AUTO_RECONNECT_ATTEMPTS_MIN, Settings, TerminalMinimumContrast, settings_path,
 };
 use iced::widget::scrollable::{AbsoluteOffset, RelativeOffset};
 use iced::widget::{
@@ -51,8 +51,8 @@ use iced::widget::{
 use iced::{Element, Length, Task, Theme};
 
 use super::{
-    AgentChoice, CONNECT_TIMEOUTS, CtrlKChoice, CtrlVChoice, FONT_SIZE_FIELD_WIDTH, FontChoice,
-    LanguageChoice, Message, PolicyChoice, SETTINGS_WIDTH, SchemeChoice, SessionField,
+    AgentChoice, CONNECT_TIMEOUTS, ContrastChoice, CtrlKChoice, CtrlVChoice, FONT_SIZE_FIELD_WIDTH,
+    FontChoice, LanguageChoice, Message, PolicyChoice, SETTINGS_WIDTH, SchemeChoice, SessionField,
     SessionsChoice, SettingsMessage, SettingsTab, Shell, TimeoutChoice,
 };
 use crate::browse::{BrowseTarget, browse_button};
@@ -532,6 +532,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::FontSize => fl!("ui-settings-font-size"),
         SettingRow::FontFamily => fl!("ui-settings-font-family"),
         SettingRow::ColorScheme => fl!("ui-settings-color-scheme"),
+        SettingRow::TerminalMinimumContrast => fl!("ui-settings-minimum-contrast"),
         SettingRow::CtrlVPaste => fl!("ui-settings-ctrl-v"),
         SettingRow::CtrlKTerminal => fl!("ui-settings-ctrl-k"),
         SettingRow::PowerShellPolicy => fl!("ui-settings-powershell-policy"),
@@ -642,6 +643,9 @@ fn row_choices(row: SettingRow) -> Vec<String> {
         SettingRow::Accent => Accent::ALL.map(|a| AccentChoice(a).to_string()).to_vec(),
         SettingRow::ColorScheme => ColorScheme::ALL
             .map(|s| SchemeChoice(s).to_string())
+            .to_vec(),
+        SettingRow::TerminalMinimumContrast => TerminalMinimumContrast::ALL
+            .map(|c| ContrastChoice(c).to_string())
             .to_vec(),
         SettingRow::CtrlVPaste => CtrlVPaste::ALL.map(|c| CtrlVChoice(c).to_string()).to_vec(),
         SettingRow::CtrlKTerminal => CtrlKTerminal::ALL
@@ -1303,6 +1307,9 @@ impl Shell {
             SettingRow::FontSize => defaults.terminal_font_size.to_string(),
             SettingRow::FontFamily => defaults.terminal_font_family,
             SettingRow::ColorScheme => SchemeChoice(defaults.color_scheme).to_string(),
+            SettingRow::TerminalMinimumContrast => {
+                ContrastChoice(defaults.terminal_minimum_contrast).to_string()
+            }
             SettingRow::CtrlVPaste => CtrlVChoice(defaults.ctrl_v_paste).to_string(),
             SettingRow::CtrlKTerminal => CtrlKChoice(defaults.ctrl_k_terminal).to_string(),
             SettingRow::PowerShellPolicy => {
@@ -1607,6 +1614,14 @@ impl Shell {
                     ColorScheme::ALL.map(SchemeChoice).to_vec(),
                     Some(SchemeChoice(settings.color_scheme)),
                     |SchemeChoice(scheme)| send(SettingsMessage::ColorScheme(scheme)),
+                ),
+            ),
+            SettingRow::TerminalMinimumContrast => labelled(
+                label,
+                choices(
+                    TerminalMinimumContrast::ALL.map(ContrastChoice).to_vec(),
+                    Some(ContrastChoice(settings.terminal_minimum_contrast)),
+                    |ContrastChoice(choice)| send(SettingsMessage::TerminalMinimumContrast(choice)),
                 ),
             ),
             SettingRow::CtrlVPaste => labelled(

@@ -1096,11 +1096,12 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
     assert_eq!(shell.settings_found("putty path"), [SettingRow::PuttyPath]);
     // The last rows added, the welcome tour's button, the RDP keep-alive interval, the
     // built-in client's compression, the properties panel's box, the SSH reconnect waits,
-    // the RDP disconnect confirmation and redirection indicators, hold no path; the external
+    // the RDP disconnect confirmation and redirection indicators, the terminal minimum contrast
+    // choice, hold no path; the external
     // tools' card holds the Browse buttons of the tool chosen, which its own tests cover, and
     // the MobaXterm variables' card holds none; the shared sources' card holds one per source,
     // which its own test covers; the Citrix store prefix is a name, not a path.
-    assert_eq!(SettingRow::ALL.len(), 79, "no row added");
+    assert_eq!(SettingRow::ALL.len(), 80, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(
