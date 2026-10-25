@@ -406,3 +406,137 @@ fn session_text_drops_the_blank_rows_after_the_last_output() {
     assert_eq!(term.session_text(), "one\ntwo");
     assert_eq!(terminal(20, 6).session_text(), "");
 }
+
+// ---- minimum contrast -------------------------------------------------------------------
+
+fn contrast_terminal(minimum: Option<u16>) -> Terminal {
+    let palette = Palette::dracula()
+        .with_minimum_contrast(minimum.map(heimdall_term::MinimumContrast::from_tenths));
+    Terminal::new(
+        GridSize { cols: 20, rows: 3 },
+        TerminalConfig {
+            palette,
+            ..TerminalConfig::default()
+        },
+    )
+}
+
+#[test]
+fn text_too_close_to_its_background_is_moved_and_the_rest_is_not() {
+    use heimdall_term::contrast_ratio;
+
+    let mut off = contrast_terminal(None);
+    // ANSI black, a truecolor near the background, a 256-colour grey, default text.
+    off.feed(b"\x1b[30mA\x1b[38;2;42;44;56mB\x1b[38;5;235mC\x1b[0mD");
+    let plain = off.snapshot();
+    assert_eq!(plain.cell(0, 0).expect("cell").fg, DRACULA.ansi[0]);
+
+    let mut on = contrast_terminal(Some(45));
+    on.feed(b"\x1b[30mA\x1b[38;2;42;44;56mB\x1b[38;5;235mC\x1b[0mD");
+    let screen = on.snapshot();
+    for col in 0..3 {
+        let cell = screen.cell(0, col).expect("cell");
+        assert!(
+            contrast_ratio(cell.fg, cell.bg) >= 4.5,
+            "column {col}: {:?} on {:?}",
+            cell.fg,
+            cell.bg
+        );
+        assert_ne!(cell.fg, plain.cell(0, col).expect("cell").fg);
+        assert_eq!(
+            cell.bg,
+            plain.cell(0, col).expect("cell").bg,
+            "never the background"
+        );
+    }
+    assert_eq!(
+        screen.cell(0, 3).expect("cell").fg,
+        DRACULA.foreground,
+        "a passing colour is unchanged"
+    );
+}
+
+#[test]
+fn the_setting_applies_to_a_terminal_already_open() {
+    let mut term = contrast_terminal(None);
+    term.feed(b"\x1b[30mA");
+    let before = term.snapshot().cell(0, 0).expect("cell").fg;
+    term.set_palette(
+        Palette::dracula()
+            .with_minimum_contrast(Some(heimdall_term::MinimumContrast::from_tenths(45))),
+    );
+    let after = term.snapshot().cell(0, 0).expect("cell").fg;
+    assert_ne!(before, after);
+    term.set_palette(Palette::dracula());
+    assert_eq!(term.snapshot().cell(0, 0).expect("cell").fg, before);
+}
+
+#[test]
+fn inverse_video_is_measured_on_the_swapped_colours() {
+    use heimdall_term::contrast_ratio;
+
+    let mut term = contrast_terminal(Some(45));
+    // Inverse: the text takes the cell's background, the cell the text colour. Black text
+    // inverted is drawn in the background colour on a black cell.
+    term.feed(b"\x1b[30;7mA");
+    let cell = term.snapshot().cell(0, 0).expect("cell").clone();
+    assert_eq!(
+        cell.bg, DRACULA.ansi[0],
+        "the background is what inverse made it"
+    );
+    assert!(contrast_ratio(cell.fg, cell.bg) >= 4.5);
+}
+
+#[test]
+fn selected_text_and_hidden_text_keep_their_colours() {
+    let mut off = contrast_terminal(None);
+    let mut on = contrast_terminal(Some(45));
+    for term in [&mut off, &mut on] {
+        term.feed(b"\x1b[30mAB\x1b[8mC");
+        term.begin_selection(at(0, 0, false), SelectionKind::Simple);
+        term.extend_selection(at(0, 0, true));
+    }
+    let (plain, adjusted) = (off.snapshot(), on.snapshot());
+    let selected = adjusted.cell(0, 0).expect("cell");
+    assert!(selected.selected);
+    assert_eq!(selected.fg, plain.cell(0, 0).expect("cell").fg);
+    assert_ne!(
+        adjusted.cell(0, 1).expect("cell").fg,
+        plain.cell(0, 1).expect("cell").fg
+    );
+    let hidden = adjusted.cell(0, 2).expect("cell");
+    assert_eq!(hidden.fg, hidden.bg, "hidden text stays hidden");
+}
+
+#[test]
+fn every_scheme_draws_its_sixteen_colours_above_the_ratio() {
+    use heimdall_term::contrast_ratio;
+
+    for scheme in [
+        Palette::dracula(),
+        Palette::standard(),
+        Palette::solarized_dark(),
+        Palette::monokai(),
+        Palette::nord(),
+    ] {
+        let mut term = Terminal::new(
+            GridSize { cols: 40, rows: 2 },
+            TerminalConfig {
+                palette: scheme
+                    .with_minimum_contrast(Some(heimdall_term::MinimumContrast::from_tenths(45))),
+                ..TerminalConfig::default()
+            },
+        );
+        for index in 0..16 {
+            term.feed(format!("\x1b[38;5;{index}mX").as_bytes());
+        }
+        let screen = term.snapshot();
+        for col in 0..16 {
+            let cell = screen.cell(0, col).expect("cell");
+            assert!(
+                contrast_ratio(cell.fg, cell.bg) >= 4.5,
+                "{scheme:?} colour {col}"
+            );
+        }
+    }
+}

@@ -1397,6 +1397,11 @@ ui-find-nothing = No coincide
 
 ui-settings-terminal = Apariencia de la terminal
 ui-settings-color-scheme = Esquema de color
+ui-settings-minimum-contrast = Contraste mínimo
+ui-settings-minimum-contrast-off = Desactivado
+ui-settings-minimum-contrast-low = 3:1 (texto grande)
+ui-settings-minimum-contrast-standard = 4.5:1 (recomendado)
+ui-settings-minimum-contrast-high = 7:1 (estricto)
 ui-settings-appearance = Apariencia
 ui-vault-problem-locked-out = Demasiados intentos incorrectos. Inténtalo de nuevo en { $minutes ->
     [one] { $minutes } minuto.

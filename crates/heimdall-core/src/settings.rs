@@ -488,6 +488,70 @@ impl CtrlKTerminal {
     }
 }
 
+/// Tenths of the ratio of the "low" minimum contrast: 3:1, the WCAG 2 level for large text
+/// and interface parts.
+pub const MINIMUM_CONTRAST_LOW_TENTHS: u16 = 30;
+
+/// Tenths of the ratio of the "standard" minimum contrast: 4.5:1, the WCAG 2 AA level for
+/// text.
+pub const MINIMUM_CONTRAST_STANDARD_TENTHS: u16 = 45;
+
+/// Tenths of the ratio of the "high" minimum contrast: 7:1, the WCAG 2 AAA level for text.
+pub const MINIMUM_CONTRAST_HIGH_TENTHS: u16 = 70;
+
+/// How much contrast terminal text keeps against its background. The C# Heimdall draws the
+/// scheme's colours as they are, which is xterm.js's own default; Windows Terminal's
+/// `adjustIndistinguishableColors` and xterm.js's `minimumContrastRatio` move a text colour
+/// too close to its background lighter or darker, keeping its hue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TerminalMinimumContrast {
+    /// The scheme's colours are drawn as they are, as the C#.
+    #[default]
+    Off,
+    /// At least 3:1.
+    Low,
+    /// At least 4.5:1.
+    Standard,
+    /// At least 7:1.
+    High,
+}
+
+impl TerminalMinimumContrast {
+    /// Every choice, in the order the list shows them.
+    pub const ALL: [Self; 4] = [Self::Off, Self::Low, Self::Standard, Self::High];
+
+    /// Its name in the settings file.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Low => "3:1",
+            Self::Standard => "4.5:1",
+            Self::High => "7:1",
+        }
+    }
+
+    /// The choice named `name`; the default for a name not known.
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|choice| choice.name() == name.trim())
+            .unwrap_or_default()
+    }
+
+    /// The least contrast ratio text keeps, in tenths (45 is 4.5:1); `None` when off.
+    #[must_use]
+    pub const fn tenths(self) -> Option<u16> {
+        match self {
+            Self::Off => None,
+            Self::Low => Some(MINIMUM_CONTRAST_LOW_TENTHS),
+            Self::Standard => Some(MINIMUM_CONTRAST_STANDARD_TENTHS),
+            Self::High => Some(MINIMUM_CONTRAST_HIGH_TENTHS),
+        }
+    }
+}
+
 /// Where transcripts go when no folder is chosen, beside the settings, as the C# one.
 pub const DEFAULT_SESSION_LOG_DIRECTORY: &str = "logs/sessions";
 
@@ -683,6 +747,8 @@ pub struct Settings {
     pub ctrl_v_paste: CtrlVPaste,
     /// What Ctrl+K does in a terminal.
     pub ctrl_k_terminal: CtrlKTerminal,
+    /// How much contrast terminal text keeps against its background.
+    pub terminal_minimum_contrast: TerminalMinimumContrast,
     /// The tunnels panel starts collapsed, as the C# `CollapseTunnelsPanelByDefault`: on.
     pub collapse_tunnels_panel: bool,
     /// The computer kept from sleeping while a session is open, as the C#
@@ -1414,6 +1480,7 @@ impl Default for Settings {
             powershell_execution_policy: ExecutionPolicy::default(),
             ctrl_v_paste: CtrlVPaste::default(),
             ctrl_k_terminal: CtrlKTerminal::default(),
+            terminal_minimum_contrast: TerminalMinimumContrast::default(),
             collapse_tunnels_panel: true,
             prevent_sleep: true,
             max_sessions: MAX_SESSIONS_DEFAULT,
@@ -2083,6 +2150,9 @@ struct TerminalSection {
     /// What Ctrl+K does, by its name.
     #[serde(default)]
     ctrl_k: Option<String>,
+    /// Absent, from a file written before it, is off.
+    #[serde(default)]
+    minimum_contrast: Option<String>,
 }
 
 /// The instant `seconds` after 1970, UTC; `None` past what this system's clock can say,
@@ -2428,6 +2498,12 @@ impl Settings {
                 .as_deref()
                 .map(CtrlKTerminal::named)
                 .unwrap_or_default(),
+            terminal_minimum_contrast: file
+                .terminal
+                .minimum_contrast
+                .as_deref()
+                .map(TerminalMinimumContrast::named)
+                .unwrap_or_default(),
             rdp_defaults: file.rdp,
             rdp_default_mode: file
                 .rdp_session
@@ -2606,6 +2682,7 @@ impl Settings {
                 ),
                 ctrl_v_paste: Some(self.ctrl_v_paste.name().to_owned()),
                 ctrl_k: Some(self.ctrl_k_terminal.name().to_owned()),
+                minimum_contrast: Some(self.terminal_minimum_contrast.name().to_owned()),
             },
             session_log: SessionLogSection {
                 enabled: self.session_logging,
