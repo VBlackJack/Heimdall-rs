@@ -261,11 +261,16 @@ pub enum Icon {
     FullScreen,
     /// The `Lock` glyph (`E72E`): a padlock, the toolbar's "Lock workspace".
     Lock,
+    /// The `Save` glyph (`E74E`): a floppy disk, a setting saved at once.
+    Disk,
+    /// The `NewWindow` glyph (`E8A7`): a window with an arrow, a setting that applies to the next
+    /// connection.
+    NewWindow,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 100] = [
+    pub const ALL: [Self; 102] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -366,6 +371,8 @@ impl Icon {
         Self::Keyboard,
         Self::FullScreen,
         Self::Lock,
+        Self::Disk,
+        Self::NewWindow,
     ];
 
     /// The icon of `kind`, as the C# `ConnectionTypeToGeometryConverter` picks it.
@@ -699,6 +706,12 @@ impl Icon {
             Self::Lock => {
                 "M3.5,7.5 L12.5,7.5 L12.5,14 L3.5,14 Z M5.5,7.5 L5.5,5 A2.5,2.5 0 0 1 10.5,5 L10.5,7.5"
             }
+            Self::Disk => {
+                "M2.5,2.5 L11.5,2.5 L13.5,4.5 L13.5,13.5 L2.5,13.5 Z M5,2.5 L5,6 L10,6 L10,2.5 M4.5,13.5 L4.5,9.5 L11.5,9.5 L11.5,13.5"
+            }
+            Self::NewWindow => {
+                "M2.5,4.5 L13.5,4.5 L13.5,13.5 L2.5,13.5 Z M2.5,7 L13.5,7 M6.5,2 L9,2 M9,2 L9,4.5 M9,2 L6,5"
+            }
         }
     }
 
@@ -791,7 +804,9 @@ impl Icon {
             | Self::Resolution
             | Self::Keyboard
             | Self::FullScreen
-            | Self::Lock => Some(GLYPH_STROKE_WIDTH),
+            | Self::Lock
+            | Self::Disk
+            | Self::NewWindow => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }
     }

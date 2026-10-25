@@ -738,8 +738,8 @@ fn the_master_password_is_enabled_from_the_settings_with_its_rules_said_as_typed
         )));
     }
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(
-        heimdall_ui::shell::SettingsTab::Security,
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::Vault,
     ));
     assert!(shell.settings_shown());
     snapshot(&shell, "settings-vault-disabled.png");
@@ -2775,7 +2775,9 @@ fn the_session_numbers_are_typed_in_the_ssh_settings_each_within_its_csharp_rang
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, _, _) = connected_shell(dir.path());
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(heimdall_ui::shell::SettingsTab::Ssh));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::SshSession,
+    ));
     {
         let mut ui = simulator(&shell);
         for label in [
@@ -2829,8 +2831,8 @@ fn the_reachability_check_is_set_in_the_general_settings_within_the_csharp_range
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, _, _) = connected_shell(dir.path());
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(
-        heimdall_ui::shell::SettingsTab::General,
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::Behavior,
     ));
     {
         let mut ui = simulator(&shell);
@@ -3763,7 +3765,9 @@ fn the_settings_page_turns_ssh_auto_reconnect_on_with_its_attempts_as_the_csharp
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(heimdall_ui::shell::SettingsTab::Ssh));
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::SshSession,
+    ));
     let settings = Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
@@ -3787,7 +3791,8 @@ fn the_settings_page_turns_ssh_auto_reconnect_on_with_its_attempts_as_the_csharp
 }
 
 #[test]
-fn the_settings_page_is_in_the_csharp_tabs_and_keeps_the_one_chosen() {
+fn the_settings_page_has_one_rail_under_the_csharp_group_names_and_keeps_the_section_chosen() {
+    use heimdall_ui::settings_rows::SettingsSection;
     use heimdall_ui::shell::SettingsTab;
 
     let dir = tempfile::tempdir().expect("dir");
@@ -3795,21 +3800,23 @@ fn the_settings_page_is_in_the_csharp_tabs_and_keeps_the_one_chosen() {
     let _ = shell.update(Message::ShowSettings);
     {
         let mut ui = simulator(&shell);
-        for tab in ["General", "Terminal", "SSH", "RDP", "Security"] {
-            ui.find(tab).expect(tab);
+        // The group names head the one rail; they are headings, not buttons.
+        for group in ["General", "Terminal", "SSH", "RDP", "Gateways", "Security"] {
+            ui.find(group).expect(group);
         }
         ui.find("Language").expect("General first");
-        assert!(ui.find("Master password").is_err(), "the Security tab's");
-        ui.click("Security").expect("its tab");
-        assert!(
-            ui.into_messages()
-                .any(|message| matches!(message, Message::SettingsTab(SettingsTab::Security)))
-        );
+        assert!(ui.find("Security overview").is_err(), "the Security tab's");
+        ui.click("Appearance").expect("a section of the rail");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::SettingsSection(SettingsSection::Appearance)
+        )));
     }
     let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
     let _ = shell.update(Message::ShowSettings);
     let mut ui = simulator(&shell);
-    ui.find("Master password").expect("the tab chosen, kept");
+    ui.find("Security overview")
+        .expect("the section chosen, kept");
     assert!(ui.find("Language").is_err());
 }
 
@@ -3830,10 +3837,13 @@ fn the_rdp_tab_sets_the_global_rdp_defaults_as_the_csharp_settings() {
         "Redirect clipboard",
         "Enable Network Level Authentication",
         "Allow dynamic resolution updates",
-        "Trusted RDP certificates",
     ] {
         ui.find(said).expect(said);
     }
+    assert!(
+        ui.find("Trusted RDP certificates").is_err(),
+        "on the rail's Certificates"
+    );
     ui.click("Redirect drives").expect("its box");
     assert!(ui.into_messages().any(|message| matches!(
         message,
@@ -5426,8 +5436,8 @@ fn the_general_settings_hold_the_csharp_updates_card_and_check_now() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()).with_release(None));
     let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(
-        heimdall_ui::shell::SettingsTab::General,
+    let _ = shell.update(Message::SettingsSection(
+        heimdall_ui::settings_rows::SettingsSection::Updates,
     ));
     {
         let mut ui = tall(&shell);

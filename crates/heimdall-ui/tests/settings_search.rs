@@ -34,7 +34,7 @@ use heimdall_core::settings::{
 };
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_ui::settings_rows::{SettingRow, SettingsCard};
+use heimdall_ui::settings_rows::{SettingRow, SettingsCard, SettingsSection};
 use heimdall_ui::shell::{
     Destination, Message, SessionField, SettingsTab, Shell, settings_search_field_id,
 };
@@ -389,7 +389,7 @@ fn a_number_is_applied_once_typed_in_its_range_without_enter() {
     let mut shell = shell(dir.path());
     let defaults = Settings::default();
     let saved = || Settings::load(&settings_path(&dir.path().join("profiles.toml")));
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    let _ = shell.update(Message::SettingsSection(SettingsSection::SshSession));
     // Typed key by key, as the C# field bound on `PropertyChanged` takes it: "4" is out of
     // the range, so stays typed with its rule and changes nothing.
     let _ = shell.update(Message::SessionFieldEdited(
@@ -440,7 +440,12 @@ fn the_rdp_keep_alive_is_applied_once_typed_in_its_range_and_never_on_the_way() 
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
     let file = settings_path(&dir.path().join("profiles.toml"));
-    let _ = shell.update(Message::SettingsTab(SettingRow::RdpKeepAlive.tab()));
+    let _ = shell.update(Message::SettingsSection(
+        SettingRow::RdpKeepAlive
+            .card()
+            .section()
+            .expect("on the RDP rail"),
+    ));
     let rule = format!(
         "RDP keep-alive interval must be between {RDP_KEEP_ALIVE_INTERVAL_MIN_MS} and {RDP_KEEP_ALIVE_INTERVAL_MAX_MS} ms."
     );
@@ -549,7 +554,7 @@ fn reset_puts_the_default_back_through_the_settings_and_saves_it() {
     );
     assert!(!saved.session_logging);
 
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    let _ = shell.update(Message::SettingsSection(SettingsSection::SshSession));
     let mut ui = simulator(&shell);
     assert!(ui.find("601").is_err(), "what was typed is gone");
     ui.find(defaults.ssh_keep_alive_interval.to_string().as_str())
@@ -706,11 +711,19 @@ fn without_a_master_password_the_lock_settings_say_so_and_cannot_change() {
         [SettingRow::DisconnectOnLock]
     );
     let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    {
+        let mut ui = simulator(&shell);
+        for said in [
+            "No risky setting",
+            "Auto-lock when idle: Needs the master password",
+            "Disconnect sessions when locking: Needs the master password",
+        ] {
+            ui.find(said).expect(said);
+        }
+    }
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Vault));
     let mut ui = simulator(&shell);
     for said in [
-        "No risky setting",
-        "Auto-lock when idle: Needs the master password",
-        "Disconnect sessions when locking: Needs the master password",
         "Auto-lock and disconnect on lock need the master password above: turn it on to use \
          them.",
         "Auto-lock after idle (0 = off)",
@@ -758,6 +771,7 @@ fn the_lock_settings_are_marked_reset_and_shown_in_the_security_overview() {
                 .any(|message| matches!(message, Message::GoToSetting(SettingRow::AutoLock)))
         );
     }
+    let _ = shell.update(Message::GoToSetting(SettingRow::AutoLock));
 
     // Out of the C# range, it stays typed, its rule said, and nothing changes.
     let _ = shell.update(Message::SessionFieldEdited(
@@ -787,6 +801,7 @@ fn the_lock_settings_are_marked_reset_and_shown_in_the_security_overview() {
         shell.settings_found("Modified"),
         [SettingRow::AutoLock, SettingRow::DisconnectOnLock]
     );
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Overview));
     {
         let mut ui = simulator(&shell);
         for said in [
@@ -865,13 +880,13 @@ fn putty_and_the_x_server_are_typed_applied_found_and_reset_on_the_ssh_tab() {
         "the card's heading finds its rows"
     );
     let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    simulator(&shell)
+        .find("PuTTY path (for External SSH mode)")
+        .expect("on Connection, the SSH rail's first");
+    let _ = shell.update(Message::SettingsSection(SettingsSection::SftpX11));
     {
         let mut ui = simulator(&shell);
-        for said in [
-            "PuTTY path (for External SSH mode)",
-            "X11 server path",
-            "Auto-start X11 server when needed",
-        ] {
+        for said in ["X11 server path", "Auto-start X11 server when needed"] {
             ui.find(said).expect(said);
         }
     }
@@ -1265,6 +1280,7 @@ fn a_skipped_release_is_said_on_the_updates_card_and_offered_again() {
     .save(&settings_path(&dir.path().join("profiles.toml")))
     .expect("saved");
     let mut shell = shell(dir.path());
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Updates));
     let messages: Vec<Message> = {
         let mut ui = simulator(&shell);
         ui.find("Skipped version: 2026.101001")
@@ -1412,10 +1428,13 @@ fn credential_guard_is_required_found_marked_its_state_said_and_reset_on_the_sec
         shell.settings_found("credential guard"),
         [SettingRow::RequireCredentialGuard]
     );
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    let _ = shell.update(Message::SettingsSection(SettingsSection::ConnectionChecks));
+    simulator(&shell)
+        .find("Require Credential Guard")
+        .expect("the C# label");
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Overview));
     {
         let mut ui = simulator(&shell);
-        ui.find("Require Credential Guard").expect("the C# label");
         ui.find("Credential Guard: Not required")
             .expect("the overview line");
         assert!(
@@ -1438,7 +1457,9 @@ fn credential_guard_is_required_found_marked_its_state_said_and_reset_on_the_sec
             "unknown yet"
         );
     }
-    // Where PowerShell is kept from starting, the reason is said for the administrator.
+    // Where PowerShell is kept from starting, the reason is said for the administrator, on
+    // the card of the check.
+    let _ = shell.update(Message::SettingsSection(SettingsSection::ConnectionChecks));
     let _ = shell.update(Message::App(AppMessage::CredentialGuard(
         Status::Indeterminate(Failure::NotStarted("blocked by group policy".to_owned())),
     )));
@@ -1470,7 +1491,7 @@ fn the_known_hosts_import_is_found_marked_flagged_in_the_overview_and_reset() {
         shell.settings_found("known_hosts file at startup"),
         [SettingRow::SyncKnownHostsAtStartup]
     );
-    let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    let _ = shell.update(Message::SettingsSection(SettingsSection::SshHostKeys));
     {
         let mut ui = simulator(&shell);
         ui.find("Import the OpenSSH known_hosts file at startup")
@@ -1521,7 +1542,8 @@ fn the_legacy_migration_is_offered_again_from_the_updates_card_once_declined() {
         "This becomes available only after you decline a migration offer at startup.";
     let _english = english();
     let dir = tempfile::tempdir().expect("dir");
-    let shown = shell(dir.path());
+    let mut shown = shell(dir.path());
+    let _ = shown.update(Message::SettingsSection(SettingsSection::Updates));
     assert_eq!(
         shown.settings_found("legacy migration"),
         [SettingRow::LegacyMigration]
@@ -1548,7 +1570,8 @@ fn the_legacy_migration_is_offered_again_from_the_updates_card_once_declined() {
     declined
         .save(&settings_path(&dir.path().join("profiles.toml")))
         .expect("saved");
-    let shown = shell(dir.path());
+    let mut shown = shell(dir.path());
+    let _ = shown.update(Message::SettingsSection(SettingsSection::Updates));
     let mut ui = simulator(&shown);
     assert!(ui.find(HINT).is_err(), "available");
     ui.click(BUTTON).expect("the button");
@@ -1784,4 +1807,179 @@ fn a_refused_citrix_value_is_said_under_its_field_and_the_old_one_kept() {
     assert!(!shell.tool_path_refused(ToolPath::CitrixStorePrefix));
     let _ = shell.update(Message::ToolPathApply(ToolPath::CitrixStorePrefix));
     assert_eq!(saved(dir.path()).citrix_cache_store_prefix, "Corp");
+}
+
+/// Whether the page `shell` draws says `said`.
+fn shows(shell: &Shell, said: &str) -> bool {
+    simulator(shell).find(said).is_ok()
+}
+
+#[test]
+fn one_rail_lists_every_section_under_its_group_and_opens_one_alone() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    {
+        let mut ui = simulator(&shell);
+        // The six group names are headings, and every section of every group is listed.
+        for tab in ["General", "Terminal", "SSH", "RDP", "Gateways", "Security"] {
+            ui.find(tab).expect(tab);
+        }
+        for name in [
+            "Appearance",
+            "Updates",
+            "Welcome tour",
+            "Host keys",
+            "Display & Audio",
+            "Certificates",
+            "Overview",
+            "Master password & PIN",
+            "Credential provider",
+            "Connection checks",
+        ] {
+            ui.find(name).expect(name);
+        }
+        ui.find("No risky setting")
+            .expect("the overview, the first section of Security");
+        assert!(
+            ui.find("Require Credential Guard").is_err(),
+            "another section's"
+        );
+        ui.click("Connection checks")
+            .expect("its section on the rail");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::SettingsSection(SettingsSection::ConnectionChecks)
+        )));
+    }
+    let _ = shell.update(Message::SettingsSection(SettingsSection::ConnectionChecks));
+    assert!(shows(&shell, "Require Credential Guard"));
+    assert!(!shows(&shell, "No risky setting"), "the overview gave way");
+    // A group's name opens its first section.
+    let _ = shell.update(Message::SettingsTab(SettingsTab::General));
+    assert!(shows(&shell, "Language"), "General opens on Appearance");
+    assert!(!shows(&shell, "Check for updates automatically"));
+    assert!(!shows(&shell, "Show the tour again"));
+}
+
+#[test]
+fn the_apply_glyphs_are_explained_once_at_the_foot_of_the_rail() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Terminal));
+    let mut ui = simulator(&shell);
+    for said in [
+        "Applies immediately",
+        "Saved immediately",
+        "Applies to connections opened after the change",
+    ] {
+        ui.find(said).expect(said);
+    }
+    // The cards carry the glyph alone: the old line under a title is gone.
+    assert!(
+        ui.find("Applies to sessions opened after the change")
+            .is_err()
+    );
+}
+
+#[test]
+fn the_rdp_reset_shows_under_each_rdp_section_and_under_no_other() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Rdp));
+    assert!(shows(&shell, "Default RDP mode"), "Display & Audio first");
+    for section in SettingsSection::ALL {
+        let _ = shell.update(Message::SettingsSection(section));
+        assert_eq!(
+            shows(&shell, "Reset RDP defaults"),
+            section.tab() == SettingsTab::Rdp,
+            "{section:?}"
+        );
+    }
+}
+
+#[test]
+fn go_to_setting_opens_the_section_that_shows_the_row() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    let _ = shell.update(Message::GoToSetting(SettingRow::RequireCredentialGuard));
+    assert!(shows(&shell, "Require Credential Guard"));
+    // From another group, into a section that is not its group's first.
+    let _ = shell.update(Message::GoToSetting(SettingRow::UpdateChecks));
+    assert!(shows(&shell, "Check for updates automatically"));
+    assert!(!shows(&shell, "Language"), "Appearance gave way");
+    let _ = shell.update(Message::GoToSetting(SettingRow::PuttyPath));
+    assert!(shows(&shell, "PuTTY path (for External SSH mode)"));
+}
+
+#[test]
+fn up_and_down_move_along_the_one_rail_once_clicked_and_round() {
+    use heimdall_app::files::FilesKey;
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(Message::SettingsTab(SettingsTab::General));
+    // Before the rail is clicked, a field or a list may have the keys: they move nothing.
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert!(
+        shows(&shell, "Language"),
+        "the rail does not have the keyboard"
+    );
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Appearance));
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert!(
+        shows(&shell, "Enable background reachability probes"),
+        "Behavior, below Appearance"
+    );
+    assert!(!shows(&shell, "Language"));
+    let _ = shell.update(Message::FilesKey(FilesKey::Previous));
+    assert!(shows(&shell, "Language"), "and back up");
+    // Up from the first goes round to the last section of the last group.
+    let _ = shell.update(Message::FilesKey(FilesKey::Previous));
+    assert!(
+        shows(&shell, "Require Credential Guard"),
+        "Connection checks, as the C# rail cycles"
+    );
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert!(shows(&shell, "Language"), "down from the last, the first");
+    // Down from the last section of a group crosses the next group's name, which is no stop.
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Onboarding));
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert!(
+        shows(&shell, "Session Logging"),
+        "the Terminal group's only section"
+    );
+    assert!(!shows(&shell, "Show the tour again"));
+    // A press elsewhere, a field or a list, takes the keyboard from the rail.
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Appearance));
+    let _ = shell.update(Message::PointerPressed);
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert!(shows(&shell, "Language"), "a press elsewhere");
+    // So does Tab.
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Appearance));
+    let _ = shell.update(Message::TabKey { backward: false });
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert!(shows(&shell, "Language"), "Tab leaves the rail");
+    // A search shown has no section open: the keys leave the sections alone.
+    let _ = shell.update(Message::SettingsSection(SettingsSection::Appearance));
+    let _ = shell.update(Message::SettingsSearch("tour".to_owned()));
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    let _ = shell.update(Message::SettingsSearch(String::new()));
+    assert!(shows(&shell, "Language"));
+}
+
+#[test]
+fn the_search_finds_a_row_of_a_section_that_is_not_open() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    assert!(!shows(&shell, "Require Credential Guard"));
+    let _ = shell.update(Message::SettingsSearch("credential guard".to_owned()));
+    assert!(shows(&shell, "Require Credential Guard"));
 }

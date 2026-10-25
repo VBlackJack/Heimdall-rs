@@ -110,7 +110,7 @@ pub use crate::profile_tabs::ProfileTab;
 use crate::report;
 use crate::search_keys::SearchKeys;
 pub use crate::session_settings::SessionField;
-use crate::settings_rows::{SettingRow, ToolPath};
+use crate::settings_rows::{SettingRow, SettingsSection, ToolPath};
 use crate::split_view::{self, Shape, SplitView};
 use crate::styles;
 use crate::terminal_view::TerminalView;
@@ -871,8 +871,10 @@ pub enum Message {
     FocusBulkPasswordField(usize),
     /// Hand the password typed twice in the bulk password dialog to the core.
     SubmitBulkPassword,
-    /// Show this tab of the Settings page.
+    /// Open the first section of this group of the Settings rail.
     SettingsTab(SettingsTab),
+    /// Open this section of the Settings rail.
+    SettingsSection(SettingsSection),
     /// Show this tab of the profile form.
     ProfileTab(ProfileTab),
     /// The RDP profile form's "Refresh" of its monitors, as the C# `RefreshMonitorsCommand`:
@@ -1256,6 +1258,7 @@ impl fmt::Debug for Message {
             Self::FocusBulkPasswordField(index) => write!(f, "FocusBulkPasswordField({index})"),
             Self::SubmitBulkPassword => f.write_str("SubmitBulkPassword"),
             Self::SettingsTab(tab) => write!(f, "SettingsTab({tab:?})"),
+            Self::SettingsSection(section) => write!(f, "SettingsSection({section:?})"),
             Self::ProfileTab(tab) => write!(f, "ProfileTab({tab:?})"),
             Self::RefreshMonitors => f.write_str("RefreshMonitors"),
             Self::SettingsSearch(typed) => write!(f, "SettingsSearch({typed:?})"),
@@ -1601,7 +1604,7 @@ impl SettingsTab {
         Self::Security,
     ];
 
-    fn label(self) -> String {
+    pub(crate) fn label(self) -> String {
         match self {
             Self::General => fl!("ui-settings-tab-general"),
             Self::Terminal => fl!("ui-settings-tab-terminal"),
@@ -1789,8 +1792,12 @@ pub struct Shell {
     host_key_search: String,
     /// How the trusted SSH host keys are sorted, while the application runs.
     host_key_sort: HostKeySort,
-    /// The Settings tab shown, kept while the application runs.
-    settings_tab: SettingsTab,
+    /// The section open on the Settings rail, kept while the application runs.
+    settings_section: SettingsSection,
+    /// Whether the Settings rail has the keyboard, as the C# rail's single Tab stop: from a
+    /// click on a section until the next press elsewhere or Tab, so Up and Down never move
+    /// it while a field or a list has them.
+    settings_rail_focused: bool,
     /// The profile form's tab shown, General each time the form opens.
     profile_tab: ProfileTab,
     /// Whether a save of the open profile form was refused: from then on, as the C# server
@@ -2108,7 +2115,8 @@ impl Shell {
             session_typed: Default::default(),
             host_key_search: String::new(),
             host_key_sort: HostKeySort::default(),
-            settings_tab: SettingsTab::default(),
+            settings_section: SettingsSection::first_of(SettingsTab::default()),
+            settings_rail_focused: false,
             profile_tab: ProfileTab::default(),
             profile_refused: false,
             settings_search: String::new(),
@@ -2955,6 +2963,11 @@ impl Shell {
             message,
             Message::FilesKey(_) | Message::DialogKey { .. } | Message::TabKey { .. }
         ) || (matches!(message, Message::TypeAhead(_)) && !self.tree_focused);
+        if let Message::FilesKey(key) = &message
+            && let Some(task) = self.settings_rail_key(*key)
+        {
+            return task;
+        }
         let effects = match message {
             Message::App(message) => self.update_app(message),
             Message::Editor(message) => self.editors.update(message, &mut self.app),
@@ -2965,6 +2978,7 @@ impl Shell {
             | Message::ProviderUnlock(_)
             | Message::Search(_)
             | Message::SettingsTab(_)
+            | Message::SettingsSection(_)
             | Message::ProfileTab(_)
             | Message::ProfilePassword(_)
             | Message::BulkPasswordField { .. }
@@ -2991,6 +3005,8 @@ impl Shell {
             | Message::InFloating(..) => Vec::new(),
             Message::FilesKey(key) => self.files_key(key),
             Message::TabKey { backward } => {
+                // Tab leaves the rail, as from the C# rail's single stop.
+                self.settings_rail_focused = false;
                 if self.tab_moves_focus() {
                     // Through the dialog's fields alone, never those under its veil; else
                     // the main window's: an operation reaches every window, and a tab's own
@@ -3375,10 +3391,21 @@ impl Shell {
             Message::FocusVaultField(index) => return operation::focus(vault_field_id(index)),
             Message::Search(term) => self.search = term,
             Message::SettingsTab(tab) => {
-                self.settings_tab = tab;
-                // A tab chosen is shown whole: the search, and the row outlined, give way.
+                self.settings_section = SettingsSection::first_of(tab);
+                self.settings_rail_focused = false;
+                // A section chosen is shown whole: the search, and the row outlined, give way.
                 self.settings_search.clear();
                 self.settings_highlight = None;
+            }
+            Message::SettingsSection(section) => {
+                self.settings_section = section;
+                // A click on the rail gives it the keyboard; the press before it took it
+                // from wherever it was.
+                self.settings_rail_focused = true;
+                self.settings_search.clear();
+                self.settings_highlight = None;
+                // A section opens at its top.
+                return operation::snap_to(settings_page::scroll_id(), RelativeOffset::START);
             }
             Message::ProfileTab(tab) => {
                 self.profile_tab = tab;
@@ -3483,7 +3510,7 @@ impl Shell {
                 Task::none()
             }
             Message::ManageGateways => {
-                self.settings_tab = SettingsTab::Gateways;
+                self.settings_section = SettingsSection::Gateways;
                 self.view_message(&Message::ShowSettings)
             }
             Message::Navigate(destination) => {
@@ -7487,6 +7514,9 @@ impl Shell {
                 }
             }
             Message::PointerPressed => {
+                // Whatever the press is on, the rail no longer has the keyboard; a click on
+                // a section gives it back once released.
+                self.settings_rail_focused = false;
                 self.dragged_out.clear();
                 self.tab_drop_area = None;
                 self.tab_drag = self
@@ -9746,23 +9776,6 @@ fn open_with_system(target: std::path::PathBuf) -> Task<Message> {
             Message::Tick
         },
     )
-}
-
-/// The tabs of the Settings page and the `page` of the one `shown`, as the C#
-/// `ThemedTabControlStyle` (`CommonControls.xaml:1118-1160`): the headers on the window's
-/// background over a line, then the page on a card, all in one rounded, bordered frame.
-fn settings_tabs(shown: SettingsTab, page: Element<'_, Message>) -> Element<'_, Message> {
-    let headers = tab_strip(
-        SettingsTab::ALL,
-        shown,
-        SettingsTab::label,
-        Message::SettingsTab,
-        |_| 0,
-    );
-    container(column![tab_headers(headers), page])
-        .width(Length::Fill)
-        .style(styles::tab_frame)
-        .into()
 }
 
 /// The `headers` of a tab control on the window's background, rounded at the top, over the

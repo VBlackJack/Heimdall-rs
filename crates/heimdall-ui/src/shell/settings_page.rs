@@ -27,6 +27,7 @@
 use std::path::PathBuf;
 
 use heimdall_app::credential_guard::{self, CHECK_TIME_LIMIT};
+use heimdall_app::files::FilesKey;
 use heimdall_app::profile_draft::ProfileField;
 use heimdall_app::update_check::{Failure, ReleaseTag, minutes_to_wait};
 use heimdall_app::windows_hello;
@@ -43,7 +44,7 @@ use heimdall_core::settings::{
     RDP_AUTO_RECONNECT_ATTEMPTS_MIN, SSH_AUTO_RECONNECT_ATTEMPTS_MAX,
     SSH_AUTO_RECONNECT_ATTEMPTS_MIN, Settings, settings_path,
 };
-use iced::widget::scrollable::RelativeOffset;
+use iced::widget::scrollable::{AbsoluteOffset, RelativeOffset};
 use iced::widget::{
     Column, button, checkbox, column, container, operation, pick_list, row, text, tooltip,
 };
@@ -52,7 +53,7 @@ use iced::{Element, Length, Task, Theme};
 use super::{
     AgentChoice, CONNECT_TIMEOUTS, CtrlKChoice, CtrlVChoice, FONT_SIZE_FIELD_WIDTH, FontChoice,
     LanguageChoice, Message, PolicyChoice, SETTINGS_WIDTH, SchemeChoice, SessionField,
-    SessionsChoice, SettingsMessage, SettingsTab, Shell, TimeoutChoice, settings_tabs,
+    SessionsChoice, SettingsMessage, SettingsTab, Shell, TimeoutChoice,
 };
 use crate::browse::{BrowseTarget, browse_button};
 use crate::external_tools_view::ToolsEdit;
@@ -61,7 +62,8 @@ use crate::icons::{self, Icon, Tint};
 use crate::mobaxterm_variables_view::VariablesEdit;
 use crate::search_keys::SearchKeys;
 use crate::settings_rows::{
-    PostureKey, PostureLine, PostureState, SettingRow, SettingsCard, posture,
+    Applies, ApplyGlyph, PostureKey, PostureLine, PostureState, SettingRow, SettingsCard,
+    SettingsSection, posture,
 };
 use crate::styles;
 use crate::themes::{AccentChoice, ThemeChoice};
@@ -82,6 +84,56 @@ const RESET_PADDING: [f32; 2] = [1.0, 6.0];
 
 /// Space inside the "Modified" badge, above and below then beside, as the C# badge's.
 const BADGE_PADDING: [f32; 2] = [0.0, 6.0];
+
+/// Width of the section rail, as the C# `SettingsRailWidth`: the longest French name on one
+/// line.
+const RAIL_WIDTH: f32 = 210.0;
+
+/// Thickness of the accent's bar at the left of the open section, as the C#
+/// `SettingsRailSelectedBar`.
+const RAIL_BAR_WIDTH: f32 = 3.0;
+
+/// Height of a section's line, as the C# rail item's `MinHeight`.
+const RAIL_ITEM_HEIGHT: f32 = 34.0;
+
+/// Room around a section's name, above and below then beside, as the C# rail item's.
+const RAIL_ITEM_PADDING: [f32; 2] = [7.0, 12.0];
+
+/// Between two lines of the rail, as the C# rail item's bottom margin.
+const RAIL_ITEM_GAP: f32 = 2.0;
+
+/// Height of a group's name on the rail: the room above it that sets the groups apart, as
+/// the C# `SettingsRailGroupHeaderMargin`, and its line.
+const RAIL_GROUP_HEIGHT: f32 = 34.0;
+
+/// Room around a group's name, above then beside, the C# header's `12,14,0,4`.
+const RAIL_GROUP_PADDING: iced::Padding = iced::Padding {
+    top: 14.0,
+    right: 0.0,
+    bottom: 4.0,
+    left: 12.0,
+};
+
+/// Room around the rail: the page's own above and below, the page's edge at its left, and the
+/// C# rail border's 8 at its right.
+const RAIL_PADDING: iced::Padding = iced::Padding {
+    top: spacing::LG,
+    right: spacing::SM,
+    bottom: spacing::SM,
+    left: spacing::MD,
+};
+
+/// Room around the legend of the apply glyphs at the foot of the rail, the C#
+/// `SettingsRailLegendMargin`.
+const RAIL_LEGEND_PADDING: iced::Padding = iced::Padding {
+    top: 8.0,
+    right: spacing::SM,
+    bottom: spacing::MD,
+    left: spacing::MD,
+};
+
+/// Side of the glyph beside a card's title, as the C# `SettingsApplyGlyphStyle`.
+const APPLY_GLYPH_SIDE: f32 = 14.0;
 
 /// Width of the outline of the row a "Go to setting" showed.
 const HIGHLIGHT_EDGE: f32 = 2.0;
@@ -142,8 +194,13 @@ pub fn search_field_id() -> iced::widget::Id {
 }
 
 /// Widget identifier of the Settings page's scrolled content.
-fn scroll_id() -> iced::widget::Id {
+pub(super) fn scroll_id() -> iced::widget::Id {
     iced::widget::Id::new("settings-page")
+}
+
+/// Widget identifier of the rail's scrolled list.
+fn rail_scroll_id() -> iced::widget::Id {
+    iced::widget::Id::new("settings-rail")
 }
 
 /// A list of `options` with `selected` chosen, in the application's list style.
@@ -179,6 +236,184 @@ fn with_unit<'a>(
     row![control.into(), text(unit)]
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center)
+}
+
+/// `body` no wider than the C# `SettingsContentMaxWidth`, against the rail, scrolled as the
+/// C# `ScrollViewer` of a section. The scroll area takes all the width left, so its bar sits
+/// at the window's edge, and the cards fill the cap.
+fn scrolled(body: Column<'_, Message>) -> Element<'_, Message> {
+    styles::scroll(
+        container(
+            container(body.spacing(spacing::LG).width(Length::Fill)).max_width(SETTINGS_WIDTH),
+        )
+        .width(Length::Fill)
+        .padding(spacing::LG),
+    )
+    .id(scroll_id())
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+/// The glyph that stands for `glyph` beside a card's title and in the rail's legend.
+const fn apply_icon(glyph: ApplyGlyph) -> Icon {
+    match glyph {
+        ApplyGlyph::Immediate => Icon::Lightning,
+        ApplyGlyph::SavedAtOnce => Icon::Disk,
+        ApplyGlyph::NextConnection => Icon::NewWindow,
+    }
+}
+
+/// What a card that `applies` says of when its settings take effect: the glyph's tooltip.
+fn applies_text(applies: Applies) -> String {
+    match applies {
+        Applies::Immediately => fl!("ui-settings-applies-immediately"),
+        Applies::SavedAtOnce => fl!("ui-settings-saved-immediately"),
+        Applies::NewConnections => fl!("ui-settings-applies-new-connections"),
+        Applies::NewSessions => fl!("ui-settings-applies-new-sessions"),
+    }
+}
+
+/// The glyph of `applies`, in the accent, its text in a tooltip, as the C# glyph beside a card's
+/// title.
+fn applies_glyph<'a>(applies: Applies) -> Element<'a, Message> {
+    styles::tip(
+        icons::icon(apply_icon(applies.glyph()), Tint::Accent, APPLY_GLYPH_SIDE),
+        text(applies_text(applies)).size(font_size::CAPTION),
+        tooltip::Position::Bottom,
+    )
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
+    .into()
+}
+
+/// The three glyphs and what each says, once, as the C# legend at the foot of its rail.
+fn apply_legend<'a>() -> Element<'a, Message> {
+    let mut legend = Column::new().spacing(spacing::XS);
+    for glyph in ApplyGlyph::ALL {
+        legend = legend.push(
+            row![
+                icons::icon(apply_icon(glyph), Tint::Accent, APPLY_GLYPH_SIDE),
+                text(applies_text(glyph.applies()))
+                    .size(font_size::CAPTION)
+                    .style(text::secondary),
+            ]
+            .spacing(spacing::SM),
+        );
+    }
+    container(legend)
+        .padding(RAIL_LEGEND_PADDING)
+        .width(RAIL_WIDTH)
+        .into()
+}
+
+/// The rail down the left, as the C# `SettingsRailTabControlStyle` of the single rail: every
+/// section under the name of its group, each a line of its name, the one `open` marked by the
+/// accent's bar at its left and its name semi-bold. A group's name is a heading, not a stop.
+/// Once a section is clicked, Up and Down move along it, as the C# rail's arrow keys. The list
+/// scrolls when the window is too short for it, as the C# rail's `ScrollViewer`, the legend of
+/// the apply glyphs staying in sight under it.
+fn section_rail<'a>(open: SettingsSection) -> Element<'a, Message> {
+    let mut rail = Column::new().spacing(RAIL_ITEM_GAP).width(RAIL_WIDTH);
+    for tab in SettingsTab::ALL {
+        rail = rail.push(
+            container(
+                text(tab.label())
+                    .size(font_size::CAPTION)
+                    .font(styles::SEMIBOLD)
+                    .style(text::secondary),
+            )
+            .padding(RAIL_GROUP_PADDING)
+            .height(RAIL_GROUP_HEIGHT)
+            .align_y(iced::alignment::Vertical::Bottom),
+        );
+        for section in SettingsSection::of_tab(tab) {
+            let selected = section == open;
+            let name = text(section_label(section)).size(font_size::BODY);
+            let name = if selected {
+                name.font(styles::SEMIBOLD)
+            } else {
+                name
+            };
+            rail = rail.push(
+                button(
+                    row![
+                        container(iced::widget::space())
+                            .width(RAIL_BAR_WIDTH)
+                            .height(Length::Fill)
+                            .style(styles::underline(selected)),
+                        container(name)
+                            .padding(RAIL_ITEM_PADDING)
+                            .center_y(Length::Fill),
+                    ]
+                    .height(RAIL_ITEM_HEIGHT),
+                )
+                .padding(0)
+                .width(Length::Fill)
+                .style(styles::rail_item(selected))
+                .on_press(Message::SettingsSection(section)),
+            );
+        }
+    }
+    column![
+        styles::scroll(rail.padding(RAIL_PADDING))
+            .id(rail_scroll_id())
+            .height(Length::Fill),
+        apply_legend(),
+    ]
+    .width(RAIL_WIDTH + RAIL_PADDING.left + RAIL_PADDING.right)
+    .into()
+}
+
+/// How far down the rail the name of `section`'s group is: the lines above it, so scrolling
+/// there keeps the group's name in sight with the section.
+fn rail_group_offset(section: SettingsSection) -> f32 {
+    let mut offset = 0.0;
+    for tab in SettingsTab::ALL {
+        if tab == section.tab() {
+            break;
+        }
+        offset += RAIL_GROUP_HEIGHT + RAIL_ITEM_GAP;
+        for _ in SettingsSection::of_tab(tab) {
+            offset += RAIL_ITEM_HEIGHT + RAIL_ITEM_GAP;
+        }
+    }
+    offset
+}
+
+/// The upright line between the rail and the section open, as the C# rail's right edge.
+fn vertical_divider<'a>() -> Element<'a, Message> {
+    container(iced::widget::space())
+        .width(BORDER_WIDTH)
+        .height(Length::Fill)
+        .style(styles::divider)
+        .into()
+}
+
+/// The name of `section` on its rail.
+fn section_label(section: SettingsSection) -> String {
+    match section {
+        SettingsSection::Appearance => fl!("ui-settings-section-appearance"),
+        SettingsSection::Behavior => fl!("ui-settings-section-behavior"),
+        SettingsSection::Updates => fl!("ui-settings-section-updates"),
+        SettingsSection::Import => fl!("ui-settings-section-import"),
+        SettingsSection::SharedSources => fl!("ui-settings-section-shared-sources"),
+        SettingsSection::Tools => fl!("ui-settings-section-tools"),
+        SettingsSection::Onboarding => fl!("ui-settings-section-onboarding"),
+        SettingsSection::Terminal => fl!("ui-settings-section-terminal"),
+        SettingsSection::SshConnection => fl!("ui-settings-section-ssh-connection"),
+        SettingsSection::SshSession => fl!("ui-settings-section-ssh-session"),
+        SettingsSection::SftpX11 => fl!("ui-settings-section-sftp-x11"),
+        SettingsSection::SshHostKeys => fl!("ui-settings-section-ssh-host-keys"),
+        SettingsSection::RdpDisplay => fl!("ui-settings-section-rdp-display"),
+        SettingsSection::RdpBehavior => fl!("ui-settings-section-rdp-behavior"),
+        SettingsSection::RdpCertificates => fl!("ui-settings-section-rdp-certificates"),
+        SettingsSection::Gateways => fl!("ui-settings-section-gateways"),
+        SettingsSection::Overview => fl!("ui-settings-section-overview"),
+        SettingsSection::Vault => fl!("ui-settings-section-vault"),
+        SettingsSection::Provider => fl!("ui-settings-section-provider"),
+        SettingsSection::ConnectionChecks => fl!("ui-settings-section-connection-checks"),
+    }
 }
 
 /// A line under the page's bar, as the C# bar's lower edge.
@@ -734,32 +969,35 @@ fn posture_line<'a>(line: PostureLine) -> Element<'a, Message> {
 }
 
 impl Shell {
-    /// The Settings page: its heading with the search, then the tab chosen, or what the
-    /// search finds.
+    /// The Settings page: its heading with the search, then the one rail and the section it
+    /// has open, or what the search finds. The rail and the section sit straight on the
+    /// window's background, only the cards keeping a surface, and the section's scroll bar is
+    /// the window's right edge, as the C# single rail.
     pub(super) fn settings_page(&self) -> Element<'_, Message> {
         let query = self.settings_search.trim();
         let body = if query.is_empty() {
-            self.settings_tab_page(self.settings_tab)
+            self.settings_section_page(self.settings_section)
         } else {
             self.search_results(query)
         };
-        // The tab shown joins the card under it, in the rounded frame of the C#'s tab
-        // control; its cards in the middle.
-        let content = container(
-            container(body.spacing(spacing::LG).width(Length::Fill)).max_width(SETTINGS_WIDTH),
-        )
-        .center_x(Length::Fill)
-        .padding(spacing::LG);
-        styles::scroll(
-            column![
-                self.settings_header(),
-                divider(),
-                settings_tabs(self.settings_tab, content.into()),
+        let bar = container(column![self.settings_header(), divider()].spacing(spacing::SM))
+            .padding(iced::Padding {
+                top: spacing::MD,
+                right: spacing::MD,
+                bottom: 0.0,
+                left: spacing::MD,
+            });
+        column![
+            bar,
+            row![
+                section_rail(self.settings_section),
+                vertical_divider(),
+                scrolled(body)
             ]
-            .spacing(spacing::SM)
-            .padding(spacing::MD),
-        )
-        .id(scroll_id())
+            .height(Length::Fill),
+        ]
+        .spacing(spacing::SM)
+        .height(Length::Fill)
         .into()
     }
 
@@ -832,15 +1070,19 @@ impl Shell {
         header.into()
     }
 
-    /// The cards of `tab`; the Security tab's under its security overview, as the C#.
-    fn settings_tab_page(&self, tab: SettingsTab) -> Column<'_, Message> {
+    /// The cards of `section`; the overview's posture first, and, under an RDP section, the
+    /// card that stays under every section of its group, as the C# "Reset RDP defaults".
+    fn settings_section_page(&self, section: SettingsSection) -> Column<'_, Message> {
         let mut page = Column::new();
-        if tab == SettingsTab::Security {
+        if section == SettingsSection::Overview {
             page = page.push(self.posture_card());
+        }
+        for card in section.cards() {
+            page = page.push(self.card_view(card, &card.rows()));
         }
         for card in SettingsCard::ALL
             .into_iter()
-            .filter(|card| card.tab() == tab)
+            .filter(|card| card.tab() == section.tab() && card.section().is_none())
         {
             page = page.push(self.card_view(card, &card.rows()));
         }
@@ -924,12 +1166,17 @@ impl Shell {
             body = body.push(unreadable);
         }
         // Its heading semi-bold at its top, as the C# card's section title.
+        // and, beside it, the glyph that says when its settings take effect.
         let mut shown = Column::new().spacing(spacing::MD);
         if let Some(heading) = card_heading(card) {
+            let title = text(heading)
+                .size(font_size::SUBTITLE)
+                .font(styles::SEMIBOLD);
             shown = shown.push(
-                text(heading)
-                    .size(font_size::SUBTITLE)
-                    .font(styles::SEMIBOLD),
+                row![title]
+                    .push(card.applies().map(applies_glyph))
+                    .spacing(spacing::SM)
+                    .align_y(iced::Alignment::Center),
             );
         }
         let shown = shown.push(body);
@@ -2105,6 +2352,47 @@ impl Shell {
             .into()
     }
 
+    /// The rail scrolled to the name of the open section's group, so the section is in sight
+    /// after a jump on a window too short to show the whole rail.
+    fn rail_in_sight(&self) -> Task<Message> {
+        operation::scroll_to(
+            rail_scroll_id(),
+            AbsoluteOffset {
+                x: 0.0,
+                y: rail_group_offset(self.settings_section),
+            },
+        )
+    }
+
+    /// `key`, when it is Up or Down while the rail has the keyboard, over the Settings page
+    /// with no search, dialog, menu, tour or gate: the section above or below opened, across
+    /// the groups' names and cycling round as the C# rail's `DirectionalNavigation="Cycle"`.
+    /// The task that shows it, when the key was the rail's.
+    pub(super) fn settings_rail_key(&mut self, key: FilesKey) -> Option<Task<Message>> {
+        let step = match key {
+            FilesKey::Previous => -1,
+            FilesKey::Next => 1,
+            _ => return None,
+        };
+        if !self.settings_rail_focused
+            || !self.settings_shown()
+            || self.app.dialog.is_some()
+            || self.menu.is_some()
+            || self.tour.is_some()
+            || self.gated()
+            || !self.settings_search.is_empty()
+        {
+            return None;
+        }
+        self.settings_section = self.settings_section.moved(step);
+        self.settings_highlight = None;
+        // A section opens at its top.
+        Some(Task::batch([
+            operation::snap_to(scroll_id(), RelativeOffset::START),
+            self.rail_in_sight(),
+        ]))
+    }
+
     /// The search typed, "Find modified settings", or a "Go to setting" followed.
     pub(super) fn settings_search_message(&mut self, message: Message) -> Task<Message> {
         match message {
@@ -2121,10 +2409,17 @@ impl Shell {
                 operation::focus(field.clone()).chain(operation::move_cursor_to_end(field))
             }
             Message::GoToSetting(row) => {
-                self.settings_tab = row.tab();
+                // Into the section that shows it, as the C# selects it on the rail.
+                self.settings_section = row
+                    .card()
+                    .section()
+                    .unwrap_or_else(|| SettingsSection::first_of(row.tab()));
                 self.settings_search.clear();
                 self.settings_highlight = Some(row);
-                operation::snap_to(scroll_id(), RelativeOffset::START)
+                Task::batch([
+                    operation::snap_to(scroll_id(), RelativeOffset::START),
+                    self.rail_in_sight(),
+                ])
             }
             _ => Task::none(),
         }
@@ -2150,5 +2445,58 @@ impl Shell {
             Some(message) => self.app.update(AppMessage::Settings(message)),
             None => Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_way_of_applying_has_its_own_text() {
+        let texts = [
+            Applies::Immediately,
+            Applies::SavedAtOnce,
+            Applies::NewConnections,
+            Applies::NewSessions,
+        ]
+        .map(applies_text);
+        for (index, said) in texts.iter().enumerate() {
+            assert!(!said.is_empty());
+            assert!(!texts[..index].contains(said), "{said} twice");
+        }
+    }
+
+    #[test]
+    fn the_glyphs_are_three_distinct_icons_and_the_legend_text_is_the_card_text() {
+        let icons = ApplyGlyph::ALL.map(apply_icon);
+        assert_eq!(icons, [Icon::Lightning, Icon::Disk, Icon::NewWindow]);
+        // A card that applies to sessions shows the legend's glyph, with its own words.
+        assert_eq!(
+            apply_icon(Applies::NewSessions.glyph()),
+            apply_icon(ApplyGlyph::NextConnection)
+        );
+        assert_ne!(
+            applies_text(Applies::NewSessions),
+            applies_text(ApplyGlyph::NextConnection.applies())
+        );
+    }
+
+    #[test]
+    fn every_section_has_a_name_and_the_rail_offset_grows_by_group() {
+        for section in SettingsSection::ALL {
+            assert!(!section_label(section).is_empty(), "{section:?}");
+        }
+        let mut last = -1.0;
+        for tab in SettingsTab::ALL {
+            let offset = rail_group_offset(SettingsSection::first_of(tab));
+            assert!(offset > last, "{tab:?}");
+            last = offset;
+            // Every section of a group is reached at its group's name.
+            for section in SettingsSection::of_tab(tab) {
+                assert!((rail_group_offset(section) - offset).abs() < f32::EPSILON);
+            }
+        }
+        assert!(rail_group_offset(SettingsSection::Appearance).abs() < f32::EPSILON);
     }
 }

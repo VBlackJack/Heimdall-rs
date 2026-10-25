@@ -177,6 +177,239 @@ impl SettingsCard {
             .filter(|row| row.card() == self)
             .collect()
     }
+
+    /// The section of the rail it is shown in; none for a card drawn under every section of
+    /// its group, as the C# "Reset RDP defaults" under the RDP sections.
+    #[must_use]
+    pub fn section(self) -> Option<SettingsSection> {
+        Some(match self {
+            Self::Appearance | Self::SessionTree => SettingsSection::Appearance,
+            // The C# keeps the background check on its Advanced tab, which this version
+            // does not have: it is a behaviour of the window.
+            Self::Behavior | Self::Reachability => SettingsSection::Behavior,
+            Self::Updates => SettingsSection::Updates,
+            Self::MobaxtermVariables => SettingsSection::Import,
+            Self::SharedSources => SettingsSection::SharedSources,
+            Self::ExternalTools | Self::Citrix => SettingsSection::Tools,
+            Self::Onboarding => SettingsSection::Onboarding,
+            // The C# gives Terminal one section for its single card.
+            Self::Terminal | Self::SessionLogging | Self::Macros => SettingsSection::Terminal,
+            Self::Putty => SettingsSection::SshConnection,
+            Self::SshReconnect | Self::SshSession => SettingsSection::SshSession,
+            // The editor opens a server's file over SFTP; the C# keeps it on Advanced.
+            Self::Sftp | Self::X11 | Self::ExternalEditor => SettingsSection::SftpX11,
+            Self::SshTrusted => SettingsSection::SshHostKeys,
+            Self::RdpDefaults => SettingsSection::RdpDisplay,
+            Self::RdpSession | Self::RdpPresets => SettingsSection::RdpBehavior,
+            Self::RdpTrusted => SettingsSection::RdpCertificates,
+            Self::Gateways => SettingsSection::Gateways,
+            Self::Pin | Self::Vault => SettingsSection::Vault,
+            Self::Provider => SettingsSection::Provider,
+            Self::ConnectionChecks => SettingsSection::ConnectionChecks,
+            Self::RdpReset => return None,
+        })
+    }
+
+    /// When what it holds takes effect, as the C# glyph beside the card's title; none for a
+    /// card the C# marks nothing on, and for one that has no title of its own to carry it.
+    #[must_use]
+    pub fn applies(self) -> Option<Applies> {
+        match self {
+            Self::Appearance => Some(Applies::Immediately),
+            Self::SessionTree => Some(Applies::SavedAtOnce),
+            Self::Terminal => Some(Applies::NewSessions),
+            Self::SshReconnect | Self::SshSession | Self::RdpDefaults => {
+                Some(Applies::NewConnections)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// When a card's settings take effect, as the C# glyphs beside a card's title.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Applies {
+    /// At once, in the window shown.
+    Immediately,
+    /// Written at once; nothing else changes with it.
+    SavedAtOnce,
+    /// On the connections opened after the change.
+    NewConnections,
+    /// On the sessions opened after the change.
+    NewSessions,
+}
+
+impl Applies {
+    /// The glyph that stands for it: sessions and connections share the new window.
+    #[must_use]
+    pub const fn glyph(self) -> ApplyGlyph {
+        match self {
+            Self::Immediately => ApplyGlyph::Immediate,
+            Self::SavedAtOnce => ApplyGlyph::SavedAtOnce,
+            Self::NewConnections | Self::NewSessions => ApplyGlyph::NextConnection,
+        }
+    }
+}
+
+/// The glyphs of [`Applies`], each explained once at the foot of the rail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyGlyph {
+    /// A lightning bolt: applies at once.
+    Immediate,
+    /// A disk: saved at once.
+    SavedAtOnce,
+    /// A new window: applies to what is opened next.
+    NextConnection,
+}
+
+impl ApplyGlyph {
+    /// Every glyph, in the legend's order.
+    pub const ALL: [Self; 3] = [Self::Immediate, Self::SavedAtOnce, Self::NextConnection];
+
+    /// What the legend says of it: the text its connections' cards carry.
+    #[must_use]
+    pub const fn applies(self) -> Applies {
+        match self {
+            Self::Immediate => Applies::Immediately,
+            Self::SavedAtOnce => Applies::SavedAtOnce,
+            Self::NextConnection => Applies::NewConnections,
+        }
+    }
+}
+
+/// A section of the Settings rail, as the C# `SettingsRail` items: the cards of a group,
+/// split so each is read without scrolling a whole tab. One rail lists every section under
+/// the name of its group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SettingsSection {
+    /// The language, theme and accent, and the session tree's view.
+    Appearance,
+    /// The tunnels panel, the computer's sleep, the most sessions, the background check.
+    Behavior,
+    /// The look for a newer release.
+    Updates,
+    /// The values of a `MobaXterm` file's variables.
+    Import,
+    /// The shared session sources.
+    SharedSources,
+    /// The user's external tools, as the C# "Tools & integrations".
+    Tools,
+    /// "Show the tour again", last as the C# "Welcome tour".
+    Onboarding,
+    /// The terminals' text and colours, the transcripts and the macros.
+    Terminal,
+    /// `PuTTY` and the default SSH mode, as the C# SSH "Connection".
+    SshConnection,
+    /// Auto-reconnect and the session's numbers, as the C# SSH "Session".
+    SshSession,
+    /// The SFTP browser, the X server and the external editor, as the C# "SFTP & X11".
+    SftpX11,
+    /// The trusted host keys and certificates.
+    SshHostKeys,
+    /// The RDP options profiles take, as the C# "Display & Audio".
+    RdpDisplay,
+    /// Reconnecting, waiting, and the sizes offered, as the C# RDP "Behavior".
+    RdpBehavior,
+    /// The trusted RDP certificates.
+    RdpCertificates,
+    /// The SSH gateways.
+    Gateways,
+    /// The security overview, first as the C# "Overview".
+    Overview,
+    /// The PIN and the master password.
+    Vault,
+    /// The external credential provider.
+    Provider,
+    /// What a connection passes first.
+    ConnectionChecks,
+}
+
+impl SettingsSection {
+    /// Every section, in the rail's order: group by group, in the order the tabs had.
+    pub const ALL: [Self; 20] = [
+        Self::Appearance,
+        Self::Behavior,
+        Self::Updates,
+        Self::Import,
+        Self::SharedSources,
+        Self::Tools,
+        Self::Onboarding,
+        Self::Terminal,
+        Self::SshConnection,
+        Self::SshSession,
+        Self::SftpX11,
+        Self::SshHostKeys,
+        Self::RdpDisplay,
+        Self::RdpBehavior,
+        Self::RdpCertificates,
+        Self::Gateways,
+        Self::Overview,
+        Self::Vault,
+        Self::Provider,
+        Self::ConnectionChecks,
+    ];
+
+    /// The group whose name heads it on the rail.
+    #[must_use]
+    pub const fn tab(self) -> SettingsTab {
+        match self {
+            Self::Appearance
+            | Self::Behavior
+            | Self::Updates
+            | Self::Import
+            | Self::SharedSources
+            | Self::Tools
+            | Self::Onboarding => SettingsTab::General,
+            Self::Terminal => SettingsTab::Terminal,
+            Self::SshConnection | Self::SshSession | Self::SftpX11 | Self::SshHostKeys => {
+                SettingsTab::Ssh
+            }
+            Self::RdpDisplay | Self::RdpBehavior | Self::RdpCertificates => SettingsTab::Rdp,
+            Self::Gateways => SettingsTab::Gateways,
+            Self::Overview | Self::Vault | Self::Provider | Self::ConnectionChecks => {
+                SettingsTab::Security
+            }
+        }
+    }
+
+    /// The sections of `tab`, in the rail's order.
+    #[must_use]
+    pub fn of_tab(tab: SettingsTab) -> Vec<Self> {
+        Self::ALL
+            .into_iter()
+            .filter(|section| section.tab() == tab)
+            .collect()
+    }
+
+    /// The first section of `tab`: the one a name of the old tab strip opens.
+    #[must_use]
+    pub fn first_of(tab: SettingsTab) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|section| section.tab() == tab)
+            .unwrap_or(Self::Appearance)
+    }
+
+    /// Its cards, in the page's order.
+    #[must_use]
+    pub fn cards(self) -> Vec<SettingsCard> {
+        SettingsCard::ALL
+            .into_iter()
+            .filter(|card| card.section() == Some(self))
+            .collect()
+    }
+
+    /// The section `steps` after it down the rail, across the groups' names, cycling round
+    /// as the C# rail's `DirectionalNavigation="Cycle"`; `steps` may be negative.
+    #[must_use]
+    pub fn moved(self, steps: isize) -> Self {
+        let count = Self::ALL.len().cast_signed();
+        let index = Self::ALL
+            .iter()
+            .position(|section| *section == self)
+            .map_or(0, usize::cast_signed);
+        Self::ALL[(index + steps).rem_euclid(count).cast_unsigned()]
+    }
 }
 
 /// A row of the Settings page: one setting, or a list or card that holds several and is
@@ -1169,6 +1402,156 @@ mod tests {
             row.toggled(&defaults, true),
             Some(SettingsMessage::RdpBuiltinCompression(true))
         );
+    }
+
+    #[test]
+    fn every_section_is_listed_once_and_every_card_but_the_reset_is_in_one() {
+        for (index, section) in SettingsSection::ALL.into_iter().enumerate() {
+            assert!(
+                !SettingsSection::ALL[..index].contains(&section),
+                "{section:?} twice"
+            );
+        }
+        for card in SettingsCard::ALL {
+            match card.section() {
+                Some(section) => {
+                    assert_eq!(section.tab(), card.tab(), "{card:?}");
+                    assert!(section.cards().contains(&card), "{card:?}");
+                }
+                // Drawn under every section of its group, as the C# reset under the RDP
+                // sections.
+                None => assert_eq!(card, SettingsCard::RdpReset),
+            }
+        }
+        // A section with no card is the overview, drawn from the settings and not from rows.
+        for section in SettingsSection::ALL {
+            assert_eq!(
+                section.cards().is_empty(),
+                section == SettingsSection::Overview,
+                "{section:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_rail_lists_the_old_tabs_sections_group_by_group_in_the_old_tab_order() {
+        use SettingsSection as S;
+        let groups: Vec<SettingsTab> = SettingsSection::ALL
+            .into_iter()
+            .map(SettingsSection::tab)
+            .fold(Vec::new(), |mut groups, tab| {
+                // A group is one run of the rail, never split in two.
+                assert!(
+                    groups.last() == Some(&tab) || !groups.contains(&tab),
+                    "{tab:?} split"
+                );
+                if groups.last() != Some(&tab) {
+                    groups.push(tab);
+                }
+                groups
+            });
+        assert_eq!(groups, SettingsTab::ALL);
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::General),
+            [
+                S::Appearance,
+                S::Behavior,
+                S::Updates,
+                S::Import,
+                S::SharedSources,
+                S::Tools,
+                S::Onboarding
+            ],
+            "Appearance first, the tour last, as the C# rail"
+        );
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::Ssh),
+            [S::SshConnection, S::SshSession, S::SftpX11, S::SshHostKeys]
+        );
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::Rdp),
+            [S::RdpDisplay, S::RdpBehavior, S::RdpCertificates]
+        );
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::Security),
+            [S::Overview, S::Vault, S::Provider, S::ConnectionChecks]
+        );
+        // One section each, as the C# Terminal and the gateways.
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::Terminal),
+            [S::Terminal]
+        );
+        assert_eq!(
+            SettingsSection::of_tab(SettingsTab::Gateways),
+            [S::Gateways]
+        );
+        assert_eq!(
+            SettingsSection::first_of(SettingsTab::Ssh),
+            S::SshConnection
+        );
+    }
+
+    #[test]
+    fn up_and_down_walk_the_sections_across_the_groups_and_cycle() {
+        use SettingsSection as S;
+        // Down from the last of a group goes to the first of the next, the name between
+        // them being a heading and no stop.
+        assert_eq!(S::Onboarding.moved(1), S::Terminal);
+        assert_eq!(S::Terminal.moved(1), S::SshConnection);
+        assert_eq!(S::SshHostKeys.moved(1), S::RdpDisplay);
+        assert_eq!(S::SshConnection.moved(-1), S::Terminal);
+        // Round the ends.
+        assert_eq!(S::ConnectionChecks.moved(1), S::Appearance);
+        assert_eq!(S::Appearance.moved(-1), S::ConnectionChecks);
+        // A full turn comes back, and every section is reached.
+        let mut section = S::Appearance;
+        let mut seen = Vec::new();
+        for _ in 0..SettingsSection::ALL.len() {
+            seen.push(section);
+            section = section.moved(1);
+        }
+        assert_eq!(section, S::Appearance);
+        assert_eq!(seen, SettingsSection::ALL);
+    }
+
+    #[test]
+    fn a_card_that_says_when_it_applies_has_a_title_to_carry_the_glyph() {
+        // The titles drawn by the Settings page itself; the cards that have none say nothing.
+        let titled = [
+            SettingsCard::Appearance,
+            SettingsCard::SessionTree,
+            SettingsCard::Terminal,
+            SettingsCard::SshReconnect,
+            SettingsCard::SshSession,
+            SettingsCard::RdpDefaults,
+        ];
+        for card in SettingsCard::ALL {
+            assert_eq!(card.applies().is_some(), titled.contains(&card), "{card:?}");
+        }
+        assert_eq!(
+            SettingsCard::Appearance.applies(),
+            Some(Applies::Immediately)
+        );
+        assert_eq!(
+            SettingsCard::SessionTree.applies(),
+            Some(Applies::SavedAtOnce)
+        );
+        assert_eq!(SettingsCard::Terminal.applies(), Some(Applies::NewSessions));
+    }
+
+    #[test]
+    fn each_glyph_stands_for_one_text_and_the_legend_has_all_three() {
+        assert_eq!(ApplyGlyph::ALL.len(), 3);
+        for glyph in ApplyGlyph::ALL {
+            // The legend says what its glyph says on the cards.
+            assert_eq!(glyph.applies().glyph(), glyph);
+        }
+        // Sessions and connections opened after the change share the new window.
+        assert_eq!(
+            Applies::NewSessions.glyph(),
+            Applies::NewConnections.glyph()
+        );
+        assert_ne!(Applies::Immediately.glyph(), Applies::SavedAtOnce.glyph());
     }
 
     #[test]
