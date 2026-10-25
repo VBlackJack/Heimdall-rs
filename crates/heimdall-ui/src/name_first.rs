@@ -30,17 +30,22 @@ use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Shell, Widget, mouse, overlay, renderer};
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector};
 
+/// Added to a name measured in an unbounded width, so that the width it is given back
+/// is never a rounding short of it.
+const NAME_SLACK: f32 = 1.0;
+
 /// Whether the last layout left the trailing marks enough room to be shown.
 struct Shown(bool);
 
 /// What a name of `name_desired` width leaves the marks in `available` width: the name's
 /// width, then the room for the marks, or `None` when less than `min_trailing` is left.
-/// An unbounded width always leaves room.
+/// In an unbounded width (a row measured to find the widest name of a tree that scrolls
+/// sideways) the marks are left out: the name alone sets how wide the tree is.
 #[must_use]
 pub fn split(available: f32, name_desired: f32, min_trailing: f32) -> (f32, Option<f32>) {
     let name = name_desired.min(available);
     if available.is_infinite() {
-        return (name, Some(f32::INFINITY));
+        return (name, None);
     }
     let remaining = (available - name).max(0.0);
     (name, (remaining >= min_trailing).then_some(remaining))
@@ -136,7 +141,13 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for NameFirst<'_, Message> 
         tree.state.downcast_mut::<Shown>().0 = room.is_some();
         let trailing_width = trailing.size().width;
         let height = name.size().height.max(trailing.size().height);
-        let used = Size::new(name_width + trailing_width, height);
+        // A rounding of the measure must not cut a name that was measured whole.
+        let slack = if max.width.is_infinite() {
+            NAME_SLACK
+        } else {
+            0.0
+        };
+        let used = Size::new(name_width + slack + trailing_width, height);
         let size = limits.resolve(self.width, Length::Shrink, used);
         let name_at = Point::new(0.0, (height - name.size().height) / 2.0);
         let mut nodes = vec![name.move_to(name_at)];
@@ -359,9 +370,9 @@ mod tests {
     }
 
     #[test]
-    fn an_unbounded_width_leaves_room_for_everything() {
+    fn an_unbounded_width_measures_the_name_alone() {
         let (name, room) = split(f32::INFINITY, 80.0, MIN);
         assert!((name - 80.0).abs() < f32::EPSILON);
-        assert_eq!(room, Some(f32::INFINITY));
+        assert_eq!(room, None);
     }
 }

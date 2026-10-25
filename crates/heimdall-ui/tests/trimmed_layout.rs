@@ -231,9 +231,20 @@ fn a_long_name_of_the_tree_stays_on_one_line() {
         (long.height - short.height).abs() < 0.5,
         "one line, as a short name: {long:?} {short:?}"
     );
+    // An intentional divergence from the C#, which cuts the name: the tree scrolls sideways
+    // and the name stays whole, past the sidebar.
+    let seen = ui
+        .find(LONG_NAME)
+        .expect("the long row")
+        .visible_bounds()
+        .expect("in view");
     assert!(
-        long.x + long.width < WINDOW.width / 2.0,
-        "cut in the sidebar, not laid out whole: {long:?}"
+        long.width > seen.width + 1.0,
+        "laid out whole, wider than what the sidebar shows: {long:?} {seen:?}"
+    );
+    assert!(
+        long.x + long.width > WINDOW.width / 4.0,
+        "not cut in the sidebar: {long:?}"
     );
 }
 
