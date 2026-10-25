@@ -697,7 +697,7 @@ fn the_theme_and_accent_are_chosen_on_the_general_tab_applied_at_once_and_reset(
     let saved = Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("saved");
     assert_eq!(
         (saved.theme, saved.accent),
-        (AppTheme::Drakul, Accent::Default)
+        (AppTheme::Magellan, Accent::Default)
     );
     assert!(shell.theme().extended_palette().is_dark);
     let mut ui = simulator(&shell);

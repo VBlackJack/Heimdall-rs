@@ -95,11 +95,15 @@ fn a_name_is_read_whatever_its_case_and_an_unknown_one_is_dracula() {
 }
 
 #[test]
-fn the_theme_and_accent_are_drakul_and_its_own_until_chosen_then_kept_by_their_csharp_names() {
+fn the_theme_and_accent_are_magellan_and_its_own_until_chosen_then_kept_by_their_csharp_names() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);
     let settings = Settings::load(&path).expect("defaults");
-    assert_eq!(settings.theme, AppTheme::Drakul, "as the C# default");
+    assert_eq!(
+        settings.theme,
+        AppTheme::Magellan,
+        "an intentional divergence from the C# default, Drakul"
+    );
     assert_eq!(settings.accent, Accent::Default);
     for theme in AppTheme::ALL {
         for accent in Accent::ALL {
@@ -166,11 +170,11 @@ fn a_theme_or_accent_is_read_whatever_its_case_and_an_unknown_one_is_the_default
     );
     assert_eq!(
         read("version = 1\n[general]\ntheme = \"Alucard\"\naccent = \"Teal\"\n"),
-        (AppTheme::Drakul, Accent::Default)
+        (AppTheme::Magellan, Accent::Default)
     );
     assert_eq!(
         read("version = 1\n"),
-        (AppTheme::Drakul, Accent::Default),
+        (AppTheme::Magellan, Accent::Default),
         "no section"
     );
 }

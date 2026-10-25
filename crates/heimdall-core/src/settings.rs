@@ -145,7 +145,6 @@ pub enum AppTheme {
     /// The canonical Dracula palette.
     Dracula,
     /// Dracula with its comment colour lifted to be readable: the C# default.
-    #[default]
     Drakul,
     /// Warm umber.
     Striga,
@@ -159,7 +158,9 @@ pub enum AppTheme {
     Mortis,
     /// Slate blue.
     Slate,
-    /// Navy with an indigo accent.
+    /// Navy with an indigo accent. The default here, by the owner's decision of
+    /// 2026-10-25: an intentional divergence from the C# `DefaultTheme`, Drakul.
+    #[default]
     Magellan,
     /// Deep indigo.
     Voivode,
@@ -600,7 +601,8 @@ pub struct Settings {
     pub terminal_font_family: String,
     /// The language chosen; `None` follows the desktop's.
     pub language: Option<Language>,
-    /// The window's theme, as the C# `DefaultTheme`: Drakul unless chosen.
+    /// The window's theme, Magellan unless chosen (the C# `DefaultTheme` is Drakul:
+    /// an intentional divergence).
     pub theme: AppTheme,
     /// The window's accent, as the C# `AccentTint`: the theme's own unless chosen.
     pub accent: Accent,
@@ -2087,7 +2089,8 @@ struct GeneralSection {
     /// desktop's language is followed.
     #[serde(default)]
     language: Option<String>,
-    /// The window's theme by its C# name; absent is the C# default, Drakul.
+    /// The window's theme by its C# name; absent is the default, Magellan (the C# one
+    /// is Drakul: an intentional divergence).
     #[serde(default)]
     theme: Option<String>,
     /// The window's accent by its C# name; absent is the theme's own.

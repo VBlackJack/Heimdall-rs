@@ -207,7 +207,7 @@ fn a_theme_and_accent_chosen_are_kept_and_leave_the_terminals_scheme_alone() {
 
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
-    assert_eq!(app.settings().theme, AppTheme::Drakul);
+    assert_eq!(app.settings().theme, AppTheme::Magellan);
     assert_eq!(app.settings().accent, Accent::Default);
     open(&mut app);
     app.update(Message::Settings(SettingsMessage::Theme(
