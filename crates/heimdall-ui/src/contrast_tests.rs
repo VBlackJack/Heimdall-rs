@@ -22,8 +22,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
+use heimdall_app::tools::ToolCategory;
 use heimdall_app::{ProfileKind, SessionState};
 use heimdall_core::settings::{Accent, AppTheme};
+use heimdall_core::tools::http_status::HttpStatusCategory;
 use iced::widget::button::{Status as ButtonStatus, Style as ButtonStyle};
 use iced::widget::checkbox::Status as CheckStatus;
 use iced::widget::container::Style as BoxStyle;
@@ -33,7 +35,7 @@ use iced::widget::text_input::Status as FieldStatus;
 use iced::{Background, Color, Theme};
 
 use crate::themes::{self, contrast_ratio, over};
-use crate::{detail_view, palette, styles, tokens, tree_view};
+use crate::{detail_view, palette, styles, tokens, tools, tree_view};
 
 /// What small text must reach.
 const TEXT: f64 = themes::MIN_TEXT_CONTRAST;
@@ -41,9 +43,9 @@ const TEXT: f64 = themes::MIN_TEXT_CONTRAST;
 /// What a line or a glyph that carries meaning must reach.
 const LINE: f64 = themes::MIN_BOUNDARY_CONTRAST;
 
-/// The least number of pairs one theme with one accent is checked on: a guard against the
-/// walk quietly checking nothing.
-const MIN_PAIRS_PER_THEME: usize = 250;
+/// The number of pairs one theme with one accent is checked on. Adding a pair to the walk
+/// changes it, on purpose: a walk that quietly checked less would fail the count.
+const PAIRS_PER_COMBINATION: usize = 354;
 
 /// How far above its requirement a pair is still reported as a narrow pass.
 const NARROW: f64 = 0.15;
@@ -248,6 +250,80 @@ fn walk(walk: &mut Walk<'_>, theme: &Theme) {
     fields(walk, theme, window);
     controls(walk, theme, window, card);
     tree(walk, theme, &grounds);
+    tools(walk, theme, &grounds);
+}
+
+/// The tools' colour-coded words, and the badges of the tools and of the external programs
+/// in the quick-connect list.
+fn tools(walk: &mut Walk<'_>, theme: &Theme, grounds: &[(&'static str, Color); 5]) {
+    let words = [
+        ("jwt header", tools::jwt_tool::header_color(theme)),
+        ("jwt payload", tools::jwt_tool::payload_color(theme)),
+        ("jwt signature", tools::jwt_tool::signature_color(theme)),
+        (
+            "http 1xx",
+            tools::http_status_tool::category_color(HttpStatusCategory::Informational, theme),
+        ),
+        (
+            "http 2xx",
+            tools::http_status_tool::category_color(HttpStatusCategory::Success, theme),
+        ),
+        (
+            "http 3xx",
+            tools::http_status_tool::category_color(HttpStatusCategory::Redirection, theme),
+        ),
+        (
+            "http 4xx",
+            tools::http_status_tool::category_color(HttpStatusCategory::ClientError, theme),
+        ),
+        (
+            "http 5xx",
+            tools::http_status_tool::category_color(HttpStatusCategory::ServerError, theme),
+        ),
+    ];
+    for (what, colour) in words {
+        for (on, ground) in grounds {
+            walk.pair(&format!("{what} text on {on}"), colour, *ground, TEXT);
+        }
+    }
+    for (what, success) in [("wake on lan sent", true), ("wake on lan failed", false)] {
+        let (fill, _border, text) = tools::wol_tool::feedback_colors(theme, success);
+        for (on, ground) in [grounds[0], grounds[1]] {
+            walk.pair(
+                &format!("{what} notice on {on}"),
+                text,
+                over(fill, ground),
+                TEXT,
+            );
+        }
+    }
+    let mut badges = vec![(
+        "external program".to_owned(),
+        theme.extended_palette().primary.base.color,
+    )];
+    for category in [
+        ToolCategory::Network,
+        ToolCategory::Security,
+        ToolCategory::Encoding,
+        ToolCategory::System,
+        ToolCategory::External,
+    ] {
+        badges.push((
+            format!("tool {category:?}"),
+            crate::icons::tool_color(theme, category),
+        ));
+    }
+    for (what, colour) in badges {
+        for (on, ground) in [grounds[0], grounds[1], grounds[2]] {
+            let tint = over(colour.scale_alpha(palette::BADGE_ALPHA), ground);
+            walk.pair(
+                &format!("quick connect badge {what} on {on}"),
+                palette::badge_text(theme, colour),
+                tint,
+                TEXT,
+            );
+        }
+    }
 }
 
 /// Text fields and drop-downs.
@@ -392,17 +468,25 @@ fn controls(walk: &mut Walk<'_>, theme: &Theme, window: Color, card: Color) {
     let rule = fill_of(styles::strong_rule(theme).background, window);
     let bar = fill_of(styles::underline(true)(theme).background, window);
     let dot = fill_of(styles::accent_dot(theme).background, window);
-    let slider = styles::slider(theme, iced::widget::slider::Status::Active);
+    let sliders = [
+        ("rest", iced::widget::slider::Status::Active),
+        ("hover", iced::widget::slider::Status::Hovered),
+        ("drag", iced::widget::slider::Status::Dragged),
+    ]
+    .map(|(state, status)| (state, styles::slider(theme, status)));
     for (on, ground) in both {
+        for (state, slider) in &sliders {
+            walk.pair(
+                &format!("slider thumb {state} on {on}"),
+                solid(slider.handle.background),
+                ground,
+                LINE,
+            );
+        }
+        let slider = &sliders[0].1;
         walk.pair(&format!("strong rule on {on}"), rule, ground, LINE);
         walk.pair(&format!("selected tab bar on {on}"), bar, ground, LINE);
         walk.pair(&format!("accent dot on {on}"), dot, ground, LINE);
-        walk.pair(
-            &format!("slider thumb on {on}"),
-            solid(slider.handle.background),
-            ground,
-            LINE,
-        );
         walk.pair(
             &format!("slider filled rail on {on}"),
             solid(slider.rail.backgrounds.0),
@@ -506,15 +590,10 @@ fn every_text_and_line_reaches_its_contrast_on_every_surface_in_every_theme_and_
     assert_eq!(AppTheme::ALL.len(), 18);
     assert_eq!(Accent::ALL.len(), 9);
     assert_eq!(combinations, 18 * 9, "every theme with every accent");
-    assert!(
-        audit.checked >= combinations * MIN_PAIRS_PER_THEME,
-        "only {} pairs checked",
-        audit.checked
-    );
     assert_eq!(
-        audit.checked % combinations,
-        0,
-        "every theme and accent is checked on the same pairs"
+        audit.checked,
+        combinations * PAIRS_PER_COMBINATION,
+        "pairs checked: every theme and accent is walked over the same pairs"
     );
     let mut report = String::new();
     for failure in audit.failures.iter().take(REPORTED) {

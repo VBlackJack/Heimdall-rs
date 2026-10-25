@@ -288,7 +288,7 @@ impl JwtPane {
             (
                 fl!("ui-tool-jwt-header"),
                 &self.header,
-                (|theme| colors_of(theme).blue) as fn(&Theme) -> Color,
+                header_color as fn(&Theme) -> Color,
                 CopySlot::JwtHeader,
                 JwtMessage::CopyHeader,
                 JwtMessage::Header as fn(Action) -> JwtMessage,
@@ -296,7 +296,7 @@ impl JwtPane {
             (
                 fl!("ui-tool-jwt-payload"),
                 &self.payload,
-                |theme| colors_of(theme).green,
+                payload_color,
                 CopySlot::JwtPayload,
                 JwtMessage::CopyPayload,
                 JwtMessage::Payload,
@@ -304,7 +304,7 @@ impl JwtPane {
             (
                 fl!("ui-tool-jwt-signature"),
                 &self.signature,
-                |theme| colors_of(theme).orange,
+                signature_color,
                 CopySlot::JwtSignature,
                 JwtMessage::CopySignature,
                 JwtMessage::Signature,
@@ -441,6 +441,21 @@ fn date(seconds: i64) -> String {
     moment
         .map(heimdall_app::local_date_time)
         .unwrap_or_default()
+}
+
+/// The colour of the header of a token: blue, lifted to read on every surface.
+pub(crate) fn header_color(theme: &Theme) -> Color {
+    styles::hue_text(theme, colors_of(theme).blue)
+}
+
+/// The colour of the payload of a token: green, lifted to read.
+pub(crate) fn payload_color(theme: &Theme) -> Color {
+    styles::hue_text(theme, colors_of(theme).green)
+}
+
+/// The colour of the signature of a token: orange, lifted to read.
+pub(crate) fn signature_color(theme: &Theme) -> Color {
+    styles::hue_text(theme, colors_of(theme).orange)
 }
 
 #[cfg(test)]

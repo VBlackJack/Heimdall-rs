@@ -910,8 +910,8 @@ pub fn protocol_color(theme: &Theme, kind: ProfileKind) -> Color {
         ProfileKind::WinRm | ProfileKind::Citrix => colors.purple,
         ProfileKind::Sftp => colors.orange,
         ProfileKind::Vnc | ProfileKind::Tool => colors.cyan,
-        // The comment colour, lifted where it does not read on a row.
-        ProfileKind::Telnet => theme.extended_palette().secondary.base.color,
+        // The comment colour, a mark lifted where it is not seen on a row.
+        ProfileKind::Telnet => crate::themes::comment_of(theme),
         ProfileKind::Web => colors.pink,
         ProfileKind::Local => theme.palette().primary,
     };
@@ -1751,10 +1751,7 @@ mod tests {
             (ProfileKind::Citrix, colors.purple),
             (ProfileKind::Sftp, colors.orange),
             (ProfileKind::Vnc, colors.cyan),
-            (
-                ProfileKind::Telnet,
-                theme.extended_palette().secondary.base.color,
-            ),
+            (ProfileKind::Telnet, crate::themes::comment_of(&theme)),
             (ProfileKind::Web, colors.pink),
             (ProfileKind::Local, colors.blue),
         ] {

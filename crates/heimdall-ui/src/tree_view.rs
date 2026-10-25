@@ -259,7 +259,7 @@ pub(crate) fn state_color(theme: &Theme, state: Option<SessionState>) -> iced::C
                 palette.warning.base.color
             }
             Some(SessionState::Failed) => palette.danger.base.color,
-            Some(SessionState::Ended) | None => palette.secondary.base.color,
+            Some(SessionState::Ended) | None => crate::themes::comment_of(theme),
         },
     )
 }
@@ -292,7 +292,7 @@ fn profile_dot<'a>(state: Option<SessionState>, reach: Option<&Verdict>) -> Elem
                     Tone::Success => palette.success.base.color,
                     Tone::Danger => palette.danger.base.color,
                     Tone::Warning => palette.warning.base.color,
-                    Tone::Unknown => palette.secondary.base.color,
+                    Tone::Unknown => crate::themes::comment_of(theme),
                 },
             );
             container::Style {

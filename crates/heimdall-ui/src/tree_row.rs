@@ -228,7 +228,12 @@ impl Widget<Message, Theme, iced::Renderer> for RowChrome<'_> {
                     accent.scale_alpha(crate::tokens::SELECTED_ROW_ALPHA),
                     row_radius(),
                 );
-                fill(renderer, edge, accent, edge_radius());
+                fill(
+                    renderer,
+                    edge,
+                    crate::themes::derived(theme, crate::themes::Derived::AccentLine),
+                    edge_radius(),
+                );
             }
             // The C# `FocusIndicatorBrush`.
             Mark::Cursor => fill(

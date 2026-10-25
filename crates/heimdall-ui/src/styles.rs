@@ -122,8 +122,12 @@ struct Brushes {
     surface: Color,
     /// `TextPrimaryBrush`.
     text: Color,
-    /// `TextSecondaryBrush`, which `InputBorderBrush` shares.
+    /// `InputBorderBrush`, the comment colour as a line: lifted to 3:1 where it is short.
     secondary: Color,
+    /// `TextSecondaryBrush`: the comment colour as text, 4.5:1 on every surface.
+    secondary_text: Color,
+    /// The placeholder of a field.
+    placeholder: Color,
     /// `ErrorBrush`.
     danger: Color,
     /// `WarningBrush`.
@@ -144,7 +148,7 @@ impl Brushes {
         let extended: &Extended = theme.extended_palette();
         let accent = extended.primary.base.color;
         let high_contrast = crate::themes::is_high_contrast(theme);
-        let secondary = extended.secondary.base.color;
+        let secondary = crate::themes::derived(theme, crate::themes::Derived::CommentLine);
         Self {
             accent,
             line: crate::themes::derived(theme, crate::themes::Derived::AccentLine),
@@ -156,6 +160,8 @@ impl Brushes {
             surface: extended.background.base.color,
             text: extended.background.base.text,
             secondary,
+            secondary_text: extended.secondary.base.color,
+            placeholder: crate::themes::derived(theme, crate::themes::Derived::Placeholder),
             danger: extended.danger.base.color,
             warning: extended.warning.base.color,
             // `BorderColor`, the current line in every ThemeForge theme, which the card
@@ -187,6 +193,16 @@ impl Brushes {
     /// otherwise.
     fn label_on(&self, fill: Color) -> Color {
         crate::themes::label_on(self.on_accent, fill)
+    }
+
+    /// `color` as a mark: itself where it is seen at 3:1 on the window and on a card, the
+    /// nearest colour that is otherwise.
+    fn seen(&self, color: Color) -> Color {
+        crate::themes::legible_on(
+            color,
+            &[self.surface, self.card],
+            crate::themes::MIN_BOUNDARY_CONTRAST,
+        )
     }
 
     /// A border of `color` as wide as the theme's, rounded by `corner`.
@@ -426,7 +442,11 @@ pub fn tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
             } else {
                 None
             },
-            text_color: if lit { brushes.text } else { brushes.secondary },
+            text_color: if lit {
+                brushes.text
+            } else {
+                brushes.secondary_text
+            },
             // `BorderThickness="1,1,1,0"` (`CommonControls.xaml:1218`): transparent at
             // rest, the border colour once hovered (`:1237`). Selected, the strong border
             // as the C# `fix(tabs)` (v2026.102201): the plain one is the card colour on
@@ -454,7 +474,7 @@ pub fn folder_chip(theme: &Theme) -> BoxStyle {
     let brushes = Brushes::of(theme);
     BoxStyle {
         background: Some(Background::Color(brushes.card)),
-        text_color: Some(brushes.secondary),
+        text_color: Some(brushes.secondary_text),
         border: Border {
             color: brushes.quiet_edge,
             width: brushes.width,
@@ -542,7 +562,7 @@ pub fn text_input(theme: &Theme, status: FieldStatus) -> FieldStyle {
         background: Background::Color(brushes.card),
         border: brushes.outline(brushes.secondary, radius::MD),
         icon: brushes.secondary,
-        placeholder: brushes.secondary,
+        placeholder: brushes.placeholder,
         value: brushes.text,
         selection,
     };
@@ -568,6 +588,33 @@ pub fn text_input(theme: &Theme, status: FieldStatus) -> FieldStyle {
 /// The fill behind the text selected in a field: the accent over the field, as faint as it
 /// takes for the text to read on it at 4.5:1.
 fn selection_fill(brushes: &Brushes) -> Color {
+    let key = (
+        brushes.accent.into_rgba8(),
+        brushes.card.into_rgba8(),
+        brushes.text.into_rgba8(),
+    );
+    if let Ok(fills) = SELECTIONS.lock()
+        && let Some(fill) = fills.get(&key)
+    {
+        return *fill;
+    }
+    let fill = lowered_selection(brushes);
+    if let Ok(mut fills) = SELECTIONS.lock() {
+        fills.insert(key, fill);
+    }
+    fill
+}
+
+/// What [`selection_fill`] asked: the accent, the card and the text, as 8-bit RGBA.
+type SelectionKey = ([u8; 4], [u8; 4], [u8; 4]);
+
+/// The selection fills found so far: a field asks for its look every frame.
+static SELECTIONS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<SelectionKey, Color>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// The walk of [`selection_fill`]: the opacity lowered a step at a time.
+fn lowered_selection(brushes: &Brushes) -> Color {
     let mut alpha = SELECTION_ALPHA;
     loop {
         let fill = crate::themes::over(brushes.accent.scale_alpha(alpha), brushes.card);
@@ -650,7 +697,7 @@ pub fn sidebar_tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonSty
             text_color: if selected {
                 brushes.text
             } else {
-                brushes.secondary
+                brushes.secondary_text
             },
             border: Border {
                 color: brushes.quiet_edge,
@@ -680,7 +727,7 @@ pub fn rail_item(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle
             text_color: if selected || hovered {
                 brushes.text
             } else {
-                brushes.secondary
+                brushes.secondary_text
             },
             border: Border {
                 color: brushes.quiet_edge,
@@ -699,7 +746,7 @@ pub fn pick_list(theme: &Theme, status: ListStatus) -> ListStyle {
     let brushes = Brushes::of(theme);
     let rest = ListStyle {
         text_color: brushes.text,
-        placeholder_color: brushes.secondary,
+        placeholder_color: brushes.placeholder,
         handle_color: brushes.text,
         background: Background::Color(brushes.card),
         border: brushes.outline(brushes.secondary, radius::MD),
@@ -784,7 +831,7 @@ pub fn error_badge(theme: &Theme) -> BoxStyle {
 /// beside its filter.
 pub fn quiet_checkbox(theme: &Theme, status: CheckStatus) -> CheckStyle {
     CheckStyle {
-        text_color: Some(Brushes::of(theme).secondary),
+        text_color: Some(Brushes::of(theme).secondary_text),
         ..checkbox(theme, status)
     }
 }
@@ -855,8 +902,8 @@ pub fn slider(theme: &Theme, status: SliderStatus) -> SliderStyle {
     let brushes = Brushes::of(theme);
     let thumb = match status {
         SliderStatus::Active => brushes.line,
-        SliderStatus::Hovered => brushes.accent_hover,
-        SliderStatus::Dragged => brushes.accent_pressed,
+        SliderStatus::Hovered => brushes.seen(brushes.accent_hover),
+        SliderStatus::Dragged => brushes.seen(brushes.accent_pressed),
     };
     let base = iced::widget::slider::default(theme, status);
     SliderStyle {
@@ -1198,6 +1245,32 @@ pub fn accent_text(theme: &Theme) -> TextStyle {
     colored(accent_text_color(theme))
 }
 
+/// `hue` as text: lifted to 4.5:1 on every surface text is drawn on, itself where it reads.
+/// For a tool's colour-coded words (a JWT part, an HTTP status class).
+#[must_use]
+pub fn hue_text(theme: &Theme, hue: Color) -> Color {
+    crate::themes::legible_on(
+        hue,
+        &crate::themes::grounds_of(theme, crate::themes::Derived::Muted),
+        crate::themes::MIN_TEXT_CONTRAST,
+    )
+}
+
+/// `text` lifted to 4.5:1 on `tint` at `alpha` over the window and over a card: the words of
+/// a coloured notice.
+#[must_use]
+pub fn text_on_tint(theme: &Theme, text: Color, tint: Color, alpha: f32) -> Color {
+    let fill = tint.scale_alpha(alpha);
+    crate::themes::legible_on(
+        text,
+        &[
+            crate::themes::over(fill, theme.palette().background),
+            crate::themes::over(fill, card_color(theme)),
+        ],
+        crate::themes::MIN_TEXT_CONTRAST,
+    )
+}
+
 /// The colour of [`error_text`], for a widget that takes a colour rather than a style.
 #[must_use]
 pub fn error_text_color(theme: &Theme) -> Color {
@@ -1463,7 +1536,7 @@ mod tests {
             );
             assert_eq!(
                 style.border.color,
-                theme.extended_palette().secondary.base.color
+                themes::colors(AppTheme::Magellan).comment
             );
             assert!((style.border.width - BORDER_WIDTH).abs() < f32::EPSILON);
         }
@@ -1500,7 +1573,7 @@ mod tests {
         let rest = text_input(&theme, FieldStatus::Active);
         assert_eq!(
             rest.border.color,
-            theme.extended_palette().secondary.base.color
+            themes::colors(AppTheme::Magellan).comment
         );
     }
 
@@ -1576,7 +1649,7 @@ mod tests {
         );
         assert_eq!(
             rest.vertical_rail.scroller.background,
-            Background::Color(theme.extended_palette().secondary.base.color)
+            Background::Color(themes::colors(AppTheme::Magellan).comment)
         );
         assert_eq!(
             rest.vertical_rail.background,
@@ -1598,7 +1671,7 @@ mod tests {
         );
         assert_eq!(
             dragged.horizontal_rail.scroller.background,
-            Background::Color(theme.extended_palette().secondary.base.color),
+            Background::Color(themes::colors(AppTheme::Magellan).comment),
             "the other one at rest"
         );
         const { assert!(SCROLLER_WIDTH < SCROLLBAR_WIDTH, "thin, inside its track") };
@@ -1613,10 +1686,7 @@ mod tests {
             colors.orange
         );
         let off = toggle(false)(&theme, ButtonStatus::Active);
-        assert_eq!(
-            off.border.color,
-            theme.extended_palette().secondary.base.color
-        );
+        assert_eq!(off.border.color, themes::colors(AppTheme::Magellan).comment);
         assert_eq!(off.background, None, "nothing behind it at rest");
     }
 

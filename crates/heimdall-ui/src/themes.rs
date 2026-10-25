@@ -389,6 +389,8 @@ fn build(theme: AppTheme, accent: Accent) -> Theme {
             MIN_TEXT_CONTRAST,
         );
         extended.secondary.base = Pair::new(readable_comment, on_secondary);
+        // The raw comment colour, for lines: nothing else reads the weakest background.
+        extended.background.weakest = Pair::new(colors.comment, colors.foreground);
         // Every edge in the text colour, not a shade of black.
         if colors.high_contrast {
             extended.background.strong = Pair::new(colors.foreground, colors.background);
@@ -540,11 +542,17 @@ pub enum Derived {
     /// The accent as a line or a fill that carries meaning (the focus ring, a progress bar,
     /// a ticked box), from the accent chosen: 3:1 where [`Self::Accent`] is 4.5:1.
     AccentLine,
+    /// The comment colour as a line (a field outline, a scroll thumb, a toggle's edge), from
+    /// the theme's own: 3:1 where [`Self::Muted`] is 4.5:1.
+    CommentLine,
+    /// The comment colour as the placeholder of a field: 4.5:1 on the window, a card and a
+    /// row under the pointer, whatever the accent.
+    Placeholder,
 }
 
 impl Derived {
     /// Every derived colour.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 10] = [
         Self::Error,
         Self::Warning,
         Self::Success,
@@ -553,6 +561,8 @@ impl Derived {
         Self::BorderStrong,
         Self::Muted,
         Self::AccentLine,
+        Self::CommentLine,
+        Self::Placeholder,
     ];
 
     /// The contrast the colour must reach on the surfaces it is drawn on: 4.5 for text, 3
@@ -560,7 +570,7 @@ impl Derived {
     #[must_use]
     pub const fn target(self) -> f64 {
         match self {
-            Self::BorderStrong | Self::AccentLine => MIN_BOUNDARY_CONTRAST,
+            Self::BorderStrong | Self::AccentLine | Self::CommentLine => MIN_BOUNDARY_CONTRAST,
             _ => MIN_TEXT_CONTRAST,
         }
     }
@@ -597,9 +607,17 @@ pub fn grounds_of(theme: &Theme, role: Derived) -> [Color; GROUNDS] {
         theme.extended_palette().background.weak.color,
     );
     match role {
-        Derived::BorderStrong => [window, card, window, card, window],
+        Derived::BorderStrong | Derived::CommentLine => [window, card, window, card, window],
+        Derived::Placeholder => [window, card, selection_of(theme), window, card],
         _ => text_grounds(window, card, selection_of(theme), theme.palette().primary),
     }
+}
+
+/// The theme's own comment colour, [`build`] keeps in the weakest background for lines and
+/// for [`derived`] to start from: no lookup by name.
+#[must_use]
+pub fn comment_of(theme: &Theme) -> Color {
+    theme.extended_palette().background.weakest.color
 }
 
 /// The colour `role` takes in `theme`: the theme's own where it already reaches the
@@ -615,7 +633,7 @@ pub fn derived(theme: &Theme, role: Derived) -> Color {
         Derived::Success => extended.success.base.color,
         Derived::Info => colors_of(theme).cyan,
         Derived::Accent | Derived::AccentLine => theme.palette().primary,
-        Derived::Muted => colors_of(theme).comment,
+        Derived::Muted | Derived::CommentLine | Derived::Placeholder => comment_of(theme),
         // The C# `BorderColor`: the current line, the text in high contrast, where the
         // current line is black ([`build`] puts the text in the strong shade there).
         Derived::BorderStrong
@@ -722,9 +740,13 @@ pub fn derive_on(colour: Color, grounds: &[Color], target: f64) -> Color {
 
 /// `top` laid over the opaque `ground`, as the renderer blends it: the colour that shows.
 #[must_use]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // Clamped to 0..=255.
 pub fn over(top: Color, ground: Color) -> Color {
-    let blend = |above: f32, below: f32| above * top.a + below * (1.0 - top.a);
-    Color::from_rgb(
+    // Half to even on 8 bits, as [`from_hsl`] and .NET's `Math.Round`: what the screen shows.
+    let blend = |above: f32, below: f32| {
+        ((above * top.a + below * (1.0 - top.a)).clamp(0.0, 1.0) * 255.0).round_ties_even() as u8
+    };
+    Color::from_rgb8(
         blend(top.r, ground.r),
         blend(top.g, ground.g),
         blend(top.b, ground.b),
@@ -1199,9 +1221,9 @@ mod tests {
             }
         }
         // The loop cannot pass by being empty: 17 themes and high contrast, nine accents,
-        // eight colours, five surfaces each.
+        // ten colours, five surfaces each.
         assert_eq!(AppTheme::ALL.len(), 18);
-        assert_eq!(Derived::ALL.len(), 8);
+        assert_eq!(Derived::ALL.len(), 10);
         assert_eq!(
             checked,
             18 * Accent::ALL.len() * Derived::ALL.len() * GROUNDS

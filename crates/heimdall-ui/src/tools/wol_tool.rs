@@ -193,7 +193,6 @@ impl WolPane {
         _state: &'a ToolPane,
         theme: &Theme,
     ) -> Element<'a, Message> {
-        let colors = crate::themes::colors_of(theme);
         let default_port = DEFAULT_WOL_PORT.to_string();
 
         let mac_input = column![
@@ -256,11 +255,7 @@ impl WolPane {
 
         if let Some(feedback) = &self.feedback {
             let (success, msg) = Self::feedback_text(feedback);
-            let (bg, border_color, text_color) = if success {
-                (colors.green.scale_alpha(0.15), colors.green, colors.green)
-            } else {
-                (colors.red.scale_alpha(0.15), colors.red, colors.red)
-            };
+            let (bg, border_color, text_color) = feedback_colors(theme, success);
 
             let feedback_card = container(
                 text(msg)
@@ -290,6 +285,28 @@ impl WolPane {
 
         content.into()
     }
+}
+
+/// How strongly the notice's colour fills behind it.
+const FEEDBACK_TINT_ALPHA: f32 = 0.15;
+
+/// The fill, the border and the text of the notice that says whether the packet was sent: the
+/// text lifted to read on its own tint.
+pub(crate) fn feedback_colors(
+    theme: &Theme,
+    success: bool,
+) -> (iced::Color, iced::Color, iced::Color) {
+    let colors = crate::themes::colors_of(theme);
+    let (hue, text) = if success {
+        (colors.green, styles::success_text_color(theme))
+    } else {
+        (colors.red, styles::error_text_color(theme))
+    };
+    (
+        hue.scale_alpha(FEEDBACK_TINT_ALPHA),
+        hue,
+        styles::text_on_tint(theme, text, hue, FEEDBACK_TINT_ALPHA),
+    )
 }
 
 #[cfg(test)]
