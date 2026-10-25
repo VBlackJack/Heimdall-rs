@@ -6803,7 +6803,10 @@ impl Shell {
             styles::SCROLLBAR_WIDTH,
             self.tree_list(),
         ))
+        .id(tree_scroll_id())
         .width(Length::Fill)
+        // The whole area, so the sideways bar sits at its foot, not under the last row.
+        .height(Length::Fill)
         .direction(scrollable::Direction::Both {
             vertical: styles::scrollbar(),
             horizontal: styles::scrollbar(),
@@ -14074,6 +14077,12 @@ pub fn tree_add_id() -> iced::widget::Id {
 #[must_use]
 pub fn tab_id(tab: TabId) -> iced::widget::Id {
     iced::widget::Id::from(format!("tab-{}", tab.value()))
+}
+
+/// Widget identifier of the session tree's scroll area.
+#[must_use]
+pub fn tree_scroll_id() -> iced::widget::Id {
+    iced::widget::Id::new("tree-scroll")
 }
 
 /// Widget identifier of the row of tabs, which scrolls sideways.
