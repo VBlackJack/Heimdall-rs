@@ -1740,3 +1740,48 @@ web= #109#0%web.lab%22%ops%
     let _ = shell.update(Message::SharedSourcesEdit(SourcesEdit::Remove(0)));
     assert!(shell.app().settings().shared_sources.is_empty());
 }
+
+#[test]
+fn a_refused_citrix_value_is_said_under_its_field_and_the_old_one_kept() {
+    use heimdall_ui::settings_rows::ToolPath;
+
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let apply = |shell: &mut Shell, path: ToolPath, text: &str| {
+        let _ = shell.update(Message::ToolPathEdited(path, text.to_owned()));
+        let _ = shell.update(Message::ToolPathApply(path));
+    };
+    let saved = |dir: &std::path::Path| {
+        Settings::load(&settings_path(&dir.join("profiles.toml"))).expect("saved")
+    };
+
+    apply(
+        &mut shell,
+        ToolPath::CitrixCacheDirectory,
+        "/var/cache/citrix",
+    );
+    assert!(!shell.tool_path_refused(ToolPath::CitrixCacheDirectory));
+    for (path, bad) in [
+        (ToolPath::CitrixCacheDirectory, r"/\host\share"),
+        (ToolPath::CitrixCacheDirectory, r"%LOCALAPPDATA%\x"),
+        (ToolPath::CitrixSelfService, "/opt/citrix/other.exe"),
+        (ToolPath::CitrixStorePrefix, "a/b"),
+    ] {
+        apply(&mut shell, path, bad);
+        assert!(shell.tool_path_refused(path), "{bad}");
+    }
+    let kept = saved(dir.path());
+    assert_eq!(kept.citrix_cache_directory, "/var/cache/citrix");
+    assert!(kept.citrix_self_service_path.is_empty());
+    assert!(kept.citrix_cache_store_prefix.is_empty());
+
+    // Typing again takes the message away; a valid value is applied.
+    let _ = shell.update(Message::ToolPathEdited(
+        ToolPath::CitrixStorePrefix,
+        "Corp".to_owned(),
+    ));
+    assert!(!shell.tool_path_refused(ToolPath::CitrixStorePrefix));
+    let _ = shell.update(Message::ToolPathApply(ToolPath::CitrixStorePrefix));
+    assert_eq!(saved(dir.path()).citrix_cache_store_prefix, "Corp");
+}

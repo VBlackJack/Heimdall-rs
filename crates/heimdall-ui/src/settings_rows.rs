@@ -860,6 +860,21 @@ impl ToolPath {
         }
     }
 
+    /// Whether the Settings accept `text` for it: blank always, a Citrix path or prefix only
+    /// when it passes its check. The page says so when it does not, and keeps the old value.
+    #[must_use]
+    pub fn accepts(self, text: &str) -> bool {
+        use heimdall_core::import::citrix_cache as citrix;
+        let text = text.trim();
+        text.is_empty()
+            || match self {
+                Self::CitrixSelfService => citrix::self_service_path_valid(text),
+                Self::CitrixCacheDirectory => citrix::cache_directory_valid(text),
+                Self::CitrixStorePrefix => citrix::normalize_store_prefix(text).is_some(),
+                Self::Putty | Self::X11Server => true,
+            }
+    }
+
     /// Whether a "Browse..." button picks it: not the store prefix, which is no path.
     #[must_use]
     pub fn browsable(self) -> bool {

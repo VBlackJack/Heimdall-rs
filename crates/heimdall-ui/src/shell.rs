@@ -1765,6 +1765,9 @@ pub struct Shell {
     /// The programs' paths typed in the Settings page, until applied, by
     /// [`ToolPath::index`].
     tool_paths_typed: [Option<String>; ToolPath::COUNT],
+    /// Whether the value last applied for each was refused, by [`ToolPath::index`]: the page
+    /// says so under the field.
+    tool_paths_refused: [bool; ToolPath::COUNT],
     /// The Settings page's box of resolution presets.
     presets: crate::presets_editor::PresetsEditor,
     /// The Settings page's external tools, as edited.
@@ -2094,6 +2097,7 @@ impl Shell {
             log_directory: None,
             editor_typed: None,
             tool_paths_typed: Default::default(),
+            tool_paths_refused: Default::default(),
             presets,
             external_tools,
             mobaxterm_variables,

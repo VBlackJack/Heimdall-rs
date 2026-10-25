@@ -1832,6 +1832,7 @@ ui-settings-citrix-cache-directory-hint = Opcional. Una carpeta local absoluta d
 ui-settings-citrix-cache-store-prefix = Prefijo del nombre de los archivos de tienda
 ui-settings-citrix-cache-store-prefix-hint = Opcional. Solo se analizan los archivos de tienda llamados <prefijo>*_Cache.xml cuando hay varias tiendas. Solo letras, dígitos, espacio, punto, guion y guion bajo.
 ui-settings-citrix-ignored = El valor guardado no es válido y se ignora. Introduce uno nuevo o déjalo en blanco.
+ui-settings-citrix-refused = No aplicado: este valor no es válido (una ruta local absoluta de este equipo, o un nombre de letras, dígitos, espacio, punto, guion y guion bajo). Se conserva el valor anterior.
 ui-citrix-cache-truncated = { $file }: demasiadas aplicaciones, no se leyó el resto.
 ui-citrix-cache-total-cap = Demasiadas aplicaciones en el conjunto de archivos de caché: no se leyó el resto.
 ui-citrix-cache-duplicates = { $count ->

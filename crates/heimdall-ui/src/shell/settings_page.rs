@@ -769,6 +769,7 @@ impl Shell {
         self.log_directory = None;
         self.editor_typed = None;
         self.tool_paths_typed = Default::default();
+        self.tool_paths_refused = Default::default();
         self.font_size_typed = None;
         self.session_typed = Default::default();
     }
@@ -1587,6 +1588,12 @@ impl Shell {
         body.into()
     }
 
+    /// Whether the value last applied for `path` was refused and is still in its field.
+    #[must_use]
+    pub fn tool_path_refused(&self, path: crate::settings_rows::ToolPath) -> bool {
+        self.tool_paths_refused[path.index()]
+    }
+
     /// The dialog of a "Browse..." button, opening where the path set now is.
     pub(super) fn browse(&self, target: BrowseTarget) -> Task<Message> {
         let settings = self.app.settings();
@@ -1647,7 +1654,14 @@ impl Shell {
     pub(super) fn browsed(&mut self, target: BrowseTarget, path: String) -> Vec<Effect> {
         let message = match target {
             BrowseTarget::Tool(tool) => {
+                if !tool.accepts(&path) {
+                    // Kept in the field to be corrected, the saved value untouched.
+                    self.tool_paths_typed[tool.index()] = Some(path);
+                    self.tool_paths_refused[tool.index()] = true;
+                    return Vec::new();
+                }
                 self.tool_paths_typed[tool.index()] = None;
+                self.tool_paths_refused[tool.index()] = false;
                 AppMessage::Settings(tool.applied(path))
             }
             BrowseTarget::ExternalEditor => {
@@ -1790,6 +1804,9 @@ impl Shell {
             SettingRow::CitrixCacheStorePrefix => Some(CitrixSetting::StorePrefix),
             _ => None,
         };
+        if self.tool_paths_refused[path.index()] {
+            body = body.push(text(fl!("ui-settings-citrix-refused")).size(font_size::CAPTION));
+        }
         if ignored.is_some_and(|setting| self.app.settings().citrix_ignored.contains(&setting)) {
             body = body.push(text(fl!("ui-settings-citrix-ignored")).size(font_size::CAPTION));
         }
@@ -1867,10 +1884,20 @@ impl Shell {
         match message {
             Message::ToolPathEdited(path, typed) => {
                 self.tool_paths_typed[path.index()] = Some(typed);
+                self.tool_paths_refused[path.index()] = false;
                 Vec::new()
             }
             Message::ToolPathApply(path) => match self.tool_paths_typed[path.index()].take() {
-                Some(typed) => self.app.update(AppMessage::Settings(path.applied(typed))),
+                Some(typed) if !path.accepts(&typed) => {
+                    // Kept in the field to be corrected, the saved value untouched.
+                    self.tool_paths_typed[path.index()] = Some(typed);
+                    self.tool_paths_refused[path.index()] = true;
+                    Vec::new()
+                }
+                Some(typed) => {
+                    self.tool_paths_refused[path.index()] = false;
+                    self.app.update(AppMessage::Settings(path.applied(typed)))
+                }
                 None => Vec::new(),
             },
             _ => Vec::new(),
@@ -2111,6 +2138,7 @@ impl Shell {
         }
         if let Some(path) = row.tool_path() {
             self.tool_paths_typed[path.index()] = None;
+            self.tool_paths_refused[path.index()] = false;
         }
         match row {
             SettingRow::FontSize => self.font_size_typed = None,

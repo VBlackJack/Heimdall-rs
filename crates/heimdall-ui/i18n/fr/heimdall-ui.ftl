@@ -1835,6 +1835,7 @@ ui-settings-citrix-cache-directory-hint = Facultatif. Un dossier local absolu d'
 ui-settings-citrix-cache-store-prefix = Préfixe du nom des fichiers de magasin
 ui-settings-citrix-cache-store-prefix-hint = Facultatif. Seuls les fichiers de magasin nommés <préfixe>*_Cache.xml sont analysés quand plusieurs magasins sont présents. Lettres, chiffres, espace, point, tiret et tiret bas uniquement.
 ui-settings-citrix-ignored = La valeur enregistrée n'est pas valide et est ignorée. Saisissez-en une nouvelle ou laissez vide.
+ui-settings-citrix-refused = Non appliqué : cette valeur n'est pas valide (un chemin local absolu de cet ordinateur, ou un nom fait de lettres, chiffres, espace, point, tiret et tiret bas). La valeur précédente est conservée.
 ui-citrix-cache-truncated = { $file } : trop d'applications, le reste n'a pas été lu.
 ui-citrix-cache-total-cap = Trop d'applications dans l'ensemble des fichiers de cache : le reste n'a pas été lu.
 ui-citrix-cache-duplicates = { $count ->

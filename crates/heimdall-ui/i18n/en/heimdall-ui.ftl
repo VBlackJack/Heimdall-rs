@@ -2005,6 +2005,7 @@ ui-settings-citrix-cache-directory-hint = Optional. An absolute local folder the
 ui-settings-citrix-cache-store-prefix = Store file-name prefix
 ui-settings-citrix-cache-store-prefix-hint = Optional. Only the store files named <prefix>*_Cache.xml are scanned when several stores are present. Letters, digits, space, dot, dash and underscore only.
 ui-settings-citrix-ignored = The saved value is not valid and is ignored. Enter a new one or leave this blank.
+ui-settings-citrix-refused = Not applied: this value is not valid (an absolute local path of this computer, or a name made of letters, digits, space, dot, dash and underscore). The previous value is kept.
 ui-citrix-cache-truncated = { $file }: too many applications, the rest was not read.
 ui-citrix-cache-total-cap = Too many applications in all the cache files: the rest was not read.
 ui-citrix-cache-duplicates = { $count ->
