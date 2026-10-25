@@ -1834,6 +1834,14 @@ ui-settings-citrix-cache-directory = Dossier du cache SelfService
 ui-settings-citrix-cache-directory-hint = Facultatif. Un dossier local absolu d'où importer les applications Citrix. Laissez vide pour utiliser le dossier Citrix\SelfService de ce compte.
 ui-settings-citrix-cache-store-prefix = Préfixe du nom des fichiers de magasin
 ui-settings-citrix-cache-store-prefix-hint = Facultatif. Seuls les fichiers de magasin nommés <préfixe>*_Cache.xml sont analysés quand plusieurs magasins sont présents. Lettres, chiffres, espace, point, tiret et tiret bas uniquement.
+ui-settings-citrix-ignored = La valeur enregistrée n'est pas valide et est ignorée. Saisissez-en une nouvelle ou laissez vide.
+ui-citrix-cache-truncated = { $file } : trop d'applications, le reste n'a pas été lu.
+ui-citrix-cache-total-cap = Trop d'applications dans l'ensemble des fichiers de cache : le reste n'a pas été lu.
+ui-citrix-cache-duplicates = { $count ->
+    [one] { $count } application répétant un identifiant Citrix précédent a été ignorée.
+   *[other] { $count } applications répétant un identifiant Citrix précédent ont été ignorées.
+}
+ui-citrix-cache-setting-ignored = Le réglage enregistré { $setting } n'est pas valide et a été ignoré.
 ui-dialog-close-edits-body = "{ $name }" a un fichier ouvert dans un éditeur externe. Fermer le panneau quand même ? L'éditeur reste ouvert, mais plus rien n'enverra sa prochaine sauvegarde au serveur.
 ui-files-edits-title = Édités dans un éditeur externe
 ui-files-edit-watching = Chaque enregistrement dans l'éditeur est envoyé au serveur.

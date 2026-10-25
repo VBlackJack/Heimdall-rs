@@ -2004,6 +2004,14 @@ ui-settings-citrix-cache-directory = SelfService cache folder
 ui-settings-citrix-cache-directory-hint = Optional. An absolute local folder the Citrix applications are imported from. Leave blank to use this account's Citrix\SelfService folder.
 ui-settings-citrix-cache-store-prefix = Store file-name prefix
 ui-settings-citrix-cache-store-prefix-hint = Optional. Only the store files named <prefix>*_Cache.xml are scanned when several stores are present. Letters, digits, space, dot, dash and underscore only.
+ui-settings-citrix-ignored = The saved value is not valid and is ignored. Enter a new one or leave this blank.
+ui-citrix-cache-truncated = { $file }: too many applications, the rest was not read.
+ui-citrix-cache-total-cap = Too many applications in all the cache files: the rest was not read.
+ui-citrix-cache-duplicates = { $count ->
+    [one] { $count } application repeating an earlier Citrix identifier was skipped.
+   *[other] { $count } applications repeating an earlier Citrix identifier were skipped.
+}
+ui-citrix-cache-setting-ignored = The saved setting { $setting } is not valid and was ignored.
 ui-dialog-close-edits-body = "{ $name }" has a file open in an external editor. Close the pane anyway? The editor stays open, but nothing will send its next save to the server.
 ui-files-edits-title = Edited in an external editor
 ui-files-edit-watching = Each save in the editor is sent to the server.

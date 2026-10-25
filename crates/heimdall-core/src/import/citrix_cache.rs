@@ -68,6 +68,9 @@ const MAX_XML_NODES: u32 = 2_000_000;
 /// The most applications read from one cache file.
 pub const MAX_APPS_PER_FILE: usize = 20_000;
 
+/// The most applications kept from all the files of one scan.
+pub const MAX_APPS_TOTAL: usize = 50_000;
+
 /// The most cache files read in one scan.
 pub const MAX_CACHE_FILES: usize = 256;
 
@@ -128,6 +131,21 @@ pub enum CacheWarning {
     FolderMissing,
     /// The folder holds no cache file: no store was connected to.
     NoCacheFiles,
+    /// A file held more than [`MAX_APPS_PER_FILE`] applications: the rest is not read.
+    FileTruncated {
+        /// The file's name.
+        file: String,
+    },
+    /// The scan reached [`MAX_APPS_TOTAL`] applications: the rest is not read.
+    TotalCapReached,
+    /// Applications repeating the Citrix identifier of an earlier one were skipped, the
+    /// first kept, as the C# `CitrixImportMerger`.
+    DuplicateIds {
+        /// How many were skipped.
+        count: usize,
+    },
+    /// A setting saved for the scan was not valid and is ignored.
+    SettingIgnored(CitrixSetting),
     /// A cache file could not be read.
     Unreadable {
         /// The file's name.
@@ -135,6 +153,17 @@ pub enum CacheWarning {
         /// Why.
         detail: String,
     },
+}
+
+/// A Citrix Workspace setting, named for the warning that says one was not valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CitrixSetting {
+    /// The `SelfService.exe` path.
+    SelfServicePath,
+    /// The cache folder.
+    CacheDirectory,
+    /// The store file-name prefix.
+    StorePrefix,
 }
 
 /// The applications of every cache file, and what was said on the way.
@@ -200,11 +229,26 @@ pub fn scan_folder(folder: &Path, prefix: Option<&str>) -> CacheScan {
         scan.warnings.push(CacheWarning::NoCacheFiles);
     }
     for file in files {
+        let name = || {
+            file.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
         let read = read_capped(&file)
             .and_then(|bytes| decode(&bytes))
-            .and_then(|text| parse(&text));
+            .and_then(|text| parse_bounded(&text));
         match read {
-            Ok(apps) => scan.apps.extend(apps),
+            Ok((apps, truncated)) => {
+                if truncated {
+                    scan.warnings
+                        .push(CacheWarning::FileTruncated { file: name() });
+                }
+                let room = MAX_APPS_TOTAL.saturating_sub(scan.apps.len());
+                if apps.len() > room {
+                    scan.warnings.push(CacheWarning::TotalCapReached);
+                }
+                scan.apps.extend(apps.into_iter().take(room));
+            }
             Err(detail) => scan.warnings.push(CacheWarning::Unreadable {
                 file: file
                     .file_name()
@@ -214,7 +258,24 @@ pub fn scan_folder(folder: &Path, prefix: Option<&str>) -> CacheScan {
             }),
         }
     }
+    drop_duplicate_ids(&mut scan);
     scan
+}
+
+/// Keeps the first application of each Citrix identifier, as the C# merger does, and says
+/// how many were skipped.
+fn drop_duplicate_ids(scan: &mut CacheScan) {
+    let mut seen = std::collections::HashSet::new();
+    let before = scan.apps.len();
+    scan.apps.retain(|app| {
+        app.citrix_id
+            .as_ref()
+            .is_none_or(|id| seen.insert(id.clone()))
+    });
+    let count = before - scan.apps.len();
+    if count > 0 {
+        scan.warnings.push(CacheWarning::DuplicateIds { count });
+    }
 }
 
 /// The bytes of `path`, refused when over [`MAX_CACHE_FILE_BYTES`]: never read past the cap.
@@ -271,6 +332,15 @@ fn decode(bytes: &[u8]) -> Result<String, String> {
 ///
 /// Why the file is not XML, or holds a DTD.
 pub fn parse(text: &str) -> Result<Vec<CachedApp>, String> {
+    parse_bounded(text).map(|(apps, _)| apps)
+}
+
+/// [`parse`], and whether the file held more than [`MAX_APPS_PER_FILE`] applications.
+///
+/// # Errors
+///
+/// Why the file is not XML, or holds a DTD.
+pub fn parse_bounded(text: &str) -> Result<(Vec<CachedApp>, bool), String> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     // A DTD is refused, which no entity can be expanded without; the node count is capped.
     let options = ParsingOptions {
@@ -282,6 +352,7 @@ pub fn parse(text: &str) -> Result<Vec<CachedApp>, String> {
         Document::parse_with_options(text, options).map_err(|error| error.to_string())?;
     let mut store_url = None;
     let mut apps = Vec::new();
+    let mut truncated = false;
     for resource in document
         .descendants()
         .filter(|node| node.is_element() && node.tag_name().name() == RESOURCE)
@@ -303,6 +374,7 @@ pub fn parse(text: &str) -> Result<Vec<CachedApp>, String> {
             store_url = value(resource, ICA_LAUNCH_URL).and_then(|url| store_of(&url));
         }
         if apps.len() >= MAX_APPS_PER_FILE {
+            truncated = true;
             break;
         }
         apps.push(CachedApp {
@@ -316,7 +388,7 @@ pub fn parse(text: &str) -> Result<Vec<CachedApp>, String> {
     for app in &mut apps {
         app.store_url.clone_from(&store_url);
     }
-    Ok(apps)
+    Ok((apps, truncated))
 }
 
 /// The resource identifier a launch line passes to `-CitrixID`, as the C#
@@ -366,6 +438,11 @@ pub fn normalize_store_prefix(prefix: &str) -> Option<String> {
     safe.then(|| trimmed.to_owned())
 }
 
+/// Whether `c` separates the steps of a path on Windows or elsewhere.
+fn is_separator(c: char) -> bool {
+    matches!(c, '/' | '\\')
+}
+
 /// Whether `text` can be a path typed in the Settings: no control or invisible character, an
 /// absolute path of this computer (a drive or a root), never a share, and no `..` step.
 fn local_absolute_path(text: &str) -> bool {
@@ -378,7 +455,8 @@ fn local_absolute_path(text: &str) -> bool {
         return false;
     }
     // A share is another computer's, which a file of settings could point at.
-    if trimmed.starts_with(r"\\") || trimmed.starts_with("//") {
+    let mut first_two = trimmed.chars().take(2);
+    if first_two.next().is_some_and(is_separator) && first_two.next().is_some_and(is_separator) {
         return false;
     }
     let bytes = trimmed.as_bytes();

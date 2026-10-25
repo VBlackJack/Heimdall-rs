@@ -18,7 +18,7 @@
 //! asked about, then how many were imported, with what the scan said.
 
 use heimdall_app::{Dialog, server_text};
-use heimdall_core::import::citrix_cache::{CacheScan, CacheWarning};
+use heimdall_core::import::citrix_cache::{CacheScan, CacheWarning, CitrixSetting};
 
 use crate::i18n::fl;
 
@@ -68,11 +68,33 @@ pub fn report_lines(dialog: &Dialog) -> Option<(String, Vec<String>)> {
     Some((fl!("ui-citrix-import-title"), lines))
 }
 
+/// The name of a Citrix setting, as the Settings page words it.
+#[must_use]
+pub fn setting_label(setting: CitrixSetting) -> String {
+    match setting {
+        CitrixSetting::SelfServicePath => fl!("ui-settings-citrix-self-service-path"),
+        CitrixSetting::CacheDirectory => fl!("ui-settings-citrix-cache-directory"),
+        CitrixSetting::StorePrefix => fl!("ui-settings-citrix-cache-store-prefix"),
+    }
+}
+
 /// What a scan warning says, as the C# warnings.
 fn warning(warning: &CacheWarning) -> String {
     match warning {
         CacheWarning::FolderMissing => fl!("ui-citrix-cache-folder-missing"),
         CacheWarning::NoCacheFiles => fl!("ui-citrix-cache-no-files"),
+        CacheWarning::FileTruncated { file } => {
+            fl!("ui-citrix-cache-truncated", file = server_text(file))
+        }
+        CacheWarning::TotalCapReached => fl!("ui-citrix-cache-total-cap"),
+        CacheWarning::DuplicateIds { count } => {
+            let count: usize = *count;
+            fl!("ui-citrix-cache-duplicates", count = count)
+        }
+        CacheWarning::SettingIgnored(setting) => fl!(
+            "ui-citrix-cache-setting-ignored",
+            setting = setting_label(*setting)
+        ),
         CacheWarning::Unreadable { file, detail } => fl!(
             "ui-citrix-cache-unreadable",
             file = server_text(file),

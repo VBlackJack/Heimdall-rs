@@ -35,6 +35,7 @@ use heimdall_app::{
     ProviderMessage, UpdateMessage, UpdateStatus, VaultHelloMessage, VaultHelloStatus, VaultStatus,
     search_folded,
 };
+use heimdall_core::import::citrix_cache::CitrixSetting;
 use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
 use heimdall_core::settings::{
     Accent, AgentPreference, AppTheme, ColorScheme, CtrlKTerminal, CtrlVPaste, ExecutionPolicy,
@@ -1782,6 +1783,15 @@ impl Shell {
         let mut body = column![labelled(row_label(row), field)].spacing(spacing::SM);
         if let Some(hint) = row_hint(row) {
             body = body.push(text(hint).size(font_size::CAPTION));
+        }
+        let ignored = match row {
+            SettingRow::CitrixSelfServicePath => Some(CitrixSetting::SelfServicePath),
+            SettingRow::CitrixCacheDirectory => Some(CitrixSetting::CacheDirectory),
+            SettingRow::CitrixCacheStorePrefix => Some(CitrixSetting::StorePrefix),
+            _ => None,
+        };
+        if ignored.is_some_and(|setting| self.app.settings().citrix_ignored.contains(&setting)) {
+            body = body.push(text(fl!("ui-settings-citrix-ignored")).size(font_size::CAPTION));
         }
         body.into()
     }

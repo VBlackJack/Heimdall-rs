@@ -659,6 +659,9 @@ pub struct Settings {
     /// Only the store files named `<prefix>*_Cache.xml` are read, as the C#
     /// `CitrixCacheStorePrefix`; empty reads them all.
     pub citrix_cache_store_prefix: String,
+    /// The Citrix settings a loaded file held that failed their check and were dropped to
+    /// blank, said to the user where they are set and in the import report. Never saved.
+    pub citrix_ignored: Vec<crate::import::citrix_cache::CitrixSetting>,
     /// Where the shell of a new SSH profile opens, as the C# `SshDefaultMode`: in a tab
     /// unless chosen. Only the profile form starts with it, as the C# "Add server".
     pub ssh_default_mode: SshMode,
@@ -1402,6 +1405,7 @@ impl Default for Settings {
             citrix_self_service_path: String::new(),
             citrix_cache_directory: String::new(),
             citrix_cache_store_prefix: String::new(),
+            citrix_ignored: Vec::new(),
             ssh_default_mode: SshMode::default(),
             x11_server_path: String::new(),
             x11_auto_start: true,
@@ -1511,6 +1515,29 @@ impl CitrixSection {
             cache_directory: settings.citrix_cache_directory.clone(),
             cache_store_prefix: settings.citrix_cache_store_prefix.clone(),
         }
+    }
+}
+
+impl CitrixSection {
+    /// The settings of the section that are not blank and fail their check.
+    fn ignored(&self) -> Vec<crate::import::citrix_cache::CitrixSetting> {
+        use crate::import::citrix_cache::{
+            CitrixSetting, cache_directory_valid, normalize_store_prefix, self_service_path_valid,
+        };
+        let mut ignored = Vec::new();
+        let blank = |text: &str| text.trim().is_empty();
+        if !blank(&self.self_service_path) && !self_service_path_valid(&self.self_service_path) {
+            ignored.push(CitrixSetting::SelfServicePath);
+        }
+        if !blank(&self.cache_directory) && !cache_directory_valid(&self.cache_directory) {
+            ignored.push(CitrixSetting::CacheDirectory);
+        }
+        if !blank(&self.cache_store_prefix)
+            && normalize_store_prefix(&self.cache_store_prefix).is_none()
+        {
+            ignored.push(CitrixSetting::StorePrefix);
+        }
+        ignored
     }
 }
 
@@ -2413,6 +2440,7 @@ impl Settings {
             external_tools: file.external_tools.tools,
             mobaxterm_variables: file.mobaxterm.variables,
             putty_path: file.ssh.putty_path.trim().to_owned(),
+            citrix_ignored: file.citrix.ignored(),
             citrix_self_service_path: checked_text(
                 &file.citrix.self_service_path,
                 crate::import::citrix_cache::self_service_path_valid,

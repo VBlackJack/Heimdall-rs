@@ -619,13 +619,23 @@ impl App {
             | SettingsMessage::SyncKnownHostsAtStartup(_)) => self.set_security_flag(message),
             SettingsMessage::CitrixSelfServicePath(path) => {
                 match checked_citrix(path, citrix_cache::self_service_path_valid) {
-                    Some(path) => self.settings.citrix_self_service_path = path,
+                    Some(path) => {
+                        self.settings.citrix_self_service_path = path;
+                        self.settings
+                            .citrix_ignored
+                            .retain(|s| *s != citrix_cache::CitrixSetting::SelfServicePath);
+                    }
                     None => return Vec::new(),
                 }
             }
             SettingsMessage::CitrixCacheDirectory(directory) => {
                 match checked_citrix(directory, citrix_cache::cache_directory_valid) {
-                    Some(directory) => self.settings.citrix_cache_directory = directory,
+                    Some(directory) => {
+                        self.settings.citrix_cache_directory = directory;
+                        self.settings
+                            .citrix_ignored
+                            .retain(|s| *s != citrix_cache::CitrixSetting::CacheDirectory);
+                    }
                     None => return Vec::new(),
                 }
             }
@@ -636,6 +646,9 @@ impl App {
                     return Vec::new();
                 }
                 self.settings.citrix_cache_store_prefix = normalized.unwrap_or_default();
+                self.settings
+                    .citrix_ignored
+                    .retain(|s| *s != citrix_cache::CitrixSetting::StorePrefix);
             }
             SettingsMessage::PreventSleep(on) => self.settings.prevent_sleep = *on,
             SettingsMessage::RdpBuiltinCompression(on) => {

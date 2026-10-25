@@ -59,7 +59,14 @@ impl App {
     }
 
     /// The cache scanned: its applications asked about, or why there are none.
-    pub(super) fn citrix_scanned(&mut self, scan: CacheScan) {
+    pub(super) fn citrix_scanned(&mut self, mut scan: CacheScan) {
+        // A saved setting that failed its check is ignored: said with the rest.
+        scan.warnings.extend(
+            self.settings
+                .citrix_ignored
+                .iter()
+                .map(|setting| CacheWarning::SettingIgnored(*setting)),
+        );
         self.dialog = Some(if scan.apps.is_empty() {
             Dialog::CitrixImportNothing {
                 warnings: scan.warnings,

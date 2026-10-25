@@ -2850,3 +2850,28 @@ self_service_path = '  C:\Citrix\selfservice.EXE '
     }
     assert!(imported.ignored.is_empty(), "{:?}", imported.ignored);
 }
+
+#[test]
+fn a_citrix_setting_dropped_when_read_is_remembered_to_be_said() {
+    use heimdall_core::import::citrix_cache::CitrixSetting;
+    let dir = tempfile::tempdir().expect("dir");
+    let read = written(
+        dir.path(),
+        r"version = 1
+[citrix]
+self_service_path = 'C:\Tools\evil.exe'
+cache_directory = '%LOCALAPPDATA%\Citrix'
+cache_store_prefix = ''
+",
+    );
+    assert_eq!(
+        read.citrix_ignored,
+        [
+            CitrixSetting::SelfServicePath,
+            CitrixSetting::CacheDirectory
+        ]
+    );
+    assert!(read.citrix_cache_directory.is_empty());
+    // Nothing dropped, nothing said.
+    assert!(Settings::default().citrix_ignored.is_empty());
+}

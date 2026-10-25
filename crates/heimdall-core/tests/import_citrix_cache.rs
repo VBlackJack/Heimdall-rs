@@ -17,7 +17,7 @@
 //! Citrix Workspace's local cache read as the C# `CitrixCacheScanner` reads it.
 
 use heimdall_core::import::citrix_cache::{
-    CacheWarning, MAX_APPS_PER_FILE, MAX_CACHE_FILE_BYTES, cache_directory_valid,
+    CacheWarning, MAX_APPS_PER_FILE, MAX_APPS_TOTAL, MAX_CACHE_FILE_BYTES, cache_directory_valid,
     extract_citrix_id, normalize_store_prefix, parse, scan_folder, self_service_path_valid,
 };
 
@@ -309,4 +309,71 @@ fn the_applications_of_a_file_are_bounded() {
     text.push_str("</resources>");
     let apps = parse(&text).expect("parsed");
     assert_eq!(apps.len(), MAX_APPS_PER_FILE);
+}
+
+#[test]
+fn any_path_starting_with_two_separators_is_refused() {
+    for prefix in [r"\\", "//", r"/\", r"\/"] {
+        let dir = format!("{prefix}server{prefix}share");
+        assert!(!cache_directory_valid(&dir), "{dir}");
+        let exe = format!("{prefix}server{prefix}share{prefix}SelfService.exe");
+        assert!(!self_service_path_valid(&exe), "{exe}");
+    }
+    assert!(!cache_directory_valid(r"\\?\C:\Cache"));
+}
+
+/// `count` applications named after `prefix` with identifiers `prefix` + number.
+fn many(prefix: &str, count: usize) -> String {
+    use std::fmt::Write as _;
+    let mut text = String::from("<resources>");
+    for n in 0..count {
+        write!(
+            text,
+            "<resource><FriendlyName>{prefix}{n}</FriendlyName><LaunchCommandLine>-CitrixID {prefix}{n}</LaunchCommandLine></resource>"
+        )
+        .expect("write");
+    }
+    text.push_str("</resources>");
+    text
+}
+
+#[test]
+fn a_truncated_file_and_the_total_cap_are_said() {
+    let dir = tempfile::tempdir().expect("dir");
+    std::fs::write(
+        dir.path().join("a_Cache.xml"),
+        many("a", MAX_APPS_PER_FILE + 1),
+    )
+    .expect("write");
+    let scan = scan_folder(dir.path(), None);
+    assert_eq!(scan.apps.len(), MAX_APPS_PER_FILE);
+    assert_eq!(
+        scan.warnings,
+        [CacheWarning::FileTruncated {
+            file: "a_Cache.xml".to_owned()
+        }]
+    );
+
+    // Three full files exceed the total.
+    let dir = tempfile::tempdir().expect("dir");
+    for name in ["a", "b", "c"] {
+        std::fs::write(
+            dir.path().join(format!("{name}_Cache.xml")),
+            many(name, MAX_APPS_PER_FILE),
+        )
+        .expect("write");
+    }
+    let scan = scan_folder(dir.path(), None);
+    assert_eq!(scan.apps.len(), MAX_APPS_TOTAL);
+    assert_eq!(scan.warnings, [CacheWarning::TotalCapReached]);
+}
+
+#[test]
+fn a_repeated_citrix_id_keeps_the_first_and_is_said() {
+    let dir = tempfile::tempdir().expect("dir");
+    std::fs::write(dir.path().join("a_Cache.xml"), many("x", 3)).expect("write");
+    std::fs::write(dir.path().join("b_Cache.xml"), many("x", 2)).expect("write");
+    let scan = scan_folder(dir.path(), None);
+    assert_eq!(scan.apps.len(), 3);
+    assert_eq!(scan.warnings, [CacheWarning::DuplicateIds { count: 2 }]);
 }
