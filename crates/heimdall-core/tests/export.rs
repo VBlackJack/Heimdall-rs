@@ -300,6 +300,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
         ica_file: Some(r"C:\apps\mail.ica".to_owned()),
         seamless: false,
         sso: true,
+        citrix_id: None,
     }]);
     store.merge_web([web()]);
     store.merge_tools(tool_entries());

@@ -19,6 +19,7 @@
 
 use std::path::PathBuf;
 
+use heimdall_core::import::citrix_cache;
 use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
 use heimdall_core::settings::{
     Accent, AppTheme, ColorScheme, Language, Settings, anti_idle_interval_accepted,
@@ -52,6 +53,15 @@ pub enum SettingsMessage {
     ExternalEditor(String),
     /// `PuTTY`, which SSH profiles in the external mode open in; empty looks on `PATH`.
     PuttyPath(String),
+    /// The `SelfService.exe` Citrix cache launches go through; empty tries the places Citrix
+    /// Workspace installs it. Refused unless an absolute local path to a file of that name.
+    CitrixSelfServicePath(String),
+    /// The folder the Citrix Workspace cache is read from; empty is the account's own.
+    /// Refused unless an absolute local path.
+    CitrixCacheDirectory(String),
+    /// Only the Citrix store files named `<prefix>*_Cache.xml` are read; empty reads them
+    /// all. Refused unless safe file-name characters.
+    CitrixCacheStorePrefix(String),
     /// Where the shell of a new SSH profile opens.
     SshDefaultMode(SshMode),
     /// The default SSH mode written into every SSH profile, asked first as the C# asks.
@@ -607,6 +617,26 @@ impl App {
             | SettingsMessage::RequireCredentialGuard(_)
             | SettingsMessage::RequireWindowsHello(_)
             | SettingsMessage::SyncKnownHostsAtStartup(_)) => self.set_security_flag(message),
+            SettingsMessage::CitrixSelfServicePath(path) => {
+                match checked_citrix(path, citrix_cache::self_service_path_valid) {
+                    Some(path) => self.settings.citrix_self_service_path = path,
+                    None => return Vec::new(),
+                }
+            }
+            SettingsMessage::CitrixCacheDirectory(directory) => {
+                match checked_citrix(directory, citrix_cache::cache_directory_valid) {
+                    Some(directory) => self.settings.citrix_cache_directory = directory,
+                    None => return Vec::new(),
+                }
+            }
+            SettingsMessage::CitrixCacheStorePrefix(prefix) => {
+                let normalized = citrix_cache::normalize_store_prefix(prefix);
+                // Blank clears it; anything else must be safe.
+                if normalized.is_none() && !prefix.trim().is_empty() {
+                    return Vec::new();
+                }
+                self.settings.citrix_cache_store_prefix = normalized.unwrap_or_default();
+            }
             SettingsMessage::PreventSleep(on) => self.settings.prevent_sleep = *on,
             SettingsMessage::RdpBuiltinCompression(on) => {
                 self.settings.builtin_rdp_compression = *on;
@@ -692,6 +722,12 @@ impl App {
         }
         effects
     }
+}
+
+/// `text` trimmed when it is blank (cleared) or `valid` takes it; `None` when refused.
+fn checked_citrix(text: &str, valid: fn(&str) -> bool) -> Option<String> {
+    let trimmed = text.trim();
+    (trimmed.is_empty() || valid(trimmed)).then(|| trimmed.to_owned())
 }
 
 /// Whether `variables` can be kept, as the C# row checks

@@ -2773,3 +2773,80 @@ fn the_approvals_of_sources_no_longer_listed_or_listed_for_another_file_are_forg
         0
     );
 }
+
+#[test]
+fn the_citrix_workspace_settings_are_blank_by_default_checked_when_read_and_travel() {
+    let dir = tempfile::tempdir().expect("dir");
+    let defaults = Settings::default();
+    assert!(defaults.citrix_self_service_path.is_empty());
+    assert!(defaults.citrix_cache_directory.is_empty());
+    assert!(defaults.citrix_cache_store_prefix.is_empty());
+    // Written before they were: blank.
+    let older = written(dir.path(), "version = 1\n[ssh]\nauto_reconnect = true\n");
+    assert!(older.citrix_self_service_path.is_empty());
+
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let chosen = Settings {
+        citrix_self_service_path: r"C:\Citrix\SelfService.exe".to_owned(),
+        citrix_cache_directory: r"D:\Cache\SelfService".to_owned(),
+        citrix_cache_store_prefix: "Corp".to_owned(),
+        ..Settings::default()
+    };
+    chosen.save(&path).expect("saved");
+    let read = Settings::load(&path).expect("read");
+    assert_eq!(
+        read.citrix_self_service_path,
+        chosen.citrix_self_service_path
+    );
+    assert_eq!(read.citrix_cache_directory, chosen.citrix_cache_directory);
+    assert_eq!(read.citrix_cache_store_prefix, "Corp");
+
+    // A file edited by hand or carried from elsewhere cannot name a program that is not
+    // SelfService.exe, a share, a relative folder or a prefix with a separator or wildcard.
+    let hostile = written(
+        dir.path(),
+        r"version = 1
+[citrix]
+self_service_path = 'C:\Tools\evil.exe'
+cache_directory = '\\server\share'
+cache_store_prefix = '..\*'
+",
+    );
+    assert!(hostile.citrix_self_service_path.is_empty());
+    assert!(hostile.citrix_cache_directory.is_empty());
+    assert!(hostile.citrix_cache_store_prefix.is_empty());
+    let padded = written(
+        dir.path(),
+        r"version = 1
+[citrix]
+self_service_path = '  C:\Citrix\selfservice.EXE '
+",
+    );
+    assert_eq!(
+        padded.citrix_self_service_path,
+        r"C:\Citrix\selfservice.EXE"
+    );
+
+    // They travel with an export; the program to run is flagged for review.
+    let (text, _) = chosen.export(None, false);
+    let imported = Settings::default().import(&text).expect("read");
+    assert_eq!(
+        imported.settings.citrix_self_service_path,
+        chosen.citrix_self_service_path
+    );
+    assert_eq!(imported.settings.citrix_cache_store_prefix, "Corp");
+    let flagged: Vec<&str> = imported
+        .sensitive()
+        .map(|change| change.key.as_str())
+        .collect();
+    assert!(flagged.contains(&"citrix.self_service_path"), "{flagged:?}");
+    let keys: Vec<&str> = imported
+        .changes
+        .iter()
+        .map(|change| change.key.as_str())
+        .collect();
+    for key in ["citrix.cache_directory", "citrix.cache_store_prefix"] {
+        assert!(keys.contains(&key), "{keys:?}");
+    }
+    assert!(imported.ignored.is_empty(), "{:?}", imported.ignored);
+}

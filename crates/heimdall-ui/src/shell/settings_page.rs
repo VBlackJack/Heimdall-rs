@@ -232,6 +232,7 @@ fn card_heading(card: SettingsCard) -> Option<String> {
         SettingsCard::SshSession => fl!("ui-settings-ssh-session"),
         SettingsCard::Sftp => fl!("ui-settings-sftp"),
         SettingsCard::X11 => fl!("ui-settings-x11"),
+        SettingsCard::Citrix => fl!("ui-settings-citrix"),
         SettingsCard::ExternalEditor => fl!("ui-settings-external-editor"),
         SettingsCard::ExternalTools => fl!("ui-external-tools-title"),
         SettingsCard::MobaxtermVariables => fl!("ui-mobaxterm-variables-title"),
@@ -302,6 +303,9 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::ExternalTools => fl!("ui-external-tools-title"),
         SettingRow::MobaxtermVariables => fl!("ui-mobaxterm-variables-title"),
         SettingRow::SharedSources => fl!("ui-shared-sources-title"),
+        SettingRow::CitrixSelfServicePath => fl!("ui-settings-citrix-self-service-path"),
+        SettingRow::CitrixCacheDirectory => fl!("ui-settings-citrix-cache-directory"),
+        SettingRow::CitrixCacheStorePrefix => fl!("ui-settings-citrix-cache-store-prefix"),
         SettingRow::PuttyPath => fl!("ui-settings-putty-path"),
         SettingRow::SshDefaultMode => fl!("ui-settings-ssh-default-mode"),
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path"),
@@ -351,6 +355,9 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::ExternalTools => fl!("ui-external-tools-description"),
         SettingRow::MobaxtermVariables => fl!("ui-mobaxterm-variables-description"),
         SettingRow::SharedSources => fl!("ui-shared-sources-description"),
+        SettingRow::CitrixSelfServicePath => fl!("ui-settings-citrix-self-service-path-hint"),
+        SettingRow::CitrixCacheDirectory => fl!("ui-settings-citrix-cache-directory-hint"),
+        SettingRow::CitrixCacheStorePrefix => fl!("ui-settings-citrix-cache-store-prefix-hint"),
         SettingRow::PuttyPath => fl!("ui-settings-putty-path-hint"),
         SettingRow::SshDefaultMode => fl!("ui-settings-ssh-default-mode-hint"),
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path-hint"),
@@ -1051,6 +1058,9 @@ impl Shell {
                 DefaultSshModeChoice(defaults.ssh_default_mode).to_string()
             }
             SettingRow::X11ServerPath => or_empty(&defaults.x11_server_path),
+            SettingRow::CitrixSelfServicePath => or_empty(&defaults.citrix_self_service_path),
+            SettingRow::CitrixCacheDirectory => or_empty(&defaults.citrix_cache_directory),
+            SettingRow::CitrixCacheStorePrefix => or_empty(&defaults.citrix_cache_store_prefix),
             SettingRow::RdpDefaultMode => {
                 DefaultRdpModeChoice(defaults.rdp_default_mode).to_string()
             }
@@ -1108,7 +1118,11 @@ impl Shell {
             SettingRow::FontSize => self.font_size_row(),
             SettingRow::FontFamily => self.font_family_row(),
             SettingRow::SessionLogDirectory | SettingRow::ExternalEditor => self.path_row(row),
-            SettingRow::PuttyPath | SettingRow::X11ServerPath => self.tool_path_row(row),
+            SettingRow::PuttyPath
+            | SettingRow::X11ServerPath
+            | SettingRow::CitrixSelfServicePath
+            | SettingRow::CitrixCacheDirectory
+            | SettingRow::CitrixCacheStorePrefix => self.tool_path_row(row),
             SettingRow::SshDefaultMode => self.ssh_default_mode_row(),
             SettingRow::RdpDefaultMode => self.rdp_default_mode_row(),
             SettingRow::HostKeys
@@ -1759,9 +1773,12 @@ impl Shell {
             .style(styles::text_input)
             .on_input(move |typed| Message::ToolPathEdited(path, typed))
             .on_submit(Message::ToolPathApply(path));
-        let field = row![field, browse_button(BrowseTarget::Tool(path))]
+        let mut field = row![field]
             .spacing(spacing::SM)
             .align_y(iced::Alignment::Center);
+        if path.browsable() {
+            field = field.push(browse_button(BrowseTarget::Tool(path)));
+        }
         let mut body = column![labelled(row_label(row), field)].spacing(spacing::SM);
         if let Some(hint) = row_hint(row) {
             body = body.push(text(hint).size(font_size::CAPTION));

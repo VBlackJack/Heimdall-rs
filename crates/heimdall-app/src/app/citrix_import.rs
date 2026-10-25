@@ -19,11 +19,15 @@
 //! saved as a Citrix profile, its launch line kept in the vault as a password is, never in
 //! the profiles file.
 //!
-//! Unlike the C#, which appends every application again at each scan, an application
-//! already saved, the same name on the same `StoreFront`, is kept and its launch line
-//! refreshed. With the vault locked or no store for secrets, the applications come in
-//! without their launch line, launched through their `StoreFront`, where the C# refuses the
-//! import.
+//! As the C# `CitrixImportMerger` (v2026.102301), an import is idempotent: an application
+//! already saved is found by its Citrix identifier (`-CitrixID`) and its launch metadata
+//! refreshed in place, with its display name, folder, notes, tags and favorites kept and
+//! nothing deleted. The result says how many were added, updated, or already up to date.
+//! Where the C# appends an application with no identifier again at each scan, an
+//! application saved before identifiers were kept, or with none in its line, is found by
+//! its name on the same `StoreFront` instead, and given the identifier. With the vault
+//! locked or no store for secrets, the applications come in without their launch line,
+//! launched through their `StoreFront`, where the C# refuses the import.
 
 use std::collections::HashSet;
 
@@ -37,8 +41,11 @@ use super::{App, Dialog, Effect};
 pub struct CitrixImportOutcome {
     /// Applications saved as new profiles.
     pub added: usize,
-    /// Applications already saved, their launch line refreshed.
-    pub refreshed: usize,
+    /// Applications already saved whose launch metadata (`StoreFront`, application name or
+    /// Citrix identifier) changed and was refreshed.
+    pub updated: usize,
+    /// Applications already saved that were up to date: only their launch line refreshed.
+    pub unchanged: usize,
     /// The launch lines could not be kept: the vault locked, or no store for secrets.
     pub without_launch_lines: bool,
     /// What the scan said.
@@ -62,63 +69,77 @@ impl App {
         });
     }
 
-    /// The applications of `scan` saved, and what was done said.
+    /// The applications of `scan` saved or refreshed, and what was done said.
     pub(super) fn import_citrix(&mut self, scan: CacheScan) {
         let keep_lines = self.can_save_passwords();
-        let mut added: Vec<CitrixProfile> = Vec::new();
-        let mut refreshed: HashSet<ProfileId> = HashSet::new();
+        let saved: Vec<CitrixProfile> = self.store.citrix_profiles().to_vec();
+        // Every profile, the saved ones refreshed in place and the new ones after them.
+        let mut profiles = saved.clone();
         let mut lines = Vec::new();
         for app in scan.apps {
-            let saved = self
-                .store
-                .citrix_profiles()
-                .iter()
-                .find(|profile| same_app(profile, &app))
-                .map(|profile| profile.id.clone());
-            let id = if let Some(id) = saved {
-                refreshed.insert(id.clone());
-                id
-            } else if let Some(profile) = added.iter().find(|profile| same_app(profile, &app)) {
-                // The same application twice in the cache: the last line kept.
+            let id = if let Some(profile) = profiles.iter_mut().find(|p| same_app(p, &app)) {
+                refresh(profile, &app);
                 profile.id.clone()
             } else {
-                let profile = self.cached_profile(&app, &added);
+                let profile = self.cached_profile(&app, &profiles);
                 let id = profile.id.clone();
-                added.push(profile);
+                profiles.push(profile);
                 id
             };
+            // The same application twice in the cache: the last line kept.
             lines.push((id, app.launch_line));
         }
-        let count = added.len();
+        let mut outcome = CitrixImportOutcome {
+            added: 0,
+            updated: 0,
+            unchanged: 0,
+            without_launch_lines: !keep_lines,
+            warnings: scan.warnings,
+        };
+        let mut touched: HashSet<&ProfileId> = HashSet::new();
+        let mut to_merge: Vec<CitrixProfile> = Vec::new();
+        for (id, _) in &lines {
+            if !touched.insert(id) {
+                continue;
+            }
+            let Some(now) = profiles.iter().find(|p| &p.id == id) else {
+                continue;
+            };
+            match saved.iter().find(|p| &p.id == id) {
+                None => {
+                    outcome.added += 1;
+                    to_merge.push(now.clone());
+                }
+                Some(before) if before != now => {
+                    outcome.updated += 1;
+                    to_merge.push(now.clone());
+                }
+                Some(_) => outcome.unchanged += 1,
+            }
+        }
         if let Err(error) = self.store.apply(|store| {
-            store.merge_citrix(added);
+            store.merge_citrix(to_merge);
         }) {
             self.dialog = Some(Dialog::save_failed(&error));
             return;
         }
-        let mut without_launch_lines = !keep_lines;
         if keep_lines {
             for (id, line) in &lines {
                 if let Err(error) = self.save_citrix_launch_line(id, line) {
                     log::warn!("a Citrix launch line could not be saved: {error}");
-                    without_launch_lines = true;
+                    outcome.without_launch_lines = true;
                 }
             }
         }
-        self.dialog = Some(Dialog::CitrixImportDone(CitrixImportOutcome {
-            added: count,
-            refreshed: refreshed.len(),
-            without_launch_lines,
-            warnings: scan.warnings,
-        }));
+        self.dialog = Some(Dialog::CitrixImportDone(outcome));
     }
 
     /// A new Citrix profile for `app`, as the C# `ToServerProfiles` makes one: named after
     /// it, filed under its category, on its `StoreFront` with single sign-on.
-    fn cached_profile(&self, app: &CachedApp, added: &[CitrixProfile]) -> CitrixProfile {
+    fn cached_profile(&self, app: &CachedApp, profiles: &[CitrixProfile]) -> CitrixProfile {
         let id = loop {
             let id = self.fresh_id();
-            if !added.iter().any(|profile| profile.id == id) {
+            if !profiles.iter().any(|profile| profile.id == id) {
                 break id;
             }
         };
@@ -131,13 +152,31 @@ impl App {
             ica_file: None,
             seamless: true,
             sso: true,
+            citrix_id: app.citrix_id.clone(),
         }
     }
 }
 
-/// Whether `profile` is `app`: the same application name, on the same `StoreFront`, the
-/// address compared without case.
+/// Refreshes the launch metadata of `profile` from `app`, as the C# merger does: the
+/// `StoreFront` (when the cache gives one), the application name and the Citrix identifier.
+/// Its name, folder and every other field stay as the user left them.
+fn refresh(profile: &mut CitrixProfile, app: &CachedApp) {
+    if app.store_url.is_some() {
+        profile.store_front_url.clone_from(&app.store_url);
+    }
+    profile.app_name = Some(app.name.clone());
+    if app.citrix_id.is_some() {
+        profile.citrix_id.clone_from(&app.citrix_id);
+    }
+}
+
+/// Whether `profile` is `app`: the same Citrix identifier when both have one, as the C#
+/// matches them; else the same application name on the same `StoreFront`, the address
+/// compared without case.
 fn same_app(profile: &CitrixProfile, app: &CachedApp) -> bool {
+    if let (Some(saved), Some(scanned)) = (profile.citrix_id.as_deref(), app.citrix_id.as_deref()) {
+        return saved == scanned;
+    }
     let same_store = match (
         non_blank(profile.store_front_url.as_deref()),
         app.store_url.as_deref(),

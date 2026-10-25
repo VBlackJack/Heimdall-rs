@@ -364,10 +364,15 @@ fn find_launcher() -> Option<PathBuf> {
 /// The command starting `SelfService.exe` with cache launch line `line`, passed unchanged as
 /// the C# passes its arguments: no shell reads it, the forbidden characters were refused.
 #[cfg(windows)]
-fn cache_command(line: &str) -> Result<std::process::Command, CitrixRefusal> {
+fn cache_command(
+    line: &str,
+    override_path: Option<&Path>,
+) -> Result<std::process::Command, CitrixRefusal> {
     use std::os::windows::process::CommandExt;
-    let launcher = find_program(self_service_candidates, &[SELF_SERVICE])
-        .ok_or(CitrixRefusal::WorkspaceNotFound)?;
+    let launcher = self_service_program(override_path, Path::is_file, || {
+        find_program(self_service_candidates, &[SELF_SERVICE])
+    })
+    .ok_or(CitrixRefusal::WorkspaceNotFound)?;
     let mut command = std::process::Command::new(launcher);
     command.raw_arg(line);
     Ok(command)
@@ -375,14 +380,41 @@ fn cache_command(line: &str) -> Result<std::process::Command, CitrixRefusal> {
 
 /// A cache launch line is `SelfService.exe`'s grammar, which only Windows has.
 #[cfg(not(windows))]
-fn cache_command(_line: &str) -> Result<std::process::Command, CitrixRefusal> {
+fn cache_command(
+    _line: &str,
+    _override_path: Option<&Path>,
+) -> Result<std::process::Command, CitrixRefusal> {
     Err(CitrixRefusal::Failed)
 }
 
-/// The command starting `launch`.
-fn command(launch: &CitrixLaunch) -> Result<std::process::Command, CitrixRefusal> {
+/// The `SelfService.exe` a cache launch goes through, as the C#
+/// `ResolveEffectiveSelfServicePath`: the user's own path from the Settings when it passes
+/// [`heimdall_core::import::citrix_cache::self_service_path_valid`] and `exists`, else
+/// `probe`'s. The program is never read from the cache, which only gives its arguments.
+pub fn self_service_program(
+    override_path: Option<&Path>,
+    exists: impl Fn(&Path) -> bool,
+    probe: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(path) = override_path {
+        let valid = path
+            .to_str()
+            .is_some_and(heimdall_core::import::citrix_cache::self_service_path_valid);
+        if valid && exists(path) {
+            return Some(path.to_path_buf());
+        }
+        log::warn!("Citrix SelfService path override unusable: the default places are tried");
+    }
+    probe()
+}
+
+/// The command starting `launch`; `self_service` is the user's own `SelfService.exe`.
+fn command(
+    launch: &CitrixLaunch,
+    self_service: Option<&Path>,
+) -> Result<std::process::Command, CitrixRefusal> {
     Ok(match launch {
-        CitrixLaunch::CacheLine(line) => cache_command(line)?,
+        CitrixLaunch::CacheLine(line) => cache_command(line, self_service)?,
         CitrixLaunch::IcaFile(path) => {
             let mut command = if cfg!(windows) {
                 // The file's own program, given the path alone: no shell reads it. By its
@@ -423,8 +455,11 @@ fn command(launch: &CitrixLaunch) -> Result<std::process::Command, CitrixRefusal
 /// # Errors
 ///
 /// [`CitrixRefusal`] when nothing was started.
-pub fn launch(launch: &CitrixLaunch) -> Result<std::process::Child, CitrixRefusal> {
-    let mut command = command(launch)?;
+pub fn launch(
+    launch: &CitrixLaunch,
+    self_service: Option<&Path>,
+) -> Result<std::process::Child, CitrixRefusal> {
+    let mut command = command(launch, self_service)?;
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -452,6 +487,7 @@ mod tests {
             ica_file: None,
             seamless: true,
             sso: true,
+            citrix_id: None,
         }
     }
 

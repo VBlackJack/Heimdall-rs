@@ -45,10 +45,12 @@ pub fn report_lines(dialog: &Dialog) -> Option<(String, Vec<String>)> {
         }
         Dialog::CitrixImportNothing { warnings } => warnings.iter().map(warning).collect(),
         Dialog::CitrixImportDone(outcome) => {
-            let mut lines = vec![fl!("ui-citrix-import-done", count = outcome.added)];
-            if outcome.refreshed > 0 {
-                lines.push(fl!("ui-citrix-import-refreshed", count = outcome.refreshed));
-            }
+            let mut lines = vec![fl!(
+                "ui-citrix-import-summary",
+                added = outcome.added,
+                updated = outcome.updated,
+                unchanged = outcome.unchanged
+            )];
             if outcome.without_launch_lines {
                 lines.push(fl!("ui-citrix-import-no-launch-lines"));
             }

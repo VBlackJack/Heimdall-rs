@@ -44,6 +44,12 @@ work can be followed. It is not usable yet and no official release is published.
 - Shared sessions: the password of a shared SSH, SFTP or VNC session can be remembered on this
   computer (opt in, kept once the server accepted it, filed under protocol, host, port and
   login, forgotten when refused, forgettable per source in the settings), as the C#.
+- Citrix import (C# v2026.102301): only the applications the user is subscribed to are
+  imported (a legacy cache with no subscription state imports as before); a second import
+  finds each application by its Citrix identifier and refreshes its launch metadata in place,
+  keeping names, folders and notes, and says how many were added, updated or already up to
+  date; optional `SelfService.exe` path, cache folder and store file-name prefix in Settings,
+  checked and carried by the settings export.
 - No official release is published until the build artifacts are signed (issue #454).
   Unsigned pre-release builds exist for personal testing only.
 

@@ -5096,7 +5096,11 @@ impl Shell {
                 )))
             }),
             Effect::LaunchCitrix { tab, name, launch } => {
-                crate::citrix_view::launch(tab, name, launch)
+                // The user's own SelfService.exe, when set: the setting, never the cache.
+                let self_service = Some(self.app.settings().citrix_self_service_path.as_str())
+                    .filter(|path| !path.is_empty())
+                    .map(std::path::PathBuf::from);
+                crate::citrix_view::launch(tab, name, launch, self_service)
             }
             Effect::ProbeCitrix {
                 tab,
@@ -5249,22 +5253,31 @@ impl Shell {
                 },
             ),
             // The cache files, read off the window's thread.
-            Effect::ScanCitrixCache => Task::perform(
-                async {
-                    tokio::task::spawn_blocking(heimdall_core::import::citrix_cache::scan)
-                        .await
-                        .unwrap_or_else(|error| heimdall_core::import::citrix_cache::CacheScan {
-                            apps: Vec::new(),
-                            warnings: vec![
-                                heimdall_core::import::citrix_cache::CacheWarning::Unreadable {
-                                    file: String::new(),
-                                    detail: error.to_string(),
-                                },
-                            ],
+            Effect::ScanCitrixCache => {
+                let settings = self.app.settings();
+                let directory = settings.citrix_cache_directory.clone();
+                let prefix = settings.citrix_cache_store_prefix.clone();
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            heimdall_core::import::citrix_cache::scan(&directory, &prefix)
                         })
-                },
-                |scan| Message::App(AppMessage::CitrixScanned(scan)),
-            ),
+                        .await
+                        .unwrap_or_else(|error| {
+                            heimdall_core::import::citrix_cache::CacheScan {
+                                apps: Vec::new(),
+                                warnings: vec![
+                                    heimdall_core::import::citrix_cache::CacheWarning::Unreadable {
+                                        file: String::new(),
+                                        detail: error.to_string(),
+                                    },
+                                ],
+                            }
+                        })
+                    },
+                    |scan| Message::App(AppMessage::CitrixScanned(scan)),
+                )
+            }
             Effect::ReadRdpFiles(paths) => {
                 Task::perform(crate::rdp_view::read_all(paths), rdp_read)
             }

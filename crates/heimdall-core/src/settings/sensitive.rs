@@ -179,6 +179,11 @@ pub(super) const CLASSIFIED: &[(&str, Review)] = &[
     ("ssh.x11_server_path", RUNS),
     // An X server started, which remote programs can draw on and read input from.
     ("ssh.x11_auto_start", OFF_STRICT),
+    // The program Citrix cache launches go through: a path to run.
+    ("citrix.self_service_path", RUNS),
+    // Folders and file names the Citrix cache is read from: nothing is run from them.
+    ("citrix.cache_directory", PLAIN),
+    ("citrix.cache_store_prefix", PLAIN),
     // Host keys trusted from the user's OpenSSH known_hosts without being asked.
     ("ssh.sync_known_hosts_at_startup", OFF_STRICT),
     // This computer's clipboard and devices shared with the remote desktop.

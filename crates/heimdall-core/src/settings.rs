@@ -649,6 +649,16 @@ pub struct Settings {
     /// `PuTTY`, which an SSH profile in the external mode opens in, as the C# `PuttyPath`;
     /// empty looks for it in the folders of `PATH`.
     pub putty_path: String,
+    /// The `SelfService.exe` Citrix cache launches go through, as the C#
+    /// `CitrixSelfServicePath`: an absolute local path to a file of that name, else empty,
+    /// which tries the places Citrix Workspace installs it. Never taken from the cache.
+    pub citrix_self_service_path: String,
+    /// The folder the Citrix Workspace cache is read from, as the C#
+    /// `CitrixCacheDirectory`: an absolute local path, else empty for the account's own.
+    pub citrix_cache_directory: String,
+    /// Only the store files named `<prefix>*_Cache.xml` are read, as the C#
+    /// `CitrixCacheStorePrefix`; empty reads them all.
+    pub citrix_cache_store_prefix: String,
     /// Where the shell of a new SSH profile opens, as the C# `SshDefaultMode`: in a tab
     /// unless chosen. Only the profile form starts with it, as the C# "Add server".
     pub ssh_default_mode: SshMode,
@@ -1389,6 +1399,9 @@ impl Default for Settings {
             external_tools: Vec::new(),
             mobaxterm_variables: default_mobaxterm_variables(),
             putty_path: String::new(),
+            citrix_self_service_path: String::new(),
+            citrix_cache_directory: String::new(),
+            citrix_cache_store_prefix: String::new(),
             ssh_default_mode: SshMode::default(),
             x11_server_path: String::new(),
             x11_auto_start: true,
@@ -1473,6 +1486,42 @@ struct SettingsFile {
     shared_approvals: SharedApprovalsSection,
     #[serde(default)]
     file_share: FileShareSection,
+    #[serde(default)]
+    citrix: CitrixSection,
+}
+
+/// The Citrix Workspace settings; blank is the default of each. A value that fails its check
+/// is read as blank, so a file edited by hand or carried from elsewhere cannot make the
+/// import read an unexpected folder or the launch run an unexpected program.
+#[derive(Serialize, Deserialize, Default)]
+struct CitrixSection {
+    #[serde(default)]
+    self_service_path: String,
+    #[serde(default)]
+    cache_directory: String,
+    #[serde(default)]
+    cache_store_prefix: String,
+}
+
+impl CitrixSection {
+    /// The section `settings` write.
+    fn of(settings: &Settings) -> Self {
+        Self {
+            self_service_path: settings.citrix_self_service_path.clone(),
+            cache_directory: settings.citrix_cache_directory.clone(),
+            cache_store_prefix: settings.citrix_cache_store_prefix.clone(),
+        }
+    }
+}
+
+/// `text` trimmed when `accepted` takes it, else empty.
+fn checked_text(text: &str, accepted: fn(&str) -> bool) -> String {
+    let trimmed = text.trim();
+    if accepted(trimmed) {
+        trimmed.to_owned()
+    } else {
+        String::new()
+    }
 }
 
 /// The post-connect steps of shared sessions the user approved. This computer's own: never
@@ -1490,6 +1539,16 @@ struct FileShareSection {
     port: Option<u32>,
     #[serde(default)]
     minutes: Option<u32>,
+}
+
+impl FileShareSection {
+    /// The section `settings` write.
+    fn of(settings: &Settings) -> Self {
+        Self {
+            port: Some(settings.file_share_port),
+            minutes: Some(settings.file_share_minutes),
+        }
+    }
 }
 
 /// The shared session files, carried by an export.
@@ -2354,6 +2413,18 @@ impl Settings {
             external_tools: file.external_tools.tools,
             mobaxterm_variables: file.mobaxterm.variables,
             putty_path: file.ssh.putty_path.trim().to_owned(),
+            citrix_self_service_path: checked_text(
+                &file.citrix.self_service_path,
+                crate::import::citrix_cache::self_service_path_valid,
+            ),
+            citrix_cache_directory: checked_text(
+                &file.citrix.cache_directory,
+                crate::import::citrix_cache::cache_directory_valid,
+            ),
+            citrix_cache_store_prefix: crate::import::citrix_cache::normalize_store_prefix(
+                &file.citrix.cache_store_prefix,
+            )
+            .unwrap_or_default(),
             ssh_default_mode: file
                 .ssh
                 .default_mode
@@ -2590,10 +2661,8 @@ impl Settings {
             shared_approvals: SharedApprovalsSection {
                 post_connect: self.shared_post_connect_approvals.clone(),
             },
-            file_share: FileShareSection {
-                port: Some(self.file_share_port),
-                minutes: Some(self.file_share_minutes),
-            },
+            file_share: FileShareSection::of(self),
+            citrix: CitrixSection::of(self),
         }
     }
 
@@ -2793,7 +2862,7 @@ const TRANSFER_VERSION_KEY: &str = "version";
 const TRANSFER_SETTINGS_KEY: &str = "settings";
 
 /// The sections of the settings file a portable settings file carries.
-const TRANSFERRED: [&str; 16] = [
+const TRANSFERRED: [&str; 17] = [
     "terminal",
     "session_log",
     "general",
@@ -2810,6 +2879,7 @@ const TRANSFERRED: [&str; 16] = [
     "windows_hello",
     "shared_sessions",
     "file_share",
+    "citrix",
 ];
 
 /// The name a portable settings file is offered under.

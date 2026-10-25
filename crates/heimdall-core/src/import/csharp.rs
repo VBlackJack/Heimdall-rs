@@ -571,6 +571,8 @@ struct LegacyServer {
     citrix_store_front_url: Option<String>,
     citrix_app_name: Option<String>,
     citrix_ica_file_path: Option<String>,
+    /// The resource identifier the Workspace cache gave it, which a re-import matches by.
+    citrix_id: Option<String>,
     /// Absent is the C# default: on.
     citrix_seamless_mode: Option<bool>,
     /// Absent is the C# default: on.
@@ -1896,6 +1898,7 @@ fn convert_citrix(server: &LegacyServer) -> Result<CitrixProfile, SkipReason> {
         ica_file: trimmed(server.citrix_ica_file_path.as_ref()),
         seamless: server.citrix_seamless_mode.unwrap_or(true),
         sso: server.citrix_use_sso.unwrap_or(true),
+        citrix_id: trimmed(server.citrix_id.as_ref()),
     })
 }
 

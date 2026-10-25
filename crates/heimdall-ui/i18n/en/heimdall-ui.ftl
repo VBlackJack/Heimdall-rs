@@ -589,14 +589,7 @@ ui-citrix-import-confirm = { $count ->
     [one] Import { $count } Citrix application from local Workspace cache?
    *[other] Import { $count } Citrix applications from local Workspace cache?
 }
-ui-citrix-import-done = { $count ->
-    [one] { $count } Citrix application imported successfully.
-   *[other] { $count } Citrix applications imported successfully.
-}
-ui-citrix-import-refreshed = { $count ->
-    [one] { $count } application already saved: its launch line was refreshed.
-   *[other] { $count } applications already saved: their launch lines were refreshed.
-}
+ui-citrix-import-summary = Citrix import finished: { $added } added, { $updated } updated, { $unchanged } already up to date.
 ui-citrix-import-no-launch-lines = The vault is locked or unavailable: the launch lines from the Workspace cache were not saved. These applications launch through their StoreFront.
 ui-citrix-cache-folder-missing = Citrix SelfService cache directory not found.
 ui-citrix-cache-no-files = No Citrix cache files found. Open Citrix Workspace and connect to a store first.
@@ -2004,6 +1997,13 @@ ui-settings-x11-server-path = X11 server path
 ui-settings-x11-server-path-hint = Leave blank to try VcXsrv, Xming and Cygwin/X where they install, then the folders of PATH.
 ui-settings-browse-x11-title = Select X11 Server
 ui-settings-x11-auto-start = Auto-start X11 server when needed
+ui-settings-citrix = Citrix Workspace
+ui-settings-citrix-self-service-path = SelfService.exe path
+ui-settings-citrix-self-service-path-hint = Optional. An absolute local path to SelfService.exe, used for launches from the Workspace cache. Leave blank to look where Citrix Workspace installs it.
+ui-settings-citrix-cache-directory = SelfService cache folder
+ui-settings-citrix-cache-directory-hint = Optional. An absolute local folder the Citrix applications are imported from. Leave blank to use this account's Citrix\SelfService folder.
+ui-settings-citrix-cache-store-prefix = Store file-name prefix
+ui-settings-citrix-cache-store-prefix-hint = Optional. Only the store files named <prefix>*_Cache.xml are scanned when several stores are present. Letters, digits, space, dot, dash and underscore only.
 ui-dialog-close-edits-body = "{ $name }" has a file open in an external editor. Close the pane anyway? The editor stays open, but nothing will send its next save to the server.
 ui-files-edits-title = Edited in an external editor
 ui-files-edit-watching = Each save in the editor is sent to the server.

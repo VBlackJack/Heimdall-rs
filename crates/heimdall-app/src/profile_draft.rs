@@ -574,6 +574,9 @@ pub struct ProfileDraft {
     pub app_name: String,
     /// Citrix: the ICA file, as typed.
     pub ica_file: String,
+    /// Citrix: the resource identifier the Workspace cache gave the profile, kept as it is
+    /// when the form saves it: not a field of the form, so editing never drops it.
+    pub citrix_id: Option<String>,
     /// Web: the path, as typed.
     pub web_path: String,
     /// "Test address": not run, running, or what it found for the address shown.
@@ -820,6 +823,7 @@ impl ProfileDraft {
             store_front_url: profile.store_front_url.clone().unwrap_or_default(),
             app_name: profile.app_name.clone().unwrap_or_default(),
             ica_file: profile.ica_file.clone().unwrap_or_default(),
+            citrix_id: profile.citrix_id.clone(),
             protocol: DraftProtocol::Citrix,
             protocol_chosen: true,
             toggles: [
@@ -846,6 +850,7 @@ impl ProfileDraft {
             ica_file: optional(&self.ica_file),
             seamless: self.is_on(ProfileToggle::Seamless),
             sso: self.is_on(ProfileToggle::Sso),
+            citrix_id: self.citrix_id.clone(),
         })
     }
 

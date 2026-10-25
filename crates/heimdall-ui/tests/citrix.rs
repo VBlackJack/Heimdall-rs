@@ -74,6 +74,7 @@ fn outlook() -> CitrixProfile {
         ica_file: None,
         seamless: true,
         sso: true,
+        citrix_id: None,
     }
 }
 

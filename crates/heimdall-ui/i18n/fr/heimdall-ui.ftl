@@ -1827,6 +1827,13 @@ ui-settings-x11-server-path = Chemin du serveur X11
 ui-settings-x11-server-path-hint = Laissez vide pour essayer VcXsrv, Xming et Cygwin/X à leur emplacement d'installation, puis les dossiers du PATH.
 ui-settings-browse-x11-title = Sélectionner le serveur X11
 ui-settings-x11-auto-start = Démarrer automatiquement le serveur X11 si nécessaire
+ui-settings-citrix = Citrix Workspace
+ui-settings-citrix-self-service-path = Chemin de SelfService.exe
+ui-settings-citrix-self-service-path-hint = Facultatif. Un chemin local absolu vers SelfService.exe, utilisé pour les lancements depuis le cache Workspace. Laissez vide pour le chercher là où Citrix Workspace l'installe.
+ui-settings-citrix-cache-directory = Dossier du cache SelfService
+ui-settings-citrix-cache-directory-hint = Facultatif. Un dossier local absolu d'où importer les applications Citrix. Laissez vide pour utiliser le dossier Citrix\SelfService de ce compte.
+ui-settings-citrix-cache-store-prefix = Préfixe du nom des fichiers de magasin
+ui-settings-citrix-cache-store-prefix-hint = Facultatif. Seuls les fichiers de magasin nommés <préfixe>*_Cache.xml sont analysés quand plusieurs magasins sont présents. Lettres, chiffres, espace, point, tiret et tiret bas uniquement.
 ui-dialog-close-edits-body = "{ $name }" a un fichier ouvert dans un éditeur externe. Fermer le panneau quand même ? L'éditeur reste ouvert, mais plus rien n'enverra sa prochaine sauvegarde au serveur.
 ui-files-edits-title = Édités dans un éditeur externe
 ui-files-edit-watching = Chaque enregistrement dans l'éditeur est envoyé au serveur.
@@ -3644,14 +3651,7 @@ ui-citrix-import-confirm = { $count ->
     [one] Importer { $count } application Citrix depuis le cache Workspace local ?
    *[other] Importer { $count } applications Citrix depuis le cache Workspace local ?
 }
-ui-citrix-import-done = { $count ->
-    [one] { $count } application Citrix importée avec succès.
-   *[other] { $count } applications Citrix importées avec succès.
-}
-ui-citrix-import-refreshed = { $count ->
-    [one] { $count } application déjà enregistrée : sa ligne de lancement a été mise à jour.
-   *[other] { $count } applications déjà enregistrées : leurs lignes de lancement ont été mises à jour.
-}
+ui-citrix-import-summary = Import Citrix terminé : { $added } ajoutée(s), { $updated } mise(s) à jour, { $unchanged } déjà à jour.
 ui-citrix-import-no-launch-lines = Le coffre est verrouillé ou indisponible : les lignes de lancement du cache Workspace n'ont pas été enregistrées. Ces applications se lancent par leur StoreFront.
 ui-citrix-cache-folder-missing = Dossier du cache Citrix SelfService introuvable.
 ui-citrix-cache-no-files = Aucun fichier de cache Citrix trouvé. Ouvrez Citrix Workspace et connectez-vous à un magasin.
