@@ -30,9 +30,6 @@ use crate::shell::Message;
 /// Width of the edge at the left of a row marked, as the C# rows' left border.
 pub const EDGE_WIDTH: f32 = 3.0;
 
-/// Opacity of the accent behind a session selected, as the C# `TreeRowSelectedBrush`.
-const SELECTED_ALPHA: f32 = 0.18;
-
 /// Width of an open folder's indent guide, as the C# `IndentGuide` border.
 pub const GUIDE_WIDTH: f32 = 1.0;
 
@@ -228,7 +225,7 @@ impl Widget<Message, Theme, iced::Renderer> for RowChrome<'_> {
                 fill(
                     renderer,
                     bounds,
-                    accent.scale_alpha(SELECTED_ALPHA),
+                    accent.scale_alpha(crate::tokens::SELECTED_ROW_ALPHA),
                     row_radius(),
                 );
                 fill(renderer, edge, accent, edge_radius());

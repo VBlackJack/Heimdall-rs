@@ -209,8 +209,6 @@ impl WhoisPane {
         state: &'a ToolPane,
         theme: &Theme,
     ) -> Element<'a, Message> {
-        let colors = crate::themes::colors_of(theme);
-
         let domain_input = text_input(&fl!("ui-tool-whois-domain-placeholder"), &self.domain)
             .on_input(move |v| {
                 Message::Tool(tab, ToolMessage::Whois(WhoisMessage::DomainChanged(v)))
@@ -245,7 +243,7 @@ impl WhoisPane {
             body_col = body_col.push(
                 text(Self::problem_text(problem))
                     .size(font_size::BODY)
-                    .color(colors.red),
+                    .color(crate::styles::error_text_color(theme)),
             );
         }
 
@@ -258,7 +256,7 @@ impl WhoisPane {
                         .font(styles::SEMIBOLD),
                     text(fl!("ui-tool-whois-status-complete", elapsed = elapsed))
                         .size(font_size::CAPTION)
-                        .color(colors.green),
+                        .color(crate::styles::success_text_color(theme)),
                 ]
                 .width(Length::Fill),
                 super::copy_button(
@@ -276,7 +274,7 @@ impl WhoisPane {
                 body_col = body_col.push(
                     text(fl!("ui-tool-whois-truncated", kib = kib))
                         .size(font_size::CAPTION)
-                        .color(colors.orange),
+                        .color(crate::styles::warning_text_color(theme)),
                 );
             }
 

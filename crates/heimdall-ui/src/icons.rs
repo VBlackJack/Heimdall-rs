@@ -904,16 +904,19 @@ impl Tint {
 #[must_use]
 pub fn protocol_color(theme: &Theme, kind: ProfileKind) -> Color {
     let colors = crate::themes::colors_of(theme);
-    match kind {
+    let hue = match kind {
         ProfileKind::Rdp | ProfileKind::Ftp => colors.blue,
         ProfileKind::Ssh => colors.green,
         ProfileKind::WinRm | ProfileKind::Citrix => colors.purple,
         ProfileKind::Sftp => colors.orange,
         ProfileKind::Vnc | ProfileKind::Tool => colors.cyan,
-        ProfileKind::Telnet => colors.comment,
+        // The comment colour, lifted where it does not read on a row.
+        ProfileKind::Telnet => theme.extended_palette().secondary.base.color,
         ProfileKind::Web => colors.pink,
         ProfileKind::Local => theme.palette().primary,
-    }
+    };
+    // A mark on a row of the tree: seen on the row under the pointer and the selected one.
+    crate::themes::row_mark(theme, hue)
 }
 
 /// The colour of tool `category` in `theme`, as the C# `HeimdallThemeBridge.xaml` gives each
@@ -1748,7 +1751,10 @@ mod tests {
             (ProfileKind::Citrix, colors.purple),
             (ProfileKind::Sftp, colors.orange),
             (ProfileKind::Vnc, colors.cyan),
-            (ProfileKind::Telnet, colors.comment),
+            (
+                ProfileKind::Telnet,
+                theme.extended_palette().secondary.base.color,
+            ),
             (ProfileKind::Web, colors.pink),
             (ProfileKind::Local, colors.blue),
         ] {

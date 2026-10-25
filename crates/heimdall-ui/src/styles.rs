@@ -46,7 +46,8 @@ use iced::{Background, Border, Color, Element, Font, Pixels, Shadow, Theme, font
 
 use crate::tokens::{
     BORDER_WIDTH, DIALOG_SHADOW_ALPHA, DIALOG_SHADOW_BLUR, DIALOG_SHADOW_DEPTH, FOCUS_BORDER_WIDTH,
-    HIGH_CONTRAST_BORDER_WIDTH, INPUT_LINE_HEIGHT, INPUT_PADDING, OPACITY_DISABLED, radius,
+    HIGH_CONTRAST_BORDER_WIDTH, INPUT_LINE_HEIGHT, INPUT_PADDING, OPACITY_DISABLED,
+    SELECTION_ALPHA, SELECTION_ALPHA_MIN, SELECTION_ALPHA_STEP, radius,
 };
 
 // The C# `AppFocusVisualStyle` (`CommonControls.xaml:240-253`) rings a focused button in a
@@ -103,6 +104,9 @@ const UNDERLINE_RADIUS: f32 = 1.0;
 struct Brushes {
     /// `AccentBrush`.
     accent: Color,
+    /// The accent as a line or a fill that carries meaning, 3:1 on every surface: the
+    /// accent itself where it already is.
+    line: Color,
     /// `AccentHoverBrush`: the accent, lighter.
     accent_hover: Color,
     /// `AccentPressedBrush`: the accent, darker.
@@ -143,6 +147,7 @@ impl Brushes {
         let secondary = extended.secondary.base.color;
         Self {
             accent,
+            line: crate::themes::derived(theme, crate::themes::Derived::AccentLine),
             accent_hover: crate::themes::accent_states_of(theme).0,
             accent_pressed: crate::themes::accent_states_of(theme).1,
             on_accent: extended.background.base.color,
@@ -168,7 +173,7 @@ impl Brushes {
             focus: if high_contrast {
                 crate::themes::colors_of(theme).yellow
             } else {
-                accent
+                crate::themes::derived(theme, crate::themes::Derived::AccentLine)
             },
             width: if high_contrast {
                 HIGH_CONTRAST_BORDER_WIDTH
@@ -176,6 +181,12 @@ impl Brushes {
                 BORDER_WIDTH
             },
         }
+    }
+
+    /// The label drawn on `fill`: the window's background where it reads, black or white
+    /// otherwise.
+    fn label_on(&self, fill: Color) -> Color {
+        crate::themes::label_on(self.on_accent, fill)
     }
 
     /// A border of `color` as wide as the theme's, rounded by `corner`.
@@ -233,7 +244,9 @@ pub(crate) fn faded_to(style: &ButtonStyle, opacity: f32) -> ButtonStyle {
 /// OK.
 pub fn primary(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     let brushes = Brushes::of(theme);
-    let filled = |color| brushes.button(Some(color), brushes.on_accent, color);
+    // The window's background on the accent, as the C#; black or white where the accent
+    // hovered or pressed leaves it under 4.5:1.
+    let filled = |color| brushes.button(Some(color), brushes.label_on(color), color);
     match status {
         ButtonStatus::Active => filled(brushes.accent),
         ButtonStatus::Hovered => filled(brushes.accent_hover),
@@ -365,13 +378,16 @@ pub fn status_pill(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
 /// the red faint behind it, its border and text red.
 pub fn status_pill_active(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     let brushes = Brushes::of(theme);
+    let fill = brushes.danger.scale_alpha(BROADCAST_ALPHA);
+    // The error text, lifted until it reads on the red it is drawn over as well.
+    let label = crate::themes::legible_on(
+        crate::themes::derived(theme, crate::themes::Derived::Error),
+        &[crate::themes::over(fill, brushes.surface)],
+        crate::themes::MIN_TEXT_CONTRAST,
+    );
     let rest = ButtonStyle {
         border: brushes.outline(brushes.danger, radius::SM),
-        ..brushes.button(
-            Some(brushes.danger.scale_alpha(BROADCAST_ALPHA)),
-            crate::themes::derived(theme, crate::themes::Derived::Error),
-            brushes.danger,
-        )
+        ..brushes.button(Some(fill), label, brushes.danger)
     };
     match status {
         ButtonStatus::Active | ButtonStatus::Hovered => rest,
@@ -452,7 +468,7 @@ pub fn folder_chip(theme: &Theme) -> BoxStyle {
 /// place unseen.
 pub fn underline(lit: bool) -> impl Fn(&Theme) -> BoxStyle {
     move |theme| BoxStyle {
-        background: lit.then(|| Background::Color(Brushes::of(theme).accent)),
+        background: lit.then(|| Background::Color(Brushes::of(theme).line)),
         border: Border {
             radius: UNDERLINE_RADIUS.into(),
             ..Border::default()
@@ -507,7 +523,7 @@ pub fn letterbox_hint(theme: &Theme) -> BoxStyle {
 /// leaves sessions out.
 pub fn accent_dot(theme: &Theme) -> BoxStyle {
     BoxStyle {
-        background: Some(Background::Color(Brushes::of(theme).accent)),
+        background: Some(Background::Color(Brushes::of(theme).line)),
         border: Border {
             radius: radius::LG.into(),
             ..Border::default()
@@ -521,7 +537,7 @@ pub fn accent_dot(theme: &Theme) -> BoxStyle {
 /// in high contrast.
 pub fn text_input(theme: &Theme, status: FieldStatus) -> FieldStyle {
     let brushes = Brushes::of(theme);
-    let selection = theme.extended_palette().primary.weak.color;
+    let selection = selection_fill(&brushes);
     let rest = FieldStyle {
         background: Background::Color(brushes.card),
         border: brushes.outline(brushes.secondary, radius::MD),
@@ -546,6 +562,21 @@ pub fn text_input(theme: &Theme, status: FieldStatus) -> FieldStyle {
             value: brushes.text.scale_alpha(OPACITY_DISABLED),
             ..rest
         },
+    }
+}
+
+/// The fill behind the text selected in a field: the accent over the field, as faint as it
+/// takes for the text to read on it at 4.5:1.
+fn selection_fill(brushes: &Brushes) -> Color {
+    let mut alpha = SELECTION_ALPHA;
+    loop {
+        let fill = crate::themes::over(brushes.accent.scale_alpha(alpha), brushes.card);
+        if alpha - SELECTION_ALPHA_STEP < SELECTION_ALPHA_MIN
+            || crate::themes::contrast_ratio(brushes.text, fill) >= crate::themes::MIN_TEXT_CONTRAST
+        {
+            return fill;
+        }
+        alpha -= SELECTION_ALPHA_STEP;
     }
 }
 
@@ -686,17 +717,22 @@ pub fn pick_list(theme: &Theme, status: ListStatus) -> ListStyle {
     }
 }
 
+/// The fill and the text of the entry of a menu under the pointer: the highlight; in high
+/// contrast, whose card is its background, the accent, to be seen.
+pub(crate) fn menu_entry_lit(theme: &Theme) -> (Color, Color) {
+    let brushes = Brushes::of(theme);
+    if crate::themes::is_high_contrast(theme) {
+        (brushes.accent, brushes.label_on(brushes.accent))
+    } else {
+        (brushes.highlight, brushes.text)
+    }
+}
+
 /// A drop-down's open list, as the C# combo box's popup: the window's background outlined in
 /// the border colour, the entry under the pointer on the highlight, as `HighlightBrush`.
 pub fn menu(theme: &Theme) -> MenuStyle {
     let brushes = Brushes::of(theme);
-    // High contrast's card is its background: the entry under the pointer takes the accent
-    // there, to be seen.
-    let (lit, on_lit) = if crate::themes::is_high_contrast(theme) {
-        (brushes.accent, brushes.on_accent)
-    } else {
-        (brushes.highlight, brushes.text)
-    };
+    let (lit, on_lit) = menu_entry_lit(theme);
     MenuStyle {
         background: Background::Color(brushes.surface),
         border: brushes.outline(brushes.edge, radius::LG),
@@ -713,17 +749,17 @@ pub fn checkbox(theme: &Theme, status: CheckStatus) -> CheckStyle {
     let brushes = Brushes::of(theme);
     let (is_checked, edge, fade) = match status {
         CheckStatus::Active { is_checked } => (is_checked, brushes.secondary, 1.0),
-        CheckStatus::Hovered { is_checked } => (is_checked, brushes.accent, 1.0),
+        CheckStatus::Hovered { is_checked } => (is_checked, brushes.line, 1.0),
         CheckStatus::Disabled { is_checked } => (is_checked, brushes.secondary, OPACITY_DISABLED),
     };
     let (fill, edge) = if is_checked {
-        (brushes.accent, brushes.accent)
+        (brushes.line, brushes.line)
     } else {
         (brushes.card, edge)
     };
     CheckStyle {
         background: Background::Color(fill.scale_alpha(fade)),
-        icon_color: brushes.on_accent,
+        icon_color: brushes.label_on(fill),
         border: brushes.outline(edge.scale_alpha(fade), radius::SM),
         text_color: None,
     }
@@ -734,7 +770,7 @@ pub fn checkbox(theme: &Theme, status: CheckStatus) -> CheckStyle {
 pub fn error_badge(theme: &Theme) -> BoxStyle {
     let brushes = Brushes::of(theme);
     BoxStyle {
-        text_color: Some(brushes.on_accent),
+        text_color: Some(brushes.label_on(brushes.danger)),
         background: Some(Background::Color(brushes.danger)),
         border: Border {
             radius: radius::MD.into(),
@@ -799,13 +835,13 @@ pub fn radio(theme: &Theme, status: RadioStatus) -> RadioStyle {
         RadioStatus::Hovered { is_selected } => (is_selected, true),
     };
     let (fill, edge) = match (chosen, hovered) {
-        (true, _) => (brushes.accent, brushes.accent),
-        (false, true) => (brushes.card, brushes.accent),
+        (true, _) => (brushes.line, brushes.line),
+        (false, true) => (brushes.card, brushes.line),
         (false, false) => (brushes.card, brushes.secondary),
     };
     RadioStyle {
         background: Background::Color(fill),
-        dot_color: brushes.on_accent,
+        dot_color: brushes.label_on(fill),
         border_width: brushes.width,
         border_color: edge,
         text_color: None,
@@ -818,7 +854,7 @@ pub fn radio(theme: &Theme, status: RadioStatus) -> RadioStyle {
 pub fn slider(theme: &Theme, status: SliderStatus) -> SliderStyle {
     let brushes = Brushes::of(theme);
     let thumb = match status {
-        SliderStatus::Active => brushes.accent,
+        SliderStatus::Active => brushes.line,
         SliderStatus::Hovered => brushes.accent_hover,
         SliderStatus::Dragged => brushes.accent_pressed,
     };
@@ -826,7 +862,7 @@ pub fn slider(theme: &Theme, status: SliderStatus) -> SliderStyle {
     SliderStyle {
         rail: SliderRail {
             backgrounds: (
-                Background::Color(brushes.accent),
+                Background::Color(brushes.line),
                 Background::Color(brushes.card),
             ),
             border: Border {
@@ -850,7 +886,7 @@ pub fn progress(theme: &Theme) -> ProgressStyle {
     let brushes = Brushes::of(theme);
     ProgressStyle {
         background: Background::Color(brushes.card),
-        bar: Background::Color(brushes.accent),
+        bar: Background::Color(brushes.line),
         border: brushes.outline(brushes.edge, radius::MD),
     }
 }
@@ -1425,13 +1461,16 @@ mod tests {
                 style.background,
                 Some(Background::Color(colors.current_line))
             );
-            assert_eq!(style.border.color, colors.comment);
+            assert_eq!(
+                style.border.color,
+                theme.extended_palette().secondary.base.color
+            );
             assert!((style.border.width - BORDER_WIDTH).abs() < f32::EPSILON);
         }
         assert_eq!(
             danger(&theme, ButtonStatus::Active).text_color,
-            colors.red,
-            "Delete is written in red"
+            themes::derived(&theme, themes::Derived::Error),
+            "Delete is written in red, lifted to read on every surface"
         );
     }
 
@@ -1453,11 +1492,16 @@ mod tests {
     #[test]
     fn a_field_is_outlined_in_the_accent_while_typed_in() {
         let theme = magellan();
-        let colors = themes::colors(AppTheme::Magellan);
         let typed = text_input(&theme, FieldStatus::Focused { is_hovered: false });
-        assert_eq!(typed.border.color, colors.accent(Accent::Blue));
+        assert_eq!(
+            typed.border.color,
+            themes::derived(&theme, themes::Derived::AccentLine)
+        );
         let rest = text_input(&theme, FieldStatus::Active);
-        assert_eq!(rest.border.color, colors.comment);
+        assert_eq!(
+            rest.border.color,
+            theme.extended_palette().secondary.base.color
+        );
     }
 
     #[test]
@@ -1478,7 +1522,7 @@ mod tests {
             let expected = if each == AppTheme::HighContrast {
                 themes::colors(each).yellow
             } else {
-                themes::colors(each).accent(Accent::Blue)
+                themes::derived(&theme, themes::Derived::AccentLine)
             };
             assert_eq!(typed.border.color, expected, "{each:?}");
         }
@@ -1532,7 +1576,7 @@ mod tests {
         );
         assert_eq!(
             rest.vertical_rail.scroller.background,
-            Background::Color(colors.comment)
+            Background::Color(theme.extended_palette().secondary.base.color)
         );
         assert_eq!(
             rest.vertical_rail.background,
@@ -1554,7 +1598,7 @@ mod tests {
         );
         assert_eq!(
             dragged.horizontal_rail.scroller.background,
-            Background::Color(colors.comment),
+            Background::Color(theme.extended_palette().secondary.base.color),
             "the other one at rest"
         );
         const { assert!(SCROLLER_WIDTH < SCROLLBAR_WIDTH, "thin, inside its track") };
@@ -1569,7 +1613,10 @@ mod tests {
             colors.orange
         );
         let off = toggle(false)(&theme, ButtonStatus::Active);
-        assert_eq!(off.border.color, colors.comment);
+        assert_eq!(
+            off.border.color,
+            theme.extended_palette().secondary.base.color
+        );
         assert_eq!(off.background, None, "nothing behind it at rest");
     }
 
