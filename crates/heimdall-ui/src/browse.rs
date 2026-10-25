@@ -83,7 +83,12 @@ impl BrowseTarget {
     /// Whether it is a folder, picked in the folder dialog, as the C# transcripts' folder.
     #[must_use]
     pub fn picks_folder(self) -> bool {
-        matches!(self, Self::SessionLogDirectory | Self::ExternalToolFolder)
+        matches!(
+            self,
+            Self::SessionLogDirectory
+                | Self::ExternalToolFolder
+                | Self::Tool(ToolPath::CitrixCacheDirectory)
+        )
     }
 
     /// The dialog's title, the C#'s; `None` where the C# leaves the system's own.
@@ -100,7 +105,12 @@ impl BrowseTarget {
             Self::ProviderDatabase
             | Self::ProviderKeyFile
             | Self::ExternalToolProgram
-            | Self::ExternalToolFolder => None,
+            | Self::ExternalToolFolder
+            | Self::Tool(
+                ToolPath::CitrixSelfService
+                | ToolPath::CitrixCacheDirectory
+                | ToolPath::CitrixStorePrefix,
+            ) => None,
         }
     }
 

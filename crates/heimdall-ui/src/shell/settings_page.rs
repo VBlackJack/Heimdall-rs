@@ -35,6 +35,7 @@ use heimdall_app::{
     ProviderMessage, UpdateMessage, UpdateStatus, VaultHelloMessage, VaultHelloStatus, VaultStatus,
     search_folded,
 };
+use heimdall_core::import::citrix_cache::CitrixSetting;
 use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
 use heimdall_core::settings::{
     Accent, AgentPreference, AppTheme, ColorScheme, CtrlKTerminal, CtrlVPaste, ExecutionPolicy,
@@ -232,6 +233,7 @@ fn card_heading(card: SettingsCard) -> Option<String> {
         SettingsCard::SshSession => fl!("ui-settings-ssh-session"),
         SettingsCard::Sftp => fl!("ui-settings-sftp"),
         SettingsCard::X11 => fl!("ui-settings-x11"),
+        SettingsCard::Citrix => fl!("ui-settings-citrix"),
         SettingsCard::ExternalEditor => fl!("ui-settings-external-editor"),
         SettingsCard::ExternalTools => fl!("ui-external-tools-title"),
         SettingsCard::MobaxtermVariables => fl!("ui-mobaxterm-variables-title"),
@@ -302,6 +304,9 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::ExternalTools => fl!("ui-external-tools-title"),
         SettingRow::MobaxtermVariables => fl!("ui-mobaxterm-variables-title"),
         SettingRow::SharedSources => fl!("ui-shared-sources-title"),
+        SettingRow::CitrixSelfServicePath => fl!("ui-settings-citrix-self-service-path"),
+        SettingRow::CitrixCacheDirectory => fl!("ui-settings-citrix-cache-directory"),
+        SettingRow::CitrixCacheStorePrefix => fl!("ui-settings-citrix-cache-store-prefix"),
         SettingRow::PuttyPath => fl!("ui-settings-putty-path"),
         SettingRow::SshDefaultMode => fl!("ui-settings-ssh-default-mode"),
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path"),
@@ -351,6 +356,9 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::ExternalTools => fl!("ui-external-tools-description"),
         SettingRow::MobaxtermVariables => fl!("ui-mobaxterm-variables-description"),
         SettingRow::SharedSources => fl!("ui-shared-sources-description"),
+        SettingRow::CitrixSelfServicePath => fl!("ui-settings-citrix-self-service-path-hint"),
+        SettingRow::CitrixCacheDirectory => fl!("ui-settings-citrix-cache-directory-hint"),
+        SettingRow::CitrixCacheStorePrefix => fl!("ui-settings-citrix-cache-store-prefix-hint"),
         SettingRow::PuttyPath => fl!("ui-settings-putty-path-hint"),
         SettingRow::SshDefaultMode => fl!("ui-settings-ssh-default-mode-hint"),
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path-hint"),
@@ -761,6 +769,7 @@ impl Shell {
         self.log_directory = None;
         self.editor_typed = None;
         self.tool_paths_typed = Default::default();
+        self.tool_paths_refused = Default::default();
         self.font_size_typed = None;
         self.session_typed = Default::default();
     }
@@ -1051,6 +1060,9 @@ impl Shell {
                 DefaultSshModeChoice(defaults.ssh_default_mode).to_string()
             }
             SettingRow::X11ServerPath => or_empty(&defaults.x11_server_path),
+            SettingRow::CitrixSelfServicePath => or_empty(&defaults.citrix_self_service_path),
+            SettingRow::CitrixCacheDirectory => or_empty(&defaults.citrix_cache_directory),
+            SettingRow::CitrixCacheStorePrefix => or_empty(&defaults.citrix_cache_store_prefix),
             SettingRow::RdpDefaultMode => {
                 DefaultRdpModeChoice(defaults.rdp_default_mode).to_string()
             }
@@ -1108,7 +1120,11 @@ impl Shell {
             SettingRow::FontSize => self.font_size_row(),
             SettingRow::FontFamily => self.font_family_row(),
             SettingRow::SessionLogDirectory | SettingRow::ExternalEditor => self.path_row(row),
-            SettingRow::PuttyPath | SettingRow::X11ServerPath => self.tool_path_row(row),
+            SettingRow::PuttyPath
+            | SettingRow::X11ServerPath
+            | SettingRow::CitrixSelfServicePath
+            | SettingRow::CitrixCacheDirectory
+            | SettingRow::CitrixCacheStorePrefix => self.tool_path_row(row),
             SettingRow::SshDefaultMode => self.ssh_default_mode_row(),
             SettingRow::RdpDefaultMode => self.rdp_default_mode_row(),
             SettingRow::HostKeys
@@ -1572,6 +1588,12 @@ impl Shell {
         body.into()
     }
 
+    /// Whether the value last applied for `path` was refused and is still in its field.
+    #[must_use]
+    pub fn tool_path_refused(&self, path: crate::settings_rows::ToolPath) -> bool {
+        self.tool_paths_refused[path.index()]
+    }
+
     /// The dialog of a "Browse..." button, opening where the path set now is.
     pub(super) fn browse(&self, target: BrowseTarget) -> Task<Message> {
         let settings = self.app.settings();
@@ -1632,7 +1654,14 @@ impl Shell {
     pub(super) fn browsed(&mut self, target: BrowseTarget, path: String) -> Vec<Effect> {
         let message = match target {
             BrowseTarget::Tool(tool) => {
+                if !tool.accepts(&path) {
+                    // Kept in the field to be corrected, the saved value untouched.
+                    self.tool_paths_typed[tool.index()] = Some(path);
+                    self.tool_paths_refused[tool.index()] = true;
+                    return Vec::new();
+                }
                 self.tool_paths_typed[tool.index()] = None;
+                self.tool_paths_refused[tool.index()] = false;
                 AppMessage::Settings(tool.applied(path))
             }
             BrowseTarget::ExternalEditor => {
@@ -1759,12 +1788,27 @@ impl Shell {
             .style(styles::text_input)
             .on_input(move |typed| Message::ToolPathEdited(path, typed))
             .on_submit(Message::ToolPathApply(path));
-        let field = row![field, browse_button(BrowseTarget::Tool(path))]
+        let mut field = row![field]
             .spacing(spacing::SM)
             .align_y(iced::Alignment::Center);
+        if path.browsable() {
+            field = field.push(browse_button(BrowseTarget::Tool(path)));
+        }
         let mut body = column![labelled(row_label(row), field)].spacing(spacing::SM);
         if let Some(hint) = row_hint(row) {
             body = body.push(text(hint).size(font_size::CAPTION));
+        }
+        let ignored = match row {
+            SettingRow::CitrixSelfServicePath => Some(CitrixSetting::SelfServicePath),
+            SettingRow::CitrixCacheDirectory => Some(CitrixSetting::CacheDirectory),
+            SettingRow::CitrixCacheStorePrefix => Some(CitrixSetting::StorePrefix),
+            _ => None,
+        };
+        if self.tool_paths_refused[path.index()] {
+            body = body.push(text(fl!("ui-settings-citrix-refused")).size(font_size::CAPTION));
+        }
+        if ignored.is_some_and(|setting| self.app.settings().citrix_ignored.contains(&setting)) {
+            body = body.push(text(fl!("ui-settings-citrix-ignored")).size(font_size::CAPTION));
         }
         body.into()
     }
@@ -1840,10 +1884,20 @@ impl Shell {
         match message {
             Message::ToolPathEdited(path, typed) => {
                 self.tool_paths_typed[path.index()] = Some(typed);
+                self.tool_paths_refused[path.index()] = false;
                 Vec::new()
             }
             Message::ToolPathApply(path) => match self.tool_paths_typed[path.index()].take() {
-                Some(typed) => self.app.update(AppMessage::Settings(path.applied(typed))),
+                Some(typed) if !path.accepts(&typed) => {
+                    // Kept in the field to be corrected, the saved value untouched.
+                    self.tool_paths_typed[path.index()] = Some(typed);
+                    self.tool_paths_refused[path.index()] = true;
+                    Vec::new()
+                }
+                Some(typed) => {
+                    self.tool_paths_refused[path.index()] = false;
+                    self.app.update(AppMessage::Settings(path.applied(typed)))
+                }
                 None => Vec::new(),
             },
             _ => Vec::new(),
@@ -2084,6 +2138,7 @@ impl Shell {
         }
         if let Some(path) = row.tool_path() {
             self.tool_paths_typed[path.index()] = None;
+            self.tool_paths_refused[path.index()] = false;
         }
         match row {
             SettingRow::FontSize => self.font_size_typed = None,

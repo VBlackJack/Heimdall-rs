@@ -52,6 +52,10 @@ pub enum SettingsCard {
     SharedSources,
     /// "Show the tour again", as the C# "Welcome tour" card.
     Onboarding,
+    /// The Citrix Workspace paths and store filter, as the C# Advanced tab's optional
+    /// `SelfService.exe` path, cache folder and store prefix. After the tour so that the
+    /// tour's card keeps its place on the page.
+    Citrix,
     /// The terminals' text and colours, Ctrl+V and the `PowerShell` policy.
     Terminal,
     /// The session transcripts.
@@ -97,7 +101,7 @@ pub enum SettingsCard {
 
 impl SettingsCard {
     /// Every card, in the page's order.
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 30] = [
         Self::Appearance,
         Self::Behavior,
         Self::SessionTree,
@@ -107,6 +111,7 @@ impl SettingsCard {
         Self::MobaxtermVariables,
         Self::SharedSources,
         Self::Onboarding,
+        Self::Citrix,
         Self::Terminal,
         Self::SessionLogging,
         Self::Macros,
@@ -142,7 +147,8 @@ impl SettingsCard {
             | Self::ExternalTools
             | Self::MobaxtermVariables
             | Self::SharedSources
-            | Self::Onboarding => SettingsTab::General,
+            | Self::Onboarding
+            | Self::Citrix => SettingsTab::General,
             Self::Terminal | Self::SessionLogging | Self::Macros => SettingsTab::Terminal,
             Self::SshReconnect
             | Self::SshSession
@@ -215,6 +221,12 @@ pub enum SettingRow {
     SharedSources,
     /// "Show the tour again", which shows the welcome tour from its first step.
     Onboarding,
+    /// The `SelfService.exe` Citrix cache launches go through.
+    CitrixSelfServicePath,
+    /// The folder the Citrix Workspace cache is read from.
+    CitrixCacheDirectory,
+    /// The store file-name prefix of the Citrix cache files read.
+    CitrixCacheStorePrefix,
     /// The size of the terminals' text.
     FontSize,
     /// The family of the terminals' text.
@@ -333,7 +345,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 76] = [
+    pub const ALL: [Self; 79] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -353,6 +365,9 @@ impl SettingRow {
         Self::MobaxtermVariables,
         Self::SharedSources,
         Self::Onboarding,
+        Self::CitrixSelfServicePath,
+        Self::CitrixCacheDirectory,
+        Self::CitrixCacheStorePrefix,
         Self::FontSize,
         Self::FontFamily,
         Self::ColorScheme,
@@ -432,6 +447,9 @@ impl SettingRow {
             Self::ExternalTools => SettingsCard::ExternalTools,
             Self::MobaxtermVariables => SettingsCard::MobaxtermVariables,
             Self::SharedSources => SettingsCard::SharedSources,
+            Self::CitrixSelfServicePath
+            | Self::CitrixCacheDirectory
+            | Self::CitrixCacheStorePrefix => SettingsCard::Citrix,
             // The last card of the C# General tab (`MainWindow.xaml:2715-2745`).
             Self::Onboarding => SettingsCard::Onboarding,
             Self::FontSize
@@ -534,6 +552,9 @@ impl SettingRow {
         match self {
             Self::PuttyPath => Some(ToolPath::Putty),
             Self::X11ServerPath => Some(ToolPath::X11Server),
+            Self::CitrixSelfServicePath => Some(ToolPath::CitrixSelfService),
+            Self::CitrixCacheDirectory => Some(ToolPath::CitrixCacheDirectory),
+            Self::CitrixCacheStorePrefix => Some(ToolPath::CitrixStorePrefix),
             _ => None,
         }
     }
@@ -791,11 +812,17 @@ pub enum ToolPath {
     Putty,
     /// The X server.
     X11Server,
+    /// The `SelfService.exe` of Citrix Workspace.
+    CitrixSelfService,
+    /// The Citrix Workspace cache folder.
+    CitrixCacheDirectory,
+    /// The Citrix store file-name prefix: typed like a path, but with nothing to browse.
+    CitrixStorePrefix,
 }
 
 impl ToolPath {
     /// How many there are.
-    pub const COUNT: usize = 2;
+    pub const COUNT: usize = 5;
 
     /// Its place among them, for what is typed in each.
     #[must_use]
@@ -803,6 +830,9 @@ impl ToolPath {
         match self {
             Self::Putty => 0,
             Self::X11Server => 1,
+            Self::CitrixSelfService => 2,
+            Self::CitrixCacheDirectory => 3,
+            Self::CitrixStorePrefix => 4,
         }
     }
 
@@ -812,6 +842,9 @@ impl ToolPath {
         match self {
             Self::Putty => &settings.putty_path,
             Self::X11Server => &settings.x11_server_path,
+            Self::CitrixSelfService => &settings.citrix_self_service_path,
+            Self::CitrixCacheDirectory => &settings.citrix_cache_directory,
+            Self::CitrixStorePrefix => &settings.citrix_cache_store_prefix,
         }
     }
 
@@ -821,7 +854,31 @@ impl ToolPath {
         match self {
             Self::Putty => SettingsMessage::PuttyPath(typed),
             Self::X11Server => SettingsMessage::X11ServerPath(typed),
+            Self::CitrixSelfService => SettingsMessage::CitrixSelfServicePath(typed),
+            Self::CitrixCacheDirectory => SettingsMessage::CitrixCacheDirectory(typed),
+            Self::CitrixStorePrefix => SettingsMessage::CitrixCacheStorePrefix(typed),
         }
+    }
+
+    /// Whether the Settings accept `text` for it: blank always, a Citrix path or prefix only
+    /// when it passes its check. The page says so when it does not, and keeps the old value.
+    #[must_use]
+    pub fn accepts(self, text: &str) -> bool {
+        use heimdall_core::import::citrix_cache as citrix;
+        let text = text.trim();
+        text.is_empty()
+            || match self {
+                Self::CitrixSelfService => citrix::self_service_path_valid(text),
+                Self::CitrixCacheDirectory => citrix::cache_directory_valid(text),
+                Self::CitrixStorePrefix => citrix::normalize_store_prefix(text).is_some(),
+                Self::Putty | Self::X11Server => true,
+            }
+    }
+
+    /// Whether a "Browse..." button picks it: not the store prefix, which is no path.
+    #[must_use]
+    pub fn browsable(self) -> bool {
+        !matches!(self, Self::CitrixStorePrefix)
     }
 }
 

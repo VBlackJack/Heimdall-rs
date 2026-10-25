@@ -1827,6 +1827,22 @@ ui-settings-x11-server-path = Chemin du serveur X11
 ui-settings-x11-server-path-hint = Laissez vide pour essayer VcXsrv, Xming et Cygwin/X à leur emplacement d'installation, puis les dossiers du PATH.
 ui-settings-browse-x11-title = Sélectionner le serveur X11
 ui-settings-x11-auto-start = Démarrer automatiquement le serveur X11 si nécessaire
+ui-settings-citrix = Citrix Workspace
+ui-settings-citrix-self-service-path = Chemin de SelfService.exe
+ui-settings-citrix-self-service-path-hint = Facultatif. Un chemin local absolu vers SelfService.exe, utilisé pour les lancements depuis le cache Workspace. Laissez vide pour le chercher là où Citrix Workspace l'installe.
+ui-settings-citrix-cache-directory = Dossier du cache SelfService
+ui-settings-citrix-cache-directory-hint = Facultatif. Un dossier local absolu d'où importer les applications Citrix. Laissez vide pour utiliser le dossier Citrix\SelfService de ce compte.
+ui-settings-citrix-cache-store-prefix = Préfixe du nom des fichiers de magasin
+ui-settings-citrix-cache-store-prefix-hint = Facultatif. Seuls les fichiers de magasin nommés <préfixe>*_Cache.xml sont analysés quand plusieurs magasins sont présents. Lettres, chiffres, espace, point, tiret et tiret bas uniquement.
+ui-settings-citrix-ignored = La valeur enregistrée n'est pas valide et est ignorée. Saisissez-en une nouvelle ou laissez vide.
+ui-settings-citrix-refused = Non appliqué : cette valeur n'est pas valide (un chemin local absolu de cet ordinateur, ou un nom fait de lettres, chiffres, espace, point, tiret et tiret bas). La valeur précédente est conservée.
+ui-citrix-cache-truncated = { $file } : trop d'applications, le reste n'a pas été lu.
+ui-citrix-cache-total-cap = Trop d'applications dans l'ensemble des fichiers de cache : le reste n'a pas été lu.
+ui-citrix-cache-duplicates = { $count ->
+    [one] { $count } application répétant un identifiant Citrix précédent a été ignorée.
+   *[other] { $count } applications répétant un identifiant Citrix précédent ont été ignorées.
+}
+ui-citrix-cache-setting-ignored = Le réglage enregistré { $setting } n'est pas valide et a été ignoré.
 ui-dialog-close-edits-body = "{ $name }" a un fichier ouvert dans un éditeur externe. Fermer le panneau quand même ? L'éditeur reste ouvert, mais plus rien n'enverra sa prochaine sauvegarde au serveur.
 ui-files-edits-title = Édités dans un éditeur externe
 ui-files-edit-watching = Chaque enregistrement dans l'éditeur est envoyé au serveur.
@@ -3644,14 +3660,7 @@ ui-citrix-import-confirm = { $count ->
     [one] Importer { $count } application Citrix depuis le cache Workspace local ?
    *[other] Importer { $count } applications Citrix depuis le cache Workspace local ?
 }
-ui-citrix-import-done = { $count ->
-    [one] { $count } application Citrix importée avec succès.
-   *[other] { $count } applications Citrix importées avec succès.
-}
-ui-citrix-import-refreshed = { $count ->
-    [one] { $count } application déjà enregistrée : sa ligne de lancement a été mise à jour.
-   *[other] { $count } applications déjà enregistrées : leurs lignes de lancement ont été mises à jour.
-}
+ui-citrix-import-summary = Import Citrix terminé. Ajoutées : { $added }, mises à jour : { $updated }, déjà à jour : { $unchanged }.
 ui-citrix-import-no-launch-lines = Le coffre est verrouillé ou indisponible : les lignes de lancement du cache Workspace n'ont pas été enregistrées. Ces applications se lancent par leur StoreFront.
 ui-citrix-cache-folder-missing = Dossier du cache Citrix SelfService introuvable.
 ui-citrix-cache-no-files = Aucun fichier de cache Citrix trouvé. Ouvrez Citrix Workspace et connectez-vous à un magasin.

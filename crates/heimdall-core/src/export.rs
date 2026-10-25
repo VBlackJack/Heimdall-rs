@@ -181,6 +181,8 @@ struct Entry {
     #[serde(skip_serializing_if = "Option::is_none")]
     citrix_ica_file_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    citrix_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     citrix_seamless_mode: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     citrix_use_sso: Option<bool>,
@@ -586,6 +588,7 @@ fn citrix(profile: &CitrixProfile) -> Entry {
         citrix_store_front_url: profile.store_front_url.clone(),
         citrix_app_name: profile.app_name.clone(),
         citrix_ica_file_path: profile.ica_file.clone(),
+        citrix_id: profile.citrix_id.clone(),
         citrix_seamless_mode: Some(profile.seamless),
         citrix_use_sso: Some(profile.sso),
         ..server(

@@ -19,12 +19,19 @@
 //! SelfService`, one per store, each `resource` element found by its local name whatever
 //! its namespace. A DTD is refused.
 //!
+//! Only the applications the user is subscribed to are read, as the C# `ServerState` filter
+//! does (v2026.102301): a resource whose `ServerState` is present and not `Subscribed` is a
+//! catalog entry, skipped; a legacy store with no `ServerState` imports as before. The files
+//! are untrusted input: size, node and application counts are capped, and nothing in a file
+//! is ever run from here.
+//!
 //! Each application carries the line `SelfService.exe` launches it with, pre-authenticated:
 //! a secret, never shown in a log.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use roxmltree::{Document, Node};
+use roxmltree::{Document, Node, ParsingOptions};
 use zeroize::Zeroizing;
 
 /// The cache's folder under the local application data, as the C#.
@@ -43,6 +50,35 @@ const FRIENDLY_NAME: &str = "FriendlyName";
 const CATEGORY: &str = "Category";
 const LAUNCH_COMMAND_LINE: &str = "LaunchCommandLine";
 const ICA_LAUNCH_URL: &str = "icaLaunchUrl";
+const SERVER_STATE: &str = "ServerState";
+
+/// The `ServerState` of an application the user is subscribed to, as the C#.
+const SUBSCRIBED: &str = "Subscribed";
+
+/// The switch of a launch line that names the resource, as the C# `CitrixIdSwitch`.
+const CITRIX_ID_SWITCH: &str = "-CitrixID";
+
+/// The most a cache file may weigh: a store's cache is far smaller, and the file is read
+/// whole into memory.
+pub const MAX_CACHE_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The most nodes a cache file may hold once parsed.
+const MAX_XML_NODES: u32 = 2_000_000;
+
+/// The most applications read from one cache file.
+pub const MAX_APPS_PER_FILE: usize = 20_000;
+
+/// The most applications kept from all the files of one scan.
+pub const MAX_APPS_TOTAL: usize = 50_000;
+
+/// The most cache files read in one scan.
+pub const MAX_CACHE_FILES: usize = 256;
+
+/// The longest store file-name prefix accepted.
+pub const MAX_STORE_PREFIX_CHARS: usize = 64;
+
+/// The only file name the `SelfService.exe` override may have.
+pub const SELF_SERVICE_FILE_NAME: &str = "SelfService.exe";
 
 /// Byte order marks a cache file may start with.
 const UTF8_BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
@@ -52,6 +88,9 @@ const UTF16_BE_BOM: [u8; 2] = [0xFE, 0xFF];
 /// A published application found in the cache.
 #[derive(Clone, PartialEq, Eq)]
 pub struct CachedApp {
+    /// The stable resource identifier of its launch line (`-CitrixID`), as the C#
+    /// `CitrixId`: what a second import matches an application saved before by.
+    pub citrix_id: Option<String>,
     /// Its name, as the C# `FriendlyName`.
     pub name: String,
     /// Its category, as the C# `Category`: a folder path, `\`-separated.
@@ -77,6 +116,7 @@ impl std::fmt::Debug for CachedApp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // The launch line opens a session without a password: never shown.
         f.debug_struct("CachedApp")
+            .field("citrix_id", &self.citrix_id)
             .field("name", &self.name)
             .field("category", &self.category)
             .field("store_url", &self.store_url)
@@ -91,6 +131,21 @@ pub enum CacheWarning {
     FolderMissing,
     /// The folder holds no cache file: no store was connected to.
     NoCacheFiles,
+    /// A file held more than [`MAX_APPS_PER_FILE`] applications: the rest is not read.
+    FileTruncated {
+        /// The file's name.
+        file: String,
+    },
+    /// The scan reached [`MAX_APPS_TOTAL`] applications: the rest is not read.
+    TotalCapReached,
+    /// Applications repeating the Citrix identifier of an earlier one were skipped, the
+    /// first kept, as the C# `CitrixImportMerger`.
+    DuplicateIds {
+        /// How many were skipped.
+        count: usize,
+    },
+    /// A setting saved for the scan was not valid and is ignored.
+    SettingIgnored(CitrixSetting),
     /// A cache file could not be read.
     Unreadable {
         /// The file's name.
@@ -98,6 +153,17 @@ pub enum CacheWarning {
         /// Why.
         detail: String,
     },
+}
+
+/// A Citrix Workspace setting, named for the warning that says one was not valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CitrixSetting {
+    /// The `SelfService.exe` path.
+    SelfServicePath,
+    /// The cache folder.
+    CacheDirectory,
+    /// The store file-name prefix.
+    StorePrefix,
 }
 
 /// The applications of every cache file, and what was said on the way.
@@ -121,11 +187,20 @@ pub fn cache_folder() -> Option<PathBuf> {
     return None;
 }
 
-/// Scans this account's cache.
+/// Scans the cache of this account, or the folder `directory` names when it is not blank,
+/// reading only the files whose name starts with `prefix` when it is not blank. A
+/// directory or a prefix that [`cache_directory_valid`] or [`normalize_store_prefix`]
+/// refuses is ignored, as the C# ignores an invalid prefix: the default is scanned.
 #[must_use]
-pub fn scan() -> CacheScan {
-    match cache_folder() {
-        Some(folder) => scan_folder(&folder),
+pub fn scan(directory: &str, prefix: &str) -> CacheScan {
+    let folder = if directory.trim().is_empty() || !cache_directory_valid(directory) {
+        cache_folder()
+    } else {
+        Some(PathBuf::from(directory.trim()))
+    };
+    let prefix = normalize_store_prefix(prefix);
+    match folder {
+        Some(folder) => scan_folder(&folder, prefix.as_deref()),
         None => CacheScan {
             apps: Vec::new(),
             warnings: vec![CacheWarning::FolderMissing],
@@ -133,30 +208,47 @@ pub fn scan() -> CacheScan {
     }
 }
 
-/// Scans the cache files of `folder`, in the order of their names.
+/// Scans the cache files of `folder`, in the order of their names, those whose name starts
+/// with `prefix` (compared without case) when there is one.
 #[must_use]
-pub fn scan_folder(folder: &Path) -> CacheScan {
+pub fn scan_folder(folder: &Path, prefix: Option<&str>) -> CacheScan {
     let mut scan = CacheScan::default();
     let Ok(entries) = std::fs::read_dir(folder) else {
         scan.warnings.push(CacheWarning::FolderMissing);
         return scan;
     };
+    let prefix = prefix.map(str::to_ascii_lowercase);
     let mut files: Vec<PathBuf> = entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .filter(|path| path.is_file() && is_cache_file(path))
+        .filter(|path| path.is_file() && is_cache_file(path, prefix.as_deref()))
         .collect();
     files.sort();
+    files.truncate(MAX_CACHE_FILES);
     if files.is_empty() {
         scan.warnings.push(CacheWarning::NoCacheFiles);
     }
     for file in files {
-        let read = std::fs::read(&file)
-            .map_err(|error| error.to_string())
+        let name = || {
+            file.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
+        let read = read_capped(&file)
             .and_then(|bytes| decode(&bytes))
-            .and_then(|text| parse(&text));
+            .and_then(|text| parse_bounded(&text));
         match read {
-            Ok(apps) => scan.apps.extend(apps),
+            Ok((apps, truncated)) => {
+                if truncated {
+                    scan.warnings
+                        .push(CacheWarning::FileTruncated { file: name() });
+                }
+                let room = MAX_APPS_TOTAL.saturating_sub(scan.apps.len());
+                if apps.len() > room {
+                    scan.warnings.push(CacheWarning::TotalCapReached);
+                }
+                scan.apps.extend(apps.into_iter().take(room));
+            }
             Err(detail) => scan.warnings.push(CacheWarning::Unreadable {
                 file: file
                     .file_name()
@@ -166,14 +258,48 @@ pub fn scan_folder(folder: &Path) -> CacheScan {
             }),
         }
     }
+    drop_duplicate_ids(&mut scan);
     scan
 }
 
-/// Whether `path` is named as a cache file.
-fn is_cache_file(path: &Path) -> bool {
+/// Keeps the first application of each Citrix identifier, as the C# merger does, and says
+/// how many were skipped.
+fn drop_duplicate_ids(scan: &mut CacheScan) {
+    let mut seen = std::collections::HashSet::new();
+    let before = scan.apps.len();
+    scan.apps.retain(|app| {
+        app.citrix_id
+            .as_ref()
+            .is_none_or(|id| seen.insert(id.clone()))
+    });
+    let count = before - scan.apps.len();
+    if count > 0 {
+        scan.warnings.push(CacheWarning::DuplicateIds { count });
+    }
+}
+
+/// The bytes of `path`, refused when over [`MAX_CACHE_FILE_BYTES`]: never read past the cap.
+fn read_capped(path: &Path) -> Result<Vec<u8>, String> {
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut bytes = Vec::new();
+    file.take(MAX_CACHE_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if u64::try_from(bytes.len()).is_ok_and(|len| len > MAX_CACHE_FILE_BYTES) {
+        return Err(format!("larger than {MAX_CACHE_FILE_BYTES} bytes"));
+    }
+    Ok(bytes)
+}
+
+/// Whether `path` is named as a cache file: `<prefix>*_Cache.xml`, `prefix` being lowercase.
+fn is_cache_file(path: &Path, prefix: Option<&str>) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| name.to_ascii_lowercase().ends_with(CACHE_FILE_SUFFIX))
+        .map(str::to_ascii_lowercase)
+        .is_some_and(|name| {
+            name.ends_with(CACHE_FILE_SUFFIX)
+                && prefix.is_none_or(|prefix| name.starts_with(prefix))
+        })
 }
 
 /// The text of a cache file: UTF-8, or UTF-16 by its byte order mark.
@@ -206,14 +332,38 @@ fn decode(bytes: &[u8]) -> Result<String, String> {
 ///
 /// Why the file is not XML, or holds a DTD.
 pub fn parse(text: &str) -> Result<Vec<CachedApp>, String> {
+    parse_bounded(text).map(|(apps, _)| apps)
+}
+
+/// [`parse`], and whether the file held more than [`MAX_APPS_PER_FILE`] applications.
+///
+/// # Errors
+///
+/// Why the file is not XML, or holds a DTD.
+pub fn parse_bounded(text: &str) -> Result<(Vec<CachedApp>, bool), String> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let document = Document::parse(text).map_err(|error| error.to_string())?;
+    // A DTD is refused, which no entity can be expanded without; the node count is capped.
+    let options = ParsingOptions {
+        allow_dtd: false,
+        nodes_limit: MAX_XML_NODES,
+        ..ParsingOptions::default()
+    };
+    let document =
+        Document::parse_with_options(text, options).map_err(|error| error.to_string())?;
     let mut store_url = None;
     let mut apps = Vec::new();
+    let mut truncated = false;
     for resource in document
         .descendants()
         .filter(|node| node.is_element() && node.tag_name().name() == RESOURCE)
     {
+        // A catalog entry the user never subscribed to is not theirs to import; a store
+        // whose cache holds no state at all is a legacy one, imported as before.
+        if value(resource, SERVER_STATE)
+            .is_some_and(|state| !state.eq_ignore_ascii_case(SUBSCRIBED))
+        {
+            continue;
+        }
         let (Some(name), Some(launch_line)) = (
             value(resource, FRIENDLY_NAME),
             value(resource, LAUNCH_COMMAND_LINE),
@@ -223,7 +373,12 @@ pub fn parse(text: &str) -> Result<Vec<CachedApp>, String> {
         if store_url.is_none() {
             store_url = value(resource, ICA_LAUNCH_URL).and_then(|url| store_of(&url));
         }
+        if apps.len() >= MAX_APPS_PER_FILE {
+            truncated = true;
+            break;
+        }
         apps.push(CachedApp {
+            citrix_id: extract_citrix_id(&launch_line),
             name,
             category: value(resource, CATEGORY),
             store_url: None,
@@ -233,7 +388,102 @@ pub fn parse(text: &str) -> Result<Vec<CachedApp>, String> {
     for app in &mut apps {
         app.store_url.clone_from(&store_url);
     }
-    Ok(apps)
+    Ok((apps, truncated))
+}
+
+/// The resource identifier a launch line passes to `-CitrixID`, as the C#
+/// `ExtractCitrixId`: the switch is a whole word, its value quoted or a bare word that does
+/// not start with `-`; `None` when absent or empty.
+#[must_use]
+pub fn extract_citrix_id(line: &str) -> Option<String> {
+    // ASCII lowercasing keeps every byte offset, so a match in it is a match in `line`.
+    let lower = line.to_ascii_lowercase();
+    let switch = CITRIX_ID_SWITCH.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(found) = lower[from..].find(&switch) {
+        let start = from + found;
+        let end = start + switch.len();
+        let left_ok = line[..start]
+            .chars()
+            .next_back()
+            .is_none_or(char::is_whitespace);
+        let right_ok = line[end..].chars().next().is_none_or(char::is_whitespace);
+        if !left_ok || !right_ok {
+            from = end;
+            continue;
+        }
+        let rest = line[end..].trim_start();
+        if let Some(quoted) = rest.strip_prefix('"') {
+            let value = quoted.split_once('"')?.0.trim();
+            return (!value.is_empty()).then(|| value.to_owned());
+        }
+        let token = rest.split(char::is_whitespace).next().unwrap_or_default();
+        return (!token.is_empty() && !token.starts_with('-')).then(|| token.to_owned());
+    }
+    None
+}
+
+/// `prefix` trimmed when it is a store file-name prefix that is safe: letters, digits and
+/// `-`, `_`, `.`, space; at most [`MAX_STORE_PREFIX_CHARS`] of them. `None` when blank or
+/// invalid: a path separator, a wildcard, a control or invisible character, or anything else
+/// that would let the scan leave the cache folder.
+#[must_use]
+pub fn normalize_store_prefix(prefix: &str) -> Option<String> {
+    let trimmed = prefix.trim();
+    let safe = !trimmed.is_empty()
+        && trimmed.chars().count() <= MAX_STORE_PREFIX_CHARS
+        && trimmed
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '));
+    safe.then(|| trimmed.to_owned())
+}
+
+/// Whether `c` separates the steps of a path on Windows or elsewhere.
+fn is_separator(c: char) -> bool {
+    matches!(c, '/' | '\\')
+}
+
+/// Whether `text` can be a path typed in the Settings: no control or invisible character, an
+/// absolute path of this computer (a drive or a root), never a share, and no `..` step.
+fn local_absolute_path(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty()
+        || trimmed
+            .chars()
+            .any(|c| c.is_control() || crate::invisible::is_invisible(c))
+    {
+        return false;
+    }
+    // A share is another computer's, which a file of settings could point at.
+    let mut first_two = trimmed.chars().take(2);
+    if first_two.next().is_some_and(is_separator) && first_two.next().is_some_and(is_separator) {
+        return false;
+    }
+    let bytes = trimmed.as_bytes();
+    let has_drive = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    let rooted = trimmed.starts_with('/') || Path::new(trimmed).is_absolute();
+    (has_drive || rooted) && !trimmed.split(['/', '\\']).any(|part| part == "..")
+}
+
+/// Whether `directory` can be the cache folder to scan, see [`local_absolute_path`].
+#[must_use]
+pub fn cache_directory_valid(directory: &str) -> bool {
+    local_absolute_path(directory)
+}
+
+/// Whether `path` can be the `SelfService.exe` to launch: a local absolute path whose file
+/// name is [`SELF_SERVICE_FILE_NAME`], compared without case, as the C#.
+#[must_use]
+pub fn self_service_path_valid(path: &str) -> bool {
+    local_absolute_path(path)
+        && path
+            .trim()
+            .rsplit(['/', '\\'])
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case(SELF_SERVICE_FILE_NAME))
 }
 
 /// The text of `parent`'s child element `name`, whatever its namespace, trimmed: all of its
@@ -322,6 +572,7 @@ mod tests {
     #[test]
     fn a_launch_line_never_shows_in_debug_output() {
         let app = CachedApp {
+            citrix_id: None,
             name: "Excel".to_owned(),
             category: None,
             store_url: None,

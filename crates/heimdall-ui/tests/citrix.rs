@@ -74,6 +74,7 @@ fn outlook() -> CitrixProfile {
         ica_file: None,
         seamless: true,
         sso: true,
+        citrix_id: None,
     }
 }
 
@@ -217,7 +218,7 @@ fn the_more_menu_imports_citrix_apps_after_the_csharp_question() {
     }
     let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
     let mut ui = common::simulator(settings(), WINDOW, shell.view());
-    ui.find("1 Citrix application imported successfully.")
+    ui.find("Citrix import finished: 1 added, 0 updated, 0 already up to date.")
         .expect("the C# result");
 }
 

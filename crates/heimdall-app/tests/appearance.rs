@@ -339,3 +339,77 @@ fn readable_files_say_nothing_at_start() {
     let again = app(dir.path());
     assert!(again.dialog.is_none(), "{:?}", again.dialog);
 }
+
+#[test]
+fn the_citrix_workspace_settings_are_checked_before_they_are_kept() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let mut send = |message: SettingsMessage| {
+        app.update(Message::Settings(message));
+    };
+    send(SettingsMessage::CitrixSelfServicePath(
+        "  C:/Citrix/SelfService.exe ".to_owned(),
+    ));
+    send(SettingsMessage::CitrixCacheDirectory(
+        "  D:/Cache/Citrix ".to_owned(),
+    ));
+    send(SettingsMessage::CitrixCacheStorePrefix(" Corp ".to_owned()));
+    let kept = (
+        app.settings().citrix_self_service_path.clone(),
+        app.settings().citrix_cache_directory.clone(),
+        app.settings().citrix_cache_store_prefix.clone(),
+    );
+    assert_eq!(
+        kept,
+        (
+            "C:/Citrix/SelfService.exe".to_owned(),
+            "D:/Cache/Citrix".to_owned(),
+            "Corp".to_owned()
+        ),
+        "trimmed"
+    );
+
+    // Refused values change nothing.
+    let mut send = |message: SettingsMessage| {
+        app.update(Message::Settings(message));
+    };
+    send(SettingsMessage::CitrixSelfServicePath(
+        "C:/Tools/other.exe".to_owned(),
+    ));
+    send(SettingsMessage::CitrixSelfServicePath(
+        "SelfService.exe".to_owned(),
+    ));
+    send(SettingsMessage::CitrixSelfServicePath(
+        "C:/Citrix/\u{200B}SelfService.exe".to_owned(),
+    ));
+    send(SettingsMessage::CitrixCacheDirectory(
+        "relative/folder".to_owned(),
+    ));
+    send(SettingsMessage::CitrixCacheDirectory(
+        r"\\server\share".to_owned(),
+    ));
+    send(SettingsMessage::CitrixCacheStorePrefix("a/b".to_owned()));
+    send(SettingsMessage::CitrixCacheStorePrefix("a*".to_owned()));
+    assert_eq!(
+        app.settings().citrix_self_service_path,
+        "C:/Citrix/SelfService.exe"
+    );
+    assert_eq!(app.settings().citrix_cache_directory, "D:/Cache/Citrix");
+    assert_eq!(app.settings().citrix_cache_store_prefix, "Corp");
+
+    // Saved, and read back by the next start.
+    let reloaded = heimdall_core::settings::Settings::load(&dir.path().join(SETTINGS_FILE_NAME))
+        .expect("reads");
+    assert_eq!(reloaded.citrix_cache_store_prefix, "Corp");
+
+    // Blank clears each.
+    let mut send = |message: SettingsMessage| {
+        app.update(Message::Settings(message));
+    };
+    send(SettingsMessage::CitrixSelfServicePath("  ".to_owned()));
+    send(SettingsMessage::CitrixCacheDirectory(String::new()));
+    send(SettingsMessage::CitrixCacheStorePrefix(String::new()));
+    assert!(app.settings().citrix_self_service_path.is_empty());
+    assert!(app.settings().citrix_cache_directory.is_empty());
+    assert!(app.settings().citrix_cache_store_prefix.is_empty());
+}

@@ -1005,6 +1005,7 @@ fn citrix_profiles_read_back_with_their_launch_settings() {
         ica_file: None,
         seamless: true,
         sso: true,
+        citrix_id: None,
     };
     let ica = CitrixProfile {
         id: ProfileId::new("erp"),
@@ -1015,6 +1016,7 @@ fn citrix_profiles_read_back_with_their_launch_settings() {
         ica_file: Some(r"C:\apps\erp.ica".to_owned()),
         seamless: false,
         sso: false,
+        citrix_id: None,
     };
     let mut store = ProfileStore::open(&path).expect("opens");
     store.merge_citrix([store_front.clone(), ica.clone()]);

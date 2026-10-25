@@ -219,14 +219,19 @@ pub fn view<'a>(
 }
 
 /// Launches `launch` for tab `tab`, the client's processes listed first.
-pub(crate) fn launch(tab: TabId, name: String, launch: CitrixLaunch) -> Task<Message> {
+pub(crate) fn launch(
+    tab: TabId,
+    name: String,
+    launch: CitrixLaunch,
+    self_service: Option<std::path::PathBuf>,
+) -> Task<Message> {
     Task::future(async move {
         // Listing processes and starting one wait on the system: off the UI thread.
         let result = tokio::task::spawn_blocking(move || {
             citrix_session::launch_tracked(
                 Arc::new(Tasklist),
                 citrix_session::LIST_TIME_LIMIT,
-                || citrix::launch(&launch).map(ChildWatch::shared),
+                || citrix::launch(&launch, self_service.as_deref()).map(ChildWatch::shared),
             )
         })
         .await

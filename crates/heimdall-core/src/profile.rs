@@ -1425,6 +1425,10 @@ pub struct CitrixProfile {
     /// `CitrixUseSso`: on.
     #[serde(default = "shared")]
     pub sso: bool,
+    /// The resource identifier Citrix Workspace's cache gave the application (`-CitrixID`),
+    /// as the C# `CitrixId`: what a second import matches it by, to refresh it in place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub citrix_id: Option<String>,
 }
 
 /// A web console (iLO, iDRAC, a NAS or a switch), as the C# WEB connection type: opened in

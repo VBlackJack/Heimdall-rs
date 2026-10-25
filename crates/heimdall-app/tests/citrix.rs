@@ -50,6 +50,7 @@ fn outlook() -> CitrixProfile {
         ica_file: None,
         seamless: true,
         sso: false,
+        citrix_id: None,
     }
 }
 
@@ -726,6 +727,11 @@ fn scan(text: &str) -> CacheScan {
 
 /// "Import Citrix Apps" run as the window runs it, the scan giving `text`, then confirmed.
 fn import(app: &mut App, text: &str) -> CitrixImportOutcome {
+    import_expecting(app, text, 2)
+}
+
+/// The same, the scan holding `count` applications.
+fn import_expecting(app: &mut App, text: &str, count: usize) -> CitrixImportOutcome {
     let effects = app.update(Message::ImportCitrix);
     assert!(
         matches!(effects.as_slice(), [Effect::ScanCitrixCache]),
@@ -733,7 +739,7 @@ fn import(app: &mut App, text: &str) -> CitrixImportOutcome {
     );
     app.update(Message::CitrixScanned(scan(text)));
     assert!(
-        matches!(&app.dialog, Some(Dialog::ConfirmCitrixImport(scan)) if scan.apps.len() == 2),
+        matches!(&app.dialog, Some(Dialog::ConfirmCitrixImport(scan)) if scan.apps.len() == count),
         "{:?}",
         app.dialog
     );
@@ -770,7 +776,10 @@ fn the_workspace_cache_imports_its_applications_their_launch_lines_in_the_vault(
     let system = SystemCredentials::memory();
     let mut app = app_with(dir.path(), &system);
     let outcome = import(&mut app, CACHE);
-    assert_eq!((outcome.added, outcome.refreshed), (2, 0));
+    assert_eq!(
+        (outcome.added, outcome.updated, outcome.unchanged),
+        (2, 0, 0)
+    );
     assert!(!outcome.without_launch_lines);
 
     let profiles = saved(dir.path());
@@ -806,7 +815,10 @@ fn scanning_again_refreshes_the_launch_lines_and_adds_nothing() {
     let mut app = app_with(dir.path(), &system);
     import(&mut app, CACHE);
     let outcome = import(&mut app, &CACHE.replace("store-abc", "store-new"));
-    assert_eq!((outcome.added, outcome.refreshed), (0, 2));
+    assert_eq!(
+        (outcome.added, outcome.updated, outcome.unchanged),
+        (0, 0, 2)
+    );
     let profiles = saved(dir.path());
     assert_eq!(profiles.len(), 2, "{profiles:?}");
     for profile in &profiles {
@@ -1028,4 +1040,160 @@ fn a_citrix_session_s_connect_and_end_go_to_the_session_events_log() {
         .map(|index| lines[*index]["endTrigger"].as_str().unwrap_or_default())
         .collect();
     assert_eq!(triggers, ["remote", "user", "teardown"], "{lines:?}");
+}
+
+/// A cache as Citrix Cloud writes it (C# v2026.102301): two subscribed applications with
+/// their identifiers, and one catalog entry the user is not subscribed to.
+const CLOUD_CACHE: &str = r#"<resources>
+  <resource>
+    <FriendlyName>Excel 2024</FriendlyName>
+    <Category>Office</Category>
+    <ServerState>Subscribed</ServerState>
+    <LaunchCommandLine>-qlaunch "Excel 2024" -CitrixID "store@@Excel 2024" -s one</LaunchCommandLine>
+    <icaLaunchUrl>https://store.corp.lab/Citrix/Store/resources/launch/ica</icaLaunchUrl>
+  </resource>
+  <resource>
+    <FriendlyName>Notepad</FriendlyName>
+    <ServerState>Subscribed</ServerState>
+    <LaunchCommandLine>-qlaunch "Notepad" -CitrixID store@@Notepad -s one</LaunchCommandLine>
+  </resource>
+  <resource>
+    <FriendlyName>Catalog only</FriendlyName>
+    <ServerState>Unsubscribed</ServerState>
+    <LaunchCommandLine>-qlaunch "Catalog only" -CitrixID store@@Catalog -s one</LaunchCommandLine>
+  </resource>
+</resources>"#;
+
+#[test]
+fn an_unsubscribed_catalog_entry_is_not_imported() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with(dir.path(), &SystemCredentials::memory());
+    let outcome = import(&mut app, CLOUD_CACHE);
+    assert_eq!(
+        (outcome.added, outcome.updated, outcome.unchanged),
+        (2, 0, 0)
+    );
+    let names: Vec<String> = saved(dir.path()).into_iter().map(|p| p.name).collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert!(!names.iter().any(|name| name == "Catalog only"));
+}
+
+#[test]
+fn a_second_import_matches_by_citrix_id_and_keeps_what_the_user_changed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app_with(dir.path(), &system);
+    import(&mut app, CLOUD_CACHE);
+    let excel = saved(dir.path())
+        .into_iter()
+        .find(|profile| profile.citrix_id.as_deref() == Some("store@@Excel 2024"))
+        .expect("excel");
+
+    // The user renames it and files it elsewhere.
+    app.update(Message::EditProfile(excel.id.clone()));
+    type_in(&mut app, ProfileField::Name, "My spreadsheets");
+    type_in(&mut app, ProfileField::Group, "Mine/Finance");
+    app.update(Message::ConfirmDialog);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+
+    // Nothing changed in the cache but a launch line: both already up to date.
+    let outcome = import(&mut app, &CLOUD_CACHE.replace("-s one", "-s two"));
+    assert_eq!(
+        (outcome.added, outcome.updated, outcome.unchanged),
+        (0, 0, 2)
+    );
+    // The store moved (a cache file is one store, so both applications follow it) and
+    // Excel's published name changed: both updated in place.
+    let moved = CLOUD_CACHE
+        .replace("store.corp.lab", "store.new.lab")
+        .replace("Excel 2024</FriendlyName>", "Excel 2025</FriendlyName>")
+        .replace("\"Excel 2024\" -CitrixID", "\"Excel 2025\" -CitrixID");
+    let outcome = import(&mut app, &moved);
+    assert_eq!(
+        (outcome.added, outcome.updated, outcome.unchanged),
+        (0, 2, 0)
+    );
+
+    let profiles = saved(dir.path());
+    assert_eq!(
+        profiles.len(),
+        2,
+        "nothing duplicated or deleted: {profiles:?}"
+    );
+    let again = profiles
+        .iter()
+        .find(|profile| profile.id == excel.id)
+        .expect("same profile");
+    assert_eq!(again.name, "My spreadsheets", "the user's name kept");
+    assert_eq!(again.group.as_deref(), Some("Mine/Finance"), "folder kept");
+    assert_eq!(again.app_name.as_deref(), Some("Excel 2025"));
+    assert_eq!(
+        again.store_front_url.as_deref(),
+        Some("https://store.new.lab")
+    );
+    assert_eq!(again.citrix_id.as_deref(), Some("store@@Excel 2024"));
+    assert!(
+        stored_line(&system, &excel.id).is_some_and(|line| line.contains("Excel 2025")),
+        "the launch line refreshed"
+    );
+
+    // An application the cache no longer lists is left alone.
+    let notepad_only = r#"<resources><resource>
+        <FriendlyName>Notepad</FriendlyName><ServerState>Subscribed</ServerState>
+        <LaunchCommandLine>-qlaunch "Notepad" -CitrixID store@@Notepad -s one</LaunchCommandLine>
+        </resource></resources>"#;
+    let outcome = import_expecting(&mut app, notepad_only, 1);
+    assert_eq!(
+        (outcome.added, outcome.updated, outcome.unchanged),
+        (0, 0, 1)
+    );
+    assert_eq!(saved(dir.path()).len(), 2, "nothing deleted");
+}
+
+#[test]
+fn an_application_saved_before_identifiers_were_kept_is_found_by_name_and_given_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with(dir.path(), &SystemCredentials::memory());
+    import(&mut app, CACHE);
+    let before = saved(dir.path());
+    let outcome = import(&mut app, CLOUD_CACHE);
+    // Both are found by name on the same StoreFront, and stamped with their identifier.
+    assert_eq!(
+        (outcome.added, outcome.updated, outcome.unchanged),
+        (0, 2, 0)
+    );
+    let after = saved(dir.path());
+    assert_eq!(after.len(), before.len(), "{after:?}");
+    assert!(after.iter().all(|profile| profile.citrix_id.is_some()));
+}
+
+#[test]
+fn the_self_service_override_is_used_only_when_valid_and_there_else_the_default_places() {
+    use heimdall_app::citrix::self_service_program;
+    let probed = || Some(PathBuf::from("probed/SelfService.exe"));
+    let there = |_: &Path| true;
+    let gone = |_: &Path| false;
+    let own = PathBuf::from("C:/Citrix/SelfService.exe");
+
+    assert_eq!(
+        self_service_program(Some(&own), there, probed),
+        Some(own.clone())
+    );
+    assert_eq!(self_service_program(None, there, probed), probed());
+    // Not on disk: the default places, as the C# falls back.
+    assert_eq!(self_service_program(Some(&own), gone, probed), probed());
+    // Another program, or a relative one: never run, whatever is on disk.
+    for refused in [
+        "C:/Tools/powershell.exe",
+        "SelfService.exe",
+        "C:/Citrix/SelfService.bat",
+    ] {
+        assert_eq!(
+            self_service_program(Some(Path::new(refused)), there, probed),
+            probed(),
+            "{refused}"
+        );
+    }
+    // Nothing anywhere.
+    assert_eq!(self_service_program(Some(&own), gone, || None), None);
 }
