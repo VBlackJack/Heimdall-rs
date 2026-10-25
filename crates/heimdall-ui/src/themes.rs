@@ -520,17 +520,21 @@ pub enum Derived {
     Accent,
     /// A line that marks out a region (`BorderStrongBrush`), from the border colour.
     BorderStrong,
+    /// Muted text (the C# `TextTertiaryBrush`), from the theme's comment colour: a group's
+    /// name on the Settings rail.
+    Muted,
 }
 
 impl Derived {
     /// Every derived colour.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Error,
         Self::Warning,
         Self::Success,
         Self::Info,
         Self::Accent,
         Self::BorderStrong,
+        Self::Muted,
     ];
 
     /// The contrast the colour must reach on the window background and on a card: 4.5 for
@@ -565,6 +569,7 @@ pub fn derived(theme: &Theme, role: Derived) -> Color {
         Derived::Success => extended.success.base.color,
         Derived::Info => colors_of(theme).cyan,
         Derived::Accent => theme.palette().primary,
+        Derived::Muted => colors_of(theme).comment,
         // The C# `BorderColor`: the current line, the text in high contrast, where the
         // current line is black ([`build`] puts the text in the strong shade there).
         Derived::BorderStrong
@@ -1079,7 +1084,7 @@ mod tests {
             }
         }
         // The loop cannot pass by being empty: 17 themes and high contrast, nine accents,
-        // six colours.
+        // seven colours.
         assert_eq!(AppTheme::ALL.len(), 18);
         assert_eq!(checked, 18 * Accent::ALL.len() * Derived::ALL.len());
     }

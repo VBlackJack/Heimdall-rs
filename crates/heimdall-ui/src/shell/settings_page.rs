@@ -104,15 +104,20 @@ const RAIL_ITEM_GAP: f32 = 2.0;
 
 /// Height of a group's name on the rail: the room above it that sets the groups apart, as
 /// the C# `SettingsRailGroupHeaderMargin`, and its line.
-const RAIL_GROUP_HEIGHT: f32 = 34.0;
+const RAIL_GROUP_HEIGHT: f32 = 44.0;
 
-/// Room around a group's name, above then beside, the C# header's `12,14,0,4`.
+/// Room around a group's name: well more above than the gap between two sections, so the
+/// groups stand apart, and little beside, the sections being indented under it.
 const RAIL_GROUP_PADDING: iced::Padding = iced::Padding {
-    top: 14.0,
+    top: 24.0,
     right: 0.0,
-    bottom: 4.0,
-    left: 12.0,
+    bottom: 6.0,
+    left: 4.0,
 };
+
+/// How far the sections are indented under their group's name; added to the rail's width, so
+/// the names keep the whole of [`RAIL_WIDTH`].
+const RAIL_ITEM_INDENT: f32 = 10.0;
 
 /// Room around the rail: the page's own above and below, the page's edge at its left, and the
 /// C# rail border's 8 at its right.
@@ -307,14 +312,20 @@ fn apply_legend<'a>() -> Element<'a, Message> {
 /// scrolls when the window is too short for it, as the C# rail's `ScrollViewer`, the legend of
 /// the apply glyphs staying in sight under it.
 fn section_rail<'a>(open: SettingsSection) -> Element<'a, Message> {
-    let mut rail = Column::new().spacing(RAIL_ITEM_GAP).width(RAIL_WIDTH);
+    let mut rail = Column::new()
+        .spacing(RAIL_ITEM_GAP)
+        .width(RAIL_WIDTH + RAIL_ITEM_INDENT);
     for tab in SettingsTab::ALL {
         rail = rail.push(
+            // A heading, not a stop: small, upper case, semi-bold and muted, as the C#
+            // `SettingsRailGroupHeaderStyle`, which is disabled and not focusable.
             container(
-                text(tab.label())
-                    .size(font_size::CAPTION)
+                text(tab.label().to_uppercase())
+                    .size(font_size::SMALL_CAPTION)
                     .font(styles::SEMIBOLD)
-                    .style(text::secondary),
+                    .style(|theme: &Theme| text::Style {
+                        color: Some(crate::themes::derived(theme, crate::themes::Derived::Muted)),
+                    }),
             )
             .padding(RAIL_GROUP_PADDING)
             .height(RAIL_GROUP_HEIGHT)
@@ -329,22 +340,28 @@ fn section_rail<'a>(open: SettingsSection) -> Element<'a, Message> {
                 name
             };
             rail = rail.push(
-                button(
-                    row![
-                        container(iced::widget::space())
-                            .width(RAIL_BAR_WIDTH)
-                            .height(Length::Fill)
-                            .style(styles::underline(selected)),
-                        container(name)
-                            .padding(RAIL_ITEM_PADDING)
-                            .center_y(Length::Fill),
-                    ]
-                    .height(RAIL_ITEM_HEIGHT),
+                container(
+                    button(
+                        row![
+                            container(iced::widget::space())
+                                .width(RAIL_BAR_WIDTH)
+                                .height(Length::Fill)
+                                .style(styles::underline(selected)),
+                            container(name)
+                                .padding(RAIL_ITEM_PADDING)
+                                .center_y(Length::Fill),
+                        ]
+                        .height(RAIL_ITEM_HEIGHT),
+                    )
+                    .padding(0)
+                    .width(Length::Fill)
+                    .style(styles::rail_item(selected))
+                    .on_press(Message::SettingsSection(section)),
                 )
-                .padding(0)
-                .width(Length::Fill)
-                .style(styles::rail_item(selected))
-                .on_press(Message::SettingsSection(section)),
+                .padding(iced::Padding {
+                    left: RAIL_ITEM_INDENT,
+                    ..iced::Padding::ZERO
+                }),
             );
         }
     }
@@ -355,7 +372,7 @@ fn section_rail<'a>(open: SettingsSection) -> Element<'a, Message> {
             .height(Length::Fill),
         apply_legend(),
     ]
-    .width(RAIL_WIDTH + RAIL_PADDING.left + RAIL_PADDING.right)
+    .width(RAIL_WIDTH + RAIL_ITEM_INDENT + RAIL_PADDING.left + RAIL_PADDING.right)
     .into()
 }
 

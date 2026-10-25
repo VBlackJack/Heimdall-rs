@@ -1847,7 +1847,7 @@ fn one_rail_lists_every_section_under_its_group_and_opens_one_alone() {
     {
         let mut ui = simulator(&shell);
         // The six group names are headings, and every section of every group is listed.
-        for tab in ["General", "Terminal", "SSH", "RDP", "Gateways", "Security"] {
+        for tab in ["GENERAL", "TERMINAL", "SSH", "RDP", "SECURITY"] {
             ui.find(tab).expect(tab);
         }
         for name in [

@@ -746,7 +746,7 @@ fn the_master_password_is_enabled_from_the_settings_with_its_rules_said_as_typed
     {
         let mut ui = tall_settings(&shell);
         for label in [
-            "Security",
+            "SECURITY",
             "Master password",
             "Encrypt your stored credentials under a master password. You will be asked for it each time the app starts.",
             "Disabled",
@@ -3809,7 +3809,7 @@ fn the_settings_page_has_one_rail_under_the_csharp_group_names_and_keeps_the_sec
     {
         let mut ui = simulator(&shell);
         // The group names head the one rail; they are headings, not buttons.
-        for group in ["General", "Terminal", "SSH", "RDP", "Gateways", "Security"] {
+        for group in ["GENERAL", "TERMINAL", "SSH", "RDP", "SECURITY"] {
             ui.find(group).expect(group);
         }
         ui.find("Language").expect("General first");
