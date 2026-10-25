@@ -34,7 +34,7 @@ use heimdall_core::store::ProfileStore;
 use heimdall_ssh::{AgentSource, SessionClosed, TerminalSize};
 use heimdall_term::GridSize;
 use heimdall_ui::press_tooltip::hide_on_press;
-use heimdall_ui::shell::{Message, Shell, tab_id, tab_strip_id};
+use heimdall_ui::shell::{Message, Shell, tab_id, tab_strip_id, tree_scroll_id};
 use heimdall_ui::split_view;
 use heimdall_ui::terminal_view::FONTS;
 use iced::mouse::{self, Button, ScrollDelta};
@@ -231,9 +231,36 @@ fn a_long_name_of_the_tree_stays_on_one_line() {
         (long.height - short.height).abs() < 0.5,
         "one line, as a short name: {long:?} {short:?}"
     );
+    // An intentional divergence from the C#, which cuts the name: the tree scrolls sideways
+    // and the name stays whole, past the sidebar.
+    let seen = ui
+        .find(LONG_NAME)
+        .expect("the long row")
+        .visible_bounds()
+        .expect("in view");
     assert!(
-        long.x + long.width < WINDOW.width / 2.0,
-        "cut in the sidebar, not laid out whole: {long:?}"
+        long.width > seen.width + 1.0,
+        "laid out whole, wider than what the sidebar shows: {long:?} {seen:?}"
+    );
+    assert!(
+        long.x + long.width > WINDOW.width / 4.0,
+        "not cut in the sidebar: {long:?}"
+    );
+}
+
+#[test]
+fn the_tree_scrolls_in_the_whole_area_so_its_sideways_bar_sits_at_the_foot() {
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = Shell::with_app(app(
+        dir.path(),
+        vec![profile("long", LONG_NAME), profile("short", "web")],
+    ));
+    let mut ui = simulator(&shell);
+    let area = ui.find(tree_scroll_id()).expect("the tree").bounds();
+    let last = ui.find("web").expect("the last row").bounds();
+    assert!(
+        area.y + area.height > last.y + last.height + 100.0,
+        "the area runs on far below two rows: {area:?} {last:?}"
     );
 }
 

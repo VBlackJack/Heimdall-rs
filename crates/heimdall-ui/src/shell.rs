@@ -99,6 +99,7 @@ use crate::desktop_view::DesktopView;
 use crate::dialog_parts::{self, Severity};
 use crate::dialog_place::anchored;
 use crate::even_grid::EvenGrid;
+use crate::even_width::EvenWidth;
 use crate::files_view;
 use crate::finder::Finder;
 use crate::floating_view::{FloatEvent, FloatingWindow};
@@ -6495,10 +6496,9 @@ impl Shell {
     /// The tree and what is drawn under it: the bar a drop takes a session out of its folder
     /// on, the selection's bar and the undo bar.
     fn tree_area(&self) -> Element<'_, Message> {
-        let list = self.tree_list();
         // A right click beside the rows is the tree's own menu.
         let tree = mouse_area(
-            container(styles::scroll(list))
+            container(responsive(|size| self.tree_scroll(size.width)))
                 .width(Length::Fill)
                 .height(Length::Fill),
         )
@@ -6816,11 +6816,32 @@ impl Shell {
         )
     }
 
+    /// The tree's rows scrolled down, and sideways when a name is wider than the sidebar:
+    /// an intentional divergence from the C# tree, which turned its horizontal bar off in
+    /// 0f5cd2f1. Every row is as wide as the widest or `viewport`, so the selection spans it.
+    fn tree_scroll(&self, viewport: f32) -> Element<'_, Message> {
+        styles::scroll(EvenWidth::new(
+            tree_view::ROW_GAP,
+            viewport,
+            styles::SCROLLBAR_WIDTH,
+            self.tree_list(),
+        ))
+        .id(tree_scroll_id())
+        .width(Length::Fill)
+        // The whole area, so the sideways bar sits at its foot, not under the last row.
+        .height(Length::Fill)
+        .direction(scrollable::Direction::Both {
+            vertical: styles::scrollbar(),
+            horizontal: styles::scrollbar(),
+        })
+        .into()
+    }
+
     /// The tree's rows, searched and filtered, and what it says when none passes.
-    fn tree_list(&self) -> Column<'_, Message> {
-        let mut list = Column::new().spacing(tree_view::ROW_GAP);
+    fn tree_list(&self) -> Vec<Element<'_, Message>> {
+        let mut list: Vec<Element<'_, Message>> = Vec::new();
         if self.app.profile_summaries().is_empty() {
-            list = list.push(text(fl!("ui-sidebar-empty")));
+            list.push(text(fl!("ui-sidebar-empty")).into());
         }
         let rows = self.app.tree_rows(&self.search);
         let filter = self.app.tree_filter();
@@ -6840,16 +6861,18 @@ impl Shell {
                     Message::Search(String::new()),
                 )
             };
-            list = list.push(text(said).size(font_size::CAPTION)).push(
+            list.push(text(said).size(font_size::CAPTION).into());
+            list.push(
                 button(text(way_back).size(font_size::CAPTION))
                     .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::secondary)
-                    .on_press(message),
+                    .on_press(message)
+                    .into(),
             );
         }
         let badge = self.app.shows_gateway_badge();
         // As the C# tree: folders nested and folded, sub-folders first, "(No Folder)" last.
-        list = list.extend(rows.into_iter().map(|row| match row {
+        list.extend(rows.into_iter().map(|row| match row {
             TreeRow::Folder {
                 path,
                 name,
@@ -6908,7 +6931,7 @@ impl Shell {
         }));
         // The shared files' sessions, read-only, under the saved ones.
         if let Some(shared) = crate::shared_view::section(&self.app) {
-            list = list.push(shared);
+            list.push(shared);
         }
         list
     }
@@ -14063,6 +14086,12 @@ pub fn tree_add_id() -> iced::widget::Id {
 #[must_use]
 pub fn tab_id(tab: TabId) -> iced::widget::Id {
     iced::widget::Id::from(format!("tab-{}", tab.value()))
+}
+
+/// Widget identifier of the session tree's scroll area.
+#[must_use]
+pub fn tree_scroll_id() -> iced::widget::Id {
+    iced::widget::Id::new("tree-scroll")
 }
 
 /// Widget identifier of the row of tabs, which scrolls sideways.
