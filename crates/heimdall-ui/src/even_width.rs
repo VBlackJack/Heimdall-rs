@@ -33,23 +33,35 @@ use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector, mouse}
 pub struct EvenWidth<'a, M> {
     spacing: f32,
     min_width: f32,
+    bar_height: f32,
     items: Vec<Element<'a, M, Theme, iced::Renderer>>,
 }
 
 impl<'a, M> EvenWidth<'a, M> {
-    /// `items` in a column, `spacing` apart, at least `min_width` wide.
+    /// `items` in a column, `spacing` apart, at least `min_width` wide. When they are wider
+    /// than that, a sideways scroll bar of `bar_height` is drawn over the foot of the column:
+    /// the column is that much higher, so the last item stays clear of the bar.
     #[must_use]
     pub fn new(
         spacing: f32,
         min_width: f32,
+        bar_height: f32,
         items: Vec<Element<'a, M, Theme, iced::Renderer>>,
     ) -> Self {
         Self {
             spacing,
             min_width,
+            bar_height,
             items,
         }
     }
+}
+
+/// The height added under the items: `bar_height` when they are wider than `min_width`, so
+/// that a sideways bar is shown, else nothing.
+#[must_use]
+pub fn foot(width: f32, min_width: f32, bar_height: f32) -> f32 {
+    if width > min_width { bar_height } else { 0.0 }
 }
 
 /// The width every item is given: the widest measured, but not under `min_width`.
@@ -111,6 +123,7 @@ impl<M> Widget<M, Theme, iced::Renderer> for EvenWidth<'_, M> {
             y += node.size().height;
             nodes.push(node);
         }
+        y += foot(width, self.min_width, self.bar_height);
         layout::Node::with_children(Size::new(width, y), nodes)
     }
 
@@ -226,6 +239,12 @@ mod tests {
     #[test]
     fn every_row_is_as_wide_as_the_widest_when_it_passes_the_sidebar() {
         assert!((common_width([120.0, 340.0, 90.0], 260.0) - 340.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn the_foot_is_kept_only_while_the_sideways_bar_is_shown() {
+        assert!((foot(340.0, 260.0, 12.0) - 12.0).abs() < f32::EPSILON);
+        assert!(foot(260.0, 260.0, 12.0).abs() < f32::EPSILON);
     }
 
     #[test]

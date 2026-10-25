@@ -6800,6 +6800,7 @@ impl Shell {
         styles::scroll(EvenWidth::new(
             tree_view::ROW_GAP,
             viewport,
+            styles::SCROLLBAR_WIDTH,
             self.tree_list(),
         ))
         .width(Length::Fill)
