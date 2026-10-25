@@ -1102,7 +1102,8 @@ fn a_second_import_matches_by_citrix_id_and_keeps_what_the_user_changed() {
         (outcome.added, outcome.updated, outcome.unchanged),
         (0, 0, 2)
     );
-    // Excel's StoreFront moved and its published name changed: updated in place.
+    // The store moved (a cache file is one store, so both applications follow it) and
+    // Excel's published name changed: both updated in place.
     let moved = CLOUD_CACHE
         .replace("store.corp.lab", "store.new.lab")
         .replace("Excel 2024</FriendlyName>", "Excel 2025</FriendlyName>")
@@ -1110,7 +1111,7 @@ fn a_second_import_matches_by_citrix_id_and_keeps_what_the_user_changed() {
     let outcome = import(&mut app, &moved);
     assert_eq!(
         (outcome.added, outcome.updated, outcome.unchanged),
-        (0, 1, 1)
+        (0, 2, 0)
     );
 
     let profiles = saved(dir.path());
