@@ -3523,10 +3523,8 @@ impl Shell {
             }
             Message::ManageGateways => {
                 self.settings_section = SettingsSection::Gateways;
-                Task::batch([
-                    self.view_message(&Message::ShowSettings),
-                    self.rail_in_sight(),
-                ])
+                // ShowSettings brings the rail to the group of the section set.
+                self.view_message(&Message::ShowSettings)
             }
             Message::Navigate(destination) => {
                 self.menu = None;

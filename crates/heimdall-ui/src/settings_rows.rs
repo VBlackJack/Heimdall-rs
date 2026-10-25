@@ -231,12 +231,16 @@ impl SettingRow {
     #[must_use]
     pub fn applies(self) -> Option<Applies> {
         match self {
-            Self::PowerShellPolicy => Some(Applies::NewSessions),
+            Self::PowerShellPolicy
+            | Self::SessionLogging
+            | Self::SftpAutoOpen
+            | Self::DockLocalBrowser => Some(Applies::NewSessions),
             Self::SshAgentPreference
             | Self::KeepAlive
             | Self::PuttyPath
             | Self::RdpConnectTimeout
-            | Self::RdpKeepAlive => Some(Applies::NewConnections),
+            | Self::RdpKeepAlive
+            | Self::RdpBuiltinCompression => Some(Applies::NewConnections),
             _ => None,
         }
     }
@@ -1494,11 +1498,15 @@ mod tests {
             carrying,
             [
                 (SettingRow::PowerShellPolicy, Applies::NewSessions),
+                (SettingRow::SessionLogging, Applies::NewSessions),
                 (SettingRow::SshAgentPreference, Applies::NewConnections),
                 (SettingRow::KeepAlive, Applies::NewConnections),
                 (SettingRow::PuttyPath, Applies::NewConnections),
+                (SettingRow::SftpAutoOpen, Applies::NewSessions),
+                (SettingRow::DockLocalBrowser, Applies::NewSessions),
                 (SettingRow::RdpConnectTimeout, Applies::NewConnections),
                 (SettingRow::RdpKeepAlive, Applies::NewConnections),
+                (SettingRow::RdpBuiltinCompression, Applies::NewConnections),
             ]
         );
         // What is read while it runs applies at once: no glyph.
