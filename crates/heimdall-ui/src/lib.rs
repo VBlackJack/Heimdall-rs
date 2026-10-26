@@ -116,6 +116,7 @@ pub mod terminal_view;
 pub mod test_data;
 mod texts;
 pub mod themes;
+mod title_bar;
 pub mod tokens;
 pub mod tool_picker;
 pub mod tools;
