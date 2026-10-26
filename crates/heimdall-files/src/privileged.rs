@@ -137,10 +137,10 @@ macro_rules! probe_work_replace {
 }
 
 /// The probe of `stat` on its own, for the tests.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 const PROBE_HEAD: &str = probe_head!();
 /// The probes run in the work folder by the replace, for the tests.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 const PROBE_WORK_REPLACE: &str = probe_work_replace!();
 
 /// What the root side runs: `$1` the file, `$2` the SHA-256 its content must still have,
@@ -152,9 +152,9 @@ const REPLACE: &str = concat!(
     "command -v \"$t\" >/dev/null 2>&1 || { echo \"missing: $t\" >&2; exit 77; }; done; ",
     probe_head!(),
     "case \"$target\" in */*) dir=${target%/*}; [ -n \"$dir\" ] || dir=/ ;; *) dir=. ;; esac; ",
-    "work=$(mktemp -d -- \"$dir/.heimdall-write.XXXXXXXXXX\"); ",
-    "cleanup() { cd /; rm -f -- \"$work/original\" \"$work/payload\" \"$work/probe-a\" \"$work/probe-b\" \"$work/probe-c\" \"$work/probe-d\"; rmdir -- \"$work\" 2>/dev/null || :; }; ",
-    "trap cleanup EXIT HUP INT TERM; chmod 700 -- \"$work\"; cd -- \"$work\"; ",
+    "work=$(mktemp -d -- \"$dir/.heimdall-write.XXXXXXXXXX\"); entered=; ",
+    "cleanup() { [ -z \"$entered\" ] || rm -f -- original payload probe-a probe-b probe-c probe-d; cd /; rmdir -- \"$work\" 2>/dev/null || :; }; ",
+    "trap cleanup EXIT HUP INT TERM; chmod 700 -- \"$work\"; cd -- \"$work\"; entered=1; ",
     probe_work_replace!(),
     "ln -P -- \"$target\" original 2>/dev/null || exit 73; ",
     "if [ -L original ] || [ ! -f original ]; then exit 73; fi; ",
@@ -165,7 +165,8 @@ const REPLACE: &str = concat!(
     "cp --attributes-only --preserve=mode,ownership,xattr -- original payload || exit 76; ",
     "[ \"$(stat -c %s -- payload)\" = \"$size\" ] || exit 76; ",
     "if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled 2>/dev/null; then ",
-    "[ \"$(stat -c %C -- original)\" = \"$(stat -c %C -- payload)\" ] || exit 76; fi; ",
+    "label=$(stat -c %C -- original); case \"$label\" in \"\"|\"?\") exit 76;; esac; ",
+    "[ \"$label\" = \"$(stat -c %C -- payload)\" ] || exit 76; fi; ",
     "if command -v getfacl >/dev/null 2>&1; then ",
     "[ \"$(getfacl -cp -- original 2>/dev/null)\" = \"$(getfacl -cp -- payload 2>/dev/null)\" ] || exit 76; fi; ",
     "sync -f payload; ",
@@ -283,9 +284,9 @@ const READ: &str = concat!(
     "command -v \"$t\" >/dev/null 2>&1 || { echo \"missing: $t\" >&2; exit 77; }; done; ",
     probe_head!(),
     "case \"$target\" in */*) dir=${target%/*}; [ -n \"$dir\" ] || dir=/ ;; *) dir=. ;; esac; ",
-    "work=$(mktemp -d -- \"$dir/.heimdall-read.XXXXXXXXXX\"); ",
-    "cleanup() { cd /; rm -f -- \"$work/source\" \"$work/probe-a\" \"$work/probe-b\" \"$work/probe-c\" \"$work/probe-d\"; rmdir -- \"$work\" 2>/dev/null || :; }; ",
-    "trap cleanup EXIT HUP INT TERM; chmod 700 -- \"$work\"; cd -- \"$work\"; ",
+    "work=$(mktemp -d -- \"$dir/.heimdall-read.XXXXXXXXXX\"); entered=; ",
+    "cleanup() { [ -z \"$entered\" ] || rm -f -- source probe-a probe-b probe-c probe-d; cd /; rmdir -- \"$work\" 2>/dev/null || :; }; ",
+    "trap cleanup EXIT HUP INT TERM; chmod 700 -- \"$work\"; cd -- \"$work\"; entered=1; ",
     probe_work_read!(),
     "ln -P -- \"$target\" source 2>/dev/null || exit 73; ",
     "if [ -L source ] || [ ! -f source ]; then exit 73; fi; ",
@@ -550,7 +551,29 @@ esac"#;
         assert!(at("trap cleanup") < at("cd -- "));
         assert!(at("trap cleanup") < at("chmod 700"));
         assert!(at("stat -c %C") < at("mv -fT -- payload"));
+        assert!(REPLACE.contains(r#"case "$label" in ""|"?") exit 76;; esac"#));
         assert!(at("getfacl -cp") < at("mv -fT -- payload"));
         assert!(REPLACE.contains(r#"%C -- payload)" ] || exit 76"#));
+    }
+
+    /// The cleanup runs as root: it removes by relative name, and only once the work folder
+    /// was entered, never by a path that could be read from elsewhere.
+    #[test]
+    fn the_cleanup_removes_relative_names_only_once_entered() {
+        use super::{READ, REPLACE};
+        for script in [REPLACE, READ] {
+            let start = script.find("cleanup() {").expect("cleanup");
+            let body = &script[start..script[start..].find("}; ").map(|e| start + e).expect("end")];
+            assert!(body.contains(r#"[ -z "$entered" ] || rm -f -- "#), "{body}");
+            assert!(!body.contains("$work/"), "{body}");
+            assert!(
+                !body.contains(r#""$work""#) || body.contains("rmdir -- \"$work\""),
+                "{body}"
+            );
+            assert!(
+                script.find("entered=1").expect("set")
+                    > script.find("cd -- \"$work\"").expect("cd")
+            );
+        }
     }
 }
