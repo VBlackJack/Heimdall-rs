@@ -1708,6 +1708,7 @@ fn convert_rdp(
     let choices = RdpChoices::of(server, defaults);
     let (resolution, (fixed_width, fixed_height)) = resolution_of(server);
     Ok(RdpProfile {
+        remote_os: remote_os_of(server),
         id: ProfileId::new(server.id.clone()),
         name: if server.display_name.is_empty() {
             server.remote_server.clone()
@@ -1922,6 +1923,7 @@ fn convert_local(server: &LegacyServer) -> Result<LocalProfile, SkipReason> {
         return Err(SkipReason::UnsafeLocalCommand);
     }
     Ok(LocalProfile {
+        remote_os: remote_os_of(server),
         id: ProfileId::new(server.id.clone()),
         name: if server.display_name.is_empty() {
             program.clone().unwrap_or_else(|| server.id.clone())

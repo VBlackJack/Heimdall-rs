@@ -69,6 +69,7 @@ fn command(argument: &str) -> LocalCommand {
 
 fn profile(command: LocalCommand, approved: Option<LocalApproval>) -> LocalProfile {
     LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("tool"),
         name: "Tool".to_owned(),
         group: None,
@@ -304,6 +305,7 @@ fn an_imported_command_edited_and_saved_from_its_form_is_approved_as_the_csharp_
 fn a_saved_shell_is_told_what_it_was_opened_for_as_the_csharp_heimdall_variables() {
     let dir = tempfile::tempdir().expect("dir");
     let filed = LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         group: Some("Lab/Linux".to_owned()),
         ..profile(command("-x"), None)
     };

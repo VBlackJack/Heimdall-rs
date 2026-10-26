@@ -45,7 +45,7 @@ const LINE: f64 = themes::MIN_BOUNDARY_CONTRAST;
 
 /// The number of pairs one theme with one accent is checked on. Adding a pair to the walk
 /// changes it, on purpose: a walk that quietly checked less would fail the count.
-const PAIRS_PER_COMBINATION: usize = 355;
+const PAIRS_PER_COMBINATION: usize = 365;
 
 /// How far above its requirement a pair is still reported as a narrow pass.
 const NARROW: f64 = 0.15;
@@ -164,6 +164,9 @@ fn buttons() -> Vec<(&'static str, ButtonFn)> {
         ("rail item selected", Box::new(styles::rail_item(true))),
         ("session tab", Box::new(styles::tab(false))),
         ("session tab selected", Box::new(styles::tab(true))),
+        ("pill sub-tab", Box::new(styles::segment(false))),
+        ("pill sub-tab selected", Box::new(styles::segment(true))),
+        ("protocol card", Box::new(styles::protocol_card)),
         ("quick connect row", Box::new(styles::palette_row(false))),
         (
             "quick connect row chosen",

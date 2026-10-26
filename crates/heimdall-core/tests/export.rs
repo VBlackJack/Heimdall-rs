@@ -121,6 +121,8 @@ fn ssh() -> Vec<SshProfile> {
 fn rdp() -> Vec<RdpProfile> {
     vec![
         RdpProfile {
+            // An xrdp server: RDP reads as Windows unless said.
+            remote_os: heimdall_core::profile::RemoteOs::Linux,
             extras: heimdall_core::profile::RdpExtras::default(),
             id: ProfileId::new("dc"),
             name: "DC".to_owned(),
@@ -156,6 +158,7 @@ fn rdp() -> Vec<RdpProfile> {
             auto_reconnect: true,
         },
         RdpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             // What the built-in client does not do yet: kept through the C# document too.
             extras: heimdall_core::profile::RdpExtras {
                 external: true,
@@ -203,6 +206,8 @@ fn rdp() -> Vec<RdpProfile> {
 
 fn local(arguments: LocalArguments) -> LocalProfile {
     LocalProfile {
+        // A local shell reads as Windows; this one says so, which comes back as declared.
+        remote_os: heimdall_core::profile::RemoteOs::Windows,
         id: ProfileId::new("tool"),
         name: "Tool".to_owned(),
         group: Some("Tools".to_owned()),
@@ -619,5 +624,7 @@ fn the_far_end_os_is_written_by_name_only_when_declared() {
     assert_eq!(by_id("switch")["remoteOs"], "Linux");
     // Auto is what a C# file that omits the key reads as: nothing is written.
     assert!(by_id("files").get("remoteOs").is_none());
-    assert!(by_id("dc").get("remoteOs").is_none());
+    // RDP and a local shell carry it too, as the C# list is on their General tab.
+    assert_eq!(by_id("dc")["remoteOs"], "Linux");
+    assert_eq!(by_id("tool")["remoteOs"], "Windows");
 }

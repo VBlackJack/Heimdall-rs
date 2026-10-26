@@ -67,6 +67,7 @@ fn app(dir: &Path) -> App {
     ]);
     // A program of this computer: counted in its folder, never opened by "Connect all".
     store.merge_local([LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("tool"),
         name: "tool".to_owned(),
         group: Some("Prod".to_owned()),

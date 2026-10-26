@@ -315,6 +315,7 @@ fn an_unreadable_file_without_a_usable_copy_fails_as_before() {
 
 fn rdp(id: &str) -> RdpProfile {
     RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new(id),
         name: id.to_uppercase(),
@@ -467,6 +468,7 @@ fn vnc_profiles_read_back_with_their_options_and_are_removed_like_the_others() {
 
 fn local(id: &str, line: &str) -> LocalProfile {
     LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new(id),
         name: id.to_uppercase(),
         group: Some("Tools".to_owned()),
@@ -1294,6 +1296,7 @@ fn an_rdp_profile_keeps_what_the_built_in_client_does_not_use_and_its_metadata_i
     let path = dir.path().join(PROFILES_FILE_NAME);
     let mut store = ProfileStore::open(&path).expect("opens");
     let kept = RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         options: RdpOptions {
             resolution: Resolution::MultiMonitor,
             aspect: Aspect::UltraWide,
@@ -1704,6 +1707,40 @@ fn a_version_15_file_reads_with_no_far_end_os_and_a_declared_one_is_kept() {
     assert_eq!(back.remote_os_of(&ssh_id), RemoteOs::Windows);
     assert_eq!(back.remote_os_of(&telnet_id), RemoteOs::Linux);
     assert_eq!(back.remote_os_of(&ProfileId::new("none")), RemoteOs::Auto);
+}
+
+#[test]
+fn an_rdp_and_a_local_profile_keep_a_declared_far_end_os_in_the_file() {
+    use heimdall_core::profile::RemoteOs;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    let mut xrdp = rdp("x");
+    xrdp.remote_os = RemoteOs::Linux;
+    let plain = rdp("w");
+    let wsl = LocalProfile {
+        id: ProfileId::new("wsl"),
+        name: "WSL".to_owned(),
+        group: None,
+        command: LocalCommand::default(),
+        approved: None,
+        session_logging: None,
+        remote_os: RemoteOs::Linux,
+    };
+    store.merge_rdp([xrdp, plain]);
+    store.merge_local([wsl.clone()]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert_eq!(
+        text.matches("remote_os = \"linux\"").count(),
+        2,
+        "written for the two that declare it only: {text}"
+    );
+    let back = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(back.remote_os_of(&ProfileId::new("x")), RemoteOs::Linux);
+    assert_eq!(back.remote_os_of(&ProfileId::new("w")), RemoteOs::Auto);
+    assert_eq!(back.remote_os_of(&ProfileId::new("wsl")), RemoteOs::Linux);
+    assert_eq!(back.local_profiles()[0].remote_os, RemoteOs::Linux);
 }
 
 #[test]

@@ -67,6 +67,7 @@ fn settings() -> Settings {
 /// A saved profile running [`PROGRAM`] with an argument holding a right-to-left override.
 fn tool() -> LocalProfile {
     LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("tool"),
         name: "Build tool".to_owned(),
         group: Some("Tools".to_owned()),

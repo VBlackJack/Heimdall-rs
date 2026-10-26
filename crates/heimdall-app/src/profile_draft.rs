@@ -909,6 +909,7 @@ impl ProfileDraft {
             protocol: DraftProtocol::Local,
             protocol_chosen: true,
             session_logging: profile.session_logging,
+            remote_os: profile.remote_os,
             toggles: if profile.command.run_as_administrator {
                 vec![ProfileToggle::RunAsAdministrator]
             } else {
@@ -945,6 +946,7 @@ impl ProfileDraft {
             },
             approved: None,
             session_logging: self.session_logging,
+            remote_os: self.saved_remote_os(),
         }))
     }
 
@@ -994,6 +996,7 @@ impl ProfileDraft {
             remote_local_port: port_text(profile.forwards.remote_local_port),
             protocol: DraftProtocol::Rdp,
             protocol_chosen: true,
+            remote_os: profile.remote_os,
             toggles,
             rdp_options: profile.options,
             rdp_extras: profile.extras.clone(),
@@ -1663,13 +1666,19 @@ impl ProfileDraft {
 
     /// Whether the form offers the operating system of the far end: for the protocols that
     /// open a prompt a command can be typed at, and whose platform the protocol alone cannot
-    /// tell (SSH reads as Linux, which is wrong towards Windows OpenSSH; Telnet is anything).
+    /// tell (SSH reads as Linux, which is wrong towards Windows OpenSSH; Telnet is anything;
+    /// RDP reads as Windows, wrong towards xrdp; a local shell, wrong for WSL). The C# list
+    /// shows for every protocol; the others here open no prompt, so there is nothing for it
+    /// to decide.
     #[must_use]
     pub fn shows_remote_os(&self) -> bool {
-        matches!(self.protocol, DraftProtocol::Ssh | DraftProtocol::Telnet)
+        matches!(
+            self.protocol,
+            DraftProtocol::Ssh | DraftProtocol::Telnet | DraftProtocol::Rdp | DraftProtocol::Local
+        )
     }
 
-    /// The operating system saved: an SFTP profile opens no prompt and keeps `Auto`.
+    /// The operating system saved: a protocol that opens no prompt keeps `Auto`.
     fn saved_remote_os(&self) -> RemoteOs {
         if self.shows_remote_os() {
             self.remote_os
@@ -1856,6 +1865,7 @@ impl ProfileDraft {
                 allow_tls_only: !self.is_on(ProfileToggle::Nla),
                 gateway: self.routed_gateway(),
                 local_tunnel_port: self.saved_local_tunnel_port()?,
+                remote_os: self.saved_remote_os(),
                 redirect_clipboard: self.is_on(ProfileToggle::RedirectClipboard),
                 redirect_drives: self.is_on(ProfileToggle::RedirectDrives),
                 options: self.saved_rdp_options()?,
@@ -2871,11 +2881,42 @@ mod tests {
         );
 
         // A protocol that reaches no prompt offers nothing and keeps nothing.
-        for protocol in [DraftProtocol::Rdp, DraftProtocol::Vnc, DraftProtocol::Ftp] {
+        for protocol in [DraftProtocol::Vnc, DraftProtocol::Ftp] {
             let mut draft = ProfileDraft::new_for(protocol);
             draft.choose(ProfileChoice::RemoteOs(RemoteOs::Linux));
             assert!(!draft.shows_remote_os(), "{protocol:?}");
         }
+    }
+
+    #[test]
+    fn the_far_end_of_an_rdp_or_a_local_shell_round_trips() {
+        let mut rdp = ProfileDraft::new_for(DraftProtocol::Rdp);
+        rdp.set(ProfileField::Name, "xrdp".to_owned());
+        rdp.set(ProfileField::Host, "xrdp.lab".to_owned());
+        assert!(rdp.shows_remote_os());
+        let Ok(DraftProfile::Rdp(profile)) = rdp.to_saved(id()) else {
+            panic!("an RDP profile");
+        };
+        assert_eq!(profile.remote_os, RemoteOs::Auto, "nothing declared");
+        rdp.choose(ProfileChoice::RemoteOs(RemoteOs::Linux));
+        let Ok(DraftProfile::Rdp(profile)) = rdp.to_saved(id()) else {
+            panic!("an RDP profile");
+        };
+        assert_eq!(profile.remote_os, RemoteOs::Linux);
+        assert_eq!(ProfileDraft::from_rdp(&profile).remote_os, RemoteOs::Linux);
+
+        let mut local = ProfileDraft::new_for(DraftProtocol::Local);
+        local.set(ProfileField::Name, "wsl".to_owned());
+        assert!(local.shows_remote_os());
+        local.choose(ProfileChoice::RemoteOs(RemoteOs::Linux));
+        let Ok(DraftProfile::Local(profile)) = local.to_saved(id()) else {
+            panic!("a local profile");
+        };
+        assert_eq!(profile.remote_os, RemoteOs::Linux);
+        assert_eq!(
+            ProfileDraft::from_local(&profile).remote_os,
+            RemoteOs::Linux
+        );
     }
 
     #[test]
@@ -2947,6 +2988,7 @@ mod tests {
         use heimdall_core::metadata::ProfileOrigin;
 
         let saved = RdpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             extras: RdpExtras {
                 rd_gateway: Some("rdg.lab".to_owned()),
                 redirect_printers: true,
@@ -2989,6 +3031,7 @@ mod tests {
         assert_eq!(
             form.to_saved(id()),
             Ok(DraftProfile::Rdp(RdpProfile {
+                remote_os: heimdall_core::profile::RemoteOs::default(),
                 name: "Renamed".to_owned(),
                 ..saved
             }))
@@ -3170,6 +3213,7 @@ mod tests {
     #[test]
     fn every_protocol_reads_back_from_its_form() {
         let rdp = RdpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             extras: heimdall_core::profile::RdpExtras::default(),
             id: id(),
             name: "dc".to_owned(),
@@ -3199,6 +3243,7 @@ mod tests {
             Ok(DraftProfile::Rdp(rdp.clone()))
         );
         let nla = RdpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             allow_tls_only: false,
             redirect_clipboard: true,
             redirect_drives: false,

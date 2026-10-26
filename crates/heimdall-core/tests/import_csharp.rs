@@ -2406,6 +2406,23 @@ fn the_far_end_os_of_a_profile_is_read_by_name_or_number_and_defaults_to_auto() 
 }
 
 #[test]
+fn an_rdp_profile_and_a_local_shell_keep_their_far_end_os() {
+    use heimdall_core::profile::RemoteOs;
+    let report = import(
+        &servers(
+            r#"{"id": "r", "remoteServer": "xrdp.lab", "connectionType": "RDP", "remoteOs": "Linux"},
+               {"id": "r2", "remoteServer": "win.lab", "connectionType": "RDP"},
+               {"id": "l", "displayName": "WSL", "connectionType": "Local", "localShellExecutable": "wsl.exe", "remoteOs": 2}"#,
+        ),
+        None,
+    )
+    .expect("valid JSON");
+    assert_eq!(report.rdp[0].remote_os, RemoteOs::Linux);
+    assert_eq!(report.rdp[1].remote_os, RemoteOs::Auto, "an omitted key");
+    assert_eq!(report.local[0].remote_os, RemoteOs::Linux);
+}
+
+#[test]
 fn a_telnet_profile_keeps_its_far_end_os_and_an_sftp_one_has_none() {
     use heimdall_core::profile::RemoteOs;
     let report = import(

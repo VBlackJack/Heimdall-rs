@@ -74,6 +74,7 @@ fn tool() -> LocalProfile {
         run_as_administrator: false,
     };
     LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("tool"),
         name: "Tool".to_owned(),
         group: None,

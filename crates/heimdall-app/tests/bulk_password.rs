@@ -80,6 +80,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         ssh("bare", "bare.lab", 22, None),
     ]);
     store.merge_rdp([RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: id("rdp"),
         name: "dc".to_owned(),

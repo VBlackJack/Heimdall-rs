@@ -1218,6 +1218,96 @@ pub fn tab_headers(theme: &Theme) -> BoxStyle {
     }
 }
 
+/// A section of the session form, as the C# `DialogSectionCardStyle`
+/// (`DialogCommonStyles.xaml:52`): the card colour, rounded as `CornerRadiusXl`, outlined in
+/// the strong border.
+pub fn section_card(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.card)),
+        border: Border {
+            color: crate::themes::derived(theme, crate::themes::Derived::BorderStrong),
+            width: brushes.width,
+            radius: radius::XL.into(),
+        },
+        ..BoxStyle::default()
+    }
+}
+
+/// A node of the "Connection path" diagram, as the C# `DiagramNodeStyle`
+/// (`ServerDialog.xaml:140`): filled with the window's background, outlined in the border
+/// colour, rounded as `CornerRadiusLg`.
+pub fn diagram_node(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.surface)),
+        border: brushes.outline(brushes.edge, radius::LG),
+        ..BoxStyle::default()
+    }
+}
+
+/// The bar holding a form's pill sub-tabs, as the header of the C# `SegmentedTabControlStyle`
+/// (`CommonControls.xaml:1309`): the window's background, outlined in the border colour,
+/// rounded as `CornerRadiusMd`.
+pub fn segment_bar(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.surface)),
+        border: brushes.outline(brushes.edge, radius::MD),
+        ..BoxStyle::default()
+    }
+}
+
+/// A pill sub-tab, as the C# `SegmentedTabItemStyle` (`CommonControls.xaml:1340`): nothing
+/// behind it but under the pointer, the accent with the label on it once `selected`; its
+/// text secondary until the pointer is over it.
+pub fn segment(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
+    move |theme, status| {
+        let brushes = Brushes::of(theme);
+        let hovered = matches!(status, ButtonStatus::Hovered | ButtonStatus::Pressed);
+        let (background, text_color, edge) = if selected {
+            (
+                Some(brushes.accent),
+                brushes.label_on(brushes.accent),
+                brushes.accent,
+            )
+        } else if hovered {
+            (Some(brushes.highlight), brushes.text, brushes.edge)
+        } else {
+            (None, brushes.secondary_text, brushes.quiet_edge)
+        };
+        ButtonStyle {
+            background: background.map(Background::Color),
+            text_color,
+            border: brushes.outline(edge, radius::SM),
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
+/// A protocol's card in the picker, as the C# `ProtocolCardButtonStyle`
+/// (`ServerDialog.xaml:230`): the card colour with no border at rest, the window's
+/// background outlined in the accent under the pointer.
+pub fn protocol_card(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
+    let brushes = Brushes::of(theme);
+    let rest = ButtonStyle {
+        background: Some(Background::Color(brushes.card)),
+        text_color: brushes.text,
+        border: brushes.outline(brushes.quiet_edge, radius::XL),
+        shadow: Shadow::default(),
+        snap: true,
+    };
+    match status {
+        ButtonStatus::Active | ButtonStatus::Disabled => rest,
+        ButtonStatus::Hovered | ButtonStatus::Pressed => ButtonStyle {
+            background: Some(Background::Color(brushes.surface)),
+            border: brushes.outline(brushes.line, radius::XL),
+            ..rest
+        },
+    }
+}
+
 /// A box drawn as a field, as the C# breadcrumb takes the path box's look: a card outlined
 /// in the secondary text.
 pub fn field_box(theme: &Theme) -> BoxStyle {

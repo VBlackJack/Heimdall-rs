@@ -649,6 +649,7 @@ async fn rdp_vault(dir: &Path, domain: &str) -> App {
     }
     vault.save().expect("save");
     let rdp = |id: &str, allow_tls_only: bool| RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new(id),
         name: id.to_owned(),

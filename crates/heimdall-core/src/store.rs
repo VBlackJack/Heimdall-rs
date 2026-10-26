@@ -736,6 +736,18 @@ impl ProfileStore {
                     .find(|profile| &profile.id == id)
                     .map(|profile| profile.remote_os)
             })
+            .or_else(|| {
+                self.rdp
+                    .iter()
+                    .find(|profile| &profile.id == id)
+                    .map(|profile| profile.remote_os)
+            })
+            .or_else(|| {
+                self.local
+                    .iter()
+                    .find(|profile| &profile.id == id)
+                    .map(|profile| profile.remote_os)
+            })
             .unwrap_or_default()
     }
 

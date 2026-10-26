@@ -67,6 +67,7 @@ fn app(dir: &Path, tasks: Vec<ScheduledTask>) -> App {
     putty.ssh_mode = SshMode::External;
     store.merge([ssh("web", "web"), ssh("db", "db"), putty]);
     store.merge_local([LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("tool"),
         name: "Tool".to_owned(),
         group: None,

@@ -15,49 +15,61 @@
  */
 
 //! A local shell profile's form, as the C# cards: "Local shell" on the General tab, the
-//! executable (typed, or taken from the common shells) and its arguments, then "Advanced
+//! executable (one list that can be typed in, the common shells offered) and its arguments,
+//! then "Advanced
 //! shell options" on the Options tab, the folder it starts in and "Run as administrator".
 //! The C# elevation modes come down to that one box: a shell run as administrator opens in
 //! a window of its own, never in a tab.
 
 use heimdall_app::Message as AppMessage;
 use heimdall_app::elevated_shell;
-use heimdall_app::local_draft::SHELL_PRESETS;
 use heimdall_app::profile_draft::{ProfileDraft, ProfileField, ProfileToggle};
 use iced::Element;
-use iced::widget::{checkbox, column, pick_list, text};
+use iced::widget::{checkbox, column, combo_box, text};
 
 use crate::dialog_parts;
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
-use crate::tokens::{font_size, spacing};
+use crate::tokens::{INPUT_LINE_HEIGHT, INPUT_PADDING, font_size, spacing};
 
-/// The "Local shell" card of the General tab; `field` draws a field of the form as the
-/// other cards do.
+/// The "Local shell" card of the General tab: the executable in one list that can be typed
+/// in, as the C# editable combo (the common shells offered, any path allowed), `shells`
+/// holding what is typed; `field` draws the other fields of the form as the other cards do.
 pub fn basics<'a>(
     draft: &'a ProfileDraft,
+    shells: &'a combo_box::State<String>,
     field: impl Fn(ProfileField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let chosen = SHELL_PRESETS
-        .iter()
-        .find(|preset| **preset == draft.local_program.trim())
-        .copied();
+    let set = |value: String| {
+        Message::App(AppMessage::ProfileField {
+            field: ProfileField::LocalProgram,
+            value,
+        })
+    };
     column![
         dialog_parts::section(
             fl!("ui-profile-local-title"),
             Some(fl!("ui-profile-local-desc"))
         ),
-        field(ProfileField::LocalProgram),
-        pick_list(SHELL_PRESETS, chosen, |preset: &str| {
-            Message::App(AppMessage::ProfileField {
-                field: ProfileField::LocalProgram,
-                value: preset.to_owned(),
-            })
-        })
-        .style(styles::pick_list)
-        .menu_style(styles::menu)
-        .placeholder(fl!("ui-profile-local-presets")),
+        column![
+            dialog_parts::label(fl!("ui-profile-local-executable")),
+            combo_box(
+                shells,
+                &fl!("ui-profile-local-default-shell"),
+                Some(&draft.local_program),
+                set
+            )
+            .on_input(set)
+            .input_style(styles::text_input)
+            .menu_style(styles::menu)
+            .padding(INPUT_PADDING)
+            .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
+                INPUT_LINE_HEIGHT
+            )))
+            .width(iced::Length::Fill),
+        ]
+        .spacing(spacing::XS),
         field(ProfileField::LocalArguments),
     ]
     .spacing(spacing::MD)

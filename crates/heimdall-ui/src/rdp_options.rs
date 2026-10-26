@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-//! The RDP options of a profile's form, as the C# server dialog's RDP tabs in their order:
-//! "Display & Audio" (the audio mode beside the colour depth, then how the desktop is sized,
-//! the monitors spanned and the microphone), "Devices", "Performance" and "Behavior"; the RD
+//! The RDP options of a profile's form, as the C# server dialog's RDP pill sub-tabs in their
+//! order: "Display & Audio" (the audio mode beside the colour depth, then how the desktop is
+//! sized, the monitors spanned and the microphone), "Devices", "Performance" and "Behavior",
+//! each drawn without a heading of its own, the sub-tab's name being it; the RD
 //! Gateway, which the C# asks on its Network tab; and the application's RDP options on the
 //! settings page.
 //!
@@ -142,11 +143,6 @@ fn opens_in_tab(draft: &ProfileDraft) -> bool {
     !draft.rdp_extras.external && draft.rd_gateway.trim().is_empty()
 }
 
-/// A group of the options, named as the C# names its tab.
-fn group<'a>(title: String) -> Element<'a, Message> {
-    crate::dialog_parts::section(title, None)
-}
-
 /// A part of a group, named as the C# labels it.
 fn part<'a>(title: String) -> Element<'a, Message> {
     text(title).size(font_size::CAPTION).into()
@@ -260,14 +256,11 @@ pub fn display_audio<'a>(
     monitors: &[Monitor],
     field: impl Fn(ProfileField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    column![
-        group(fl!("ui-profile-rdp-tab-display-audio")),
-        view(draft.rdp_options, following(draft)),
-    ]
-    .extend(local_playback_note(draft.rdp_options.audio).filter(|_| opens_in_tab(draft)))
-    .push(resolution(draft, monitors, field))
-    .spacing(spacing::SM)
-    .into()
+    column![view(draft.rdp_options, following(draft))]
+        .extend(local_playback_note(draft.rdp_options.audio).filter(|_| opens_in_tab(draft)))
+        .push(resolution(draft, monitors, field))
+        .spacing(spacing::SM)
+        .into()
 }
 
 /// Under the audio list, while it says Local playback, that this build plays no sound:
@@ -287,7 +280,6 @@ fn local_playback_note<'a>(audio: AudioPlayback) -> Option<Element<'a, Message>>
 pub fn devices<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
     let locked = following(draft);
     let mut tab = column![
-        group(fl!("ui-profile-rdp-tab-devices")),
         toggle_box(
             draft,
             ProfileToggle::RedirectClipboard,
@@ -320,7 +312,6 @@ pub fn devices<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
 pub fn performance<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
     let locked = following(draft);
     column![
-        group(fl!("ui-profile-rdp-tab-performance")),
         part(fl!("ui-profile-rdp-connection-section")),
         toggle_box(
             draft,
@@ -350,7 +341,6 @@ pub fn performance<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
 pub fn behavior<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
     let locked = following(draft);
     column![
-        group(fl!("ui-profile-rdp-tab-behavior")),
         part(fl!("ui-profile-rdp-security-section")),
         toggle_box(
             draft,

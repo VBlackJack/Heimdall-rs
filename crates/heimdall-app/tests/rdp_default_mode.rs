@@ -33,6 +33,7 @@ use heimdall_term::GridSize;
 
 fn profile(id: &str, mode: RdpMode) -> RdpProfile {
     RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: RdpExtras {
             external: mode.is_external(),
             ..RdpExtras::default()

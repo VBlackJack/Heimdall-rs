@@ -1346,6 +1346,7 @@ fn the_default_rdp_mode_is_chosen_found_reset_and_applied_to_all_once_asked() {
     let dir = tempfile::tempdir().expect("dir");
     let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
     store.merge_rdp([RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "dc".to_owned(),

@@ -25,7 +25,7 @@ use heimdall_app::profile_draft::{DraftProtocol, ProfileField, ProfileToggle};
 use heimdall_app::{App, AppConfig, Message as AppMessage};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, ProfileTab, Shell, tree_add_id};
+use heimdall_ui::shell::{Message, ProfileTab, RdpSubTab, Shell, tree_add_id};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::tree_view::TreeMenu;
 use iced::{Settings, Size};
@@ -97,6 +97,11 @@ fn app(message: AppMessage) -> Message {
 /// Shows a tab of the profile form, as a click on its header does.
 fn show(shell: &mut Shell, tab: ProfileTab) {
     let _ = shell.update(Message::ProfileTab(tab));
+}
+
+/// Shows a pill sub-tab of the RDP options, as a click on it does.
+fn show_rdp(shell: &mut Shell, tab: RdpSubTab) {
+    let _ = shell.update(Message::RdpSubTab(tab));
 }
 
 #[test]
@@ -280,7 +285,7 @@ fn the_rdp_and_winrm_forms_show_the_csharp_cards() {
     {
         let mut ui = tall_simulator(&shell);
         for label in [
-            "Remote Desktop",
+            "RDP",
             "Remote RDP port",
             "RDP credentials",
             "Windows domain",
@@ -293,15 +298,14 @@ fn the_rdp_and_winrm_forms_show_the_csharp_cards() {
     show(&mut shell, ProfileTab::Options);
     {
         let mut ui = tall_simulator(&shell);
-        for label in [
-            "RDP session options",
-            "Redirect clipboard",
-            "Enable Network Level Authentication",
-        ] {
-            ui.find(label).expect(label);
-        }
+        ui.find("RDP session options").expect("its card");
     }
     // The box is the global defaults' while the new form follows them.
+    show_rdp(&mut shell, RdpSubTab::Devices);
+    tall_simulator(&shell)
+        .find("Redirect clipboard")
+        .expect("on the Devices sub-tab");
+    show_rdp(&mut shell, RdpSubTab::Behavior);
     let _ = shell.update(app(AppMessage::ProfileToggle {
         toggle: ProfileToggle::FollowDefaults,
         on: false,
@@ -381,13 +385,12 @@ fn the_rdp_form_offers_the_sound_colours_and_administrative_session() {
     show(&mut shell, ProfileTab::Options);
     let mut ui = tall_simulator(&shell);
     // The lists themselves are tested in `rdp_options`: their value is not a text to find.
-    for label in [
-        "Audio mode",
-        "Color depth",
-        "Run as administrator session (/admin)",
-    ] {
+    for label in ["Audio mode", "Color depth"] {
         ui.find(label).expect(label);
     }
+    drop(ui);
+    show_rdp(&mut shell, RdpSubTab::Behavior);
+    let mut ui = tall_simulator(&shell);
     common::reveal(&mut ui, "Run as administrator session (/admin)");
     ui.click("Run as administrator session (/admin)")
         .expect("admin box");
@@ -739,13 +742,7 @@ fn a_local_form_asks_for_a_program_and_its_folder_not_a_server() {
     snapshot(&shell, "profile-local.png");
     {
         let mut ui = tall_simulator(&shell);
-        for label in [
-            "Local Shell",
-            "Local shell",
-            "Executable",
-            "The default shell",
-            "Arguments",
-        ] {
+        for label in ["Local", "Local shell", "Executable", "Arguments"] {
             ui.find(label).expect(label);
         }
         ui.find("Name the session as the tree lists it.")
@@ -803,6 +800,7 @@ fn the_ssh_key_is_browsed_for_and_the_folder_separator_is_taught_as_the_csharp_f
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
     {
         let mut ui = tall_simulator(&shell);
+        common::reveal(&mut ui, "Browse...");
         ui.click("Browse...").expect("the button beside the key");
         assert!(
             ui.into_messages()
@@ -838,6 +836,7 @@ fn a_new_rdp_form_follows_the_global_defaults_and_says_its_own_options_are_not_i
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
     show(&mut shell, ProfileTab::Options);
+    show_rdp(&mut shell, RdpSubTab::Devices);
     {
         let mut ui = tall_simulator(&shell);
         ui.find("This server is using your global RDP defaults. Uncheck \"Use global RDP defaults\" to set per-server options.")
@@ -910,6 +909,7 @@ fn the_rdp_form_groups_its_options_as_the_csharp_tabs_and_asks_the_rd_gateway_la
         }
     };
     show(&mut shell, ProfileTab::Options);
+    // Each sub-tab of the C# pills, its boxes in the C# order.
     in_order(
         &shell,
         &[
@@ -923,6 +923,12 @@ fn the_rdp_form_groups_its_options_as_the_csharp_tabs_and_asks_the_rd_gateway_la
             "Allow dynamic resolution updates",
             "Audio",
             "Capture local microphone",
+        ],
+    );
+    show_rdp(&mut shell, RdpSubTab::Devices);
+    in_order(
+        &shell,
+        &[
             "Devices",
             "Redirect clipboard",
             "Redirect drives",
@@ -931,6 +937,12 @@ fn the_rdp_form_groups_its_options_as_the_csharp_tabs_and_asks_the_rd_gateway_la
             "Redirect smart cards",
             "Redirect webcam",
             "Redirect USB devices",
+        ],
+    );
+    show_rdp(&mut shell, RdpSubTab::Performance);
+    in_order(
+        &shell,
+        &[
             "Performance",
             "Connection",
             "Enable anti-idle keepalive",
@@ -940,6 +952,12 @@ fn the_rdp_form_groups_its_options_as_the_csharp_tabs_and_asks_the_rd_gateway_la
             "Automatically reconnect",
             "Visual experience",
             "Avoid UDP transport probing",
+        ],
+    );
+    show_rdp(&mut shell, RdpSubTab::Behavior);
+    in_order(
+        &shell,
+        &[
             "Behavior",
             "Security",
             "Enable Network Level Authentication",
@@ -1297,6 +1315,7 @@ fn hardware_acceleration_is_kept_and_said_not_supported_yet_in_either_session_mo
         on: false,
     }));
     show(&mut shell, ProfileTab::Options);
+    show_rdp(&mut shell, RdpSubTab::Performance);
     for external in [false, true] {
         let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::External(
             external,
@@ -1607,4 +1626,124 @@ fn a_form_field_is_as_tall_as_the_csharp_text_box() {
         "the field is {} px high",
         host.height
     );
+}
+
+#[test]
+fn the_rdp_options_are_pill_sub_tabs_each_showing_only_its_own_boxes() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    show(&mut shell, ProfileTab::Options);
+    // The C# order: the session logging card first, then the RDP options with their pills.
+    snapshot(&shell, "profile-rdp-options.png");
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in [
+            "RDP session options",
+            "Display & Audio",
+            "Devices",
+            "Performance",
+            "Behavior",
+            "Audio mode",
+        ] {
+            ui.find(label).expect(label);
+        }
+        for other in ["Redirect clipboard", "Enable anti-idle keepalive"] {
+            assert!(ui.find(other).is_err(), "{other} is on another sub-tab");
+        }
+    }
+    // A click on a pill sends its sub-tab.
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.click("Devices").expect("the Devices pill");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::RdpSubTab(RdpSubTab::Devices)))
+        );
+    }
+    for (tab, shown, hidden) in [
+        (RdpSubTab::Devices, "Redirect clipboard", "Audio mode"),
+        (
+            RdpSubTab::Performance,
+            "Enable anti-idle keepalive",
+            "Redirect clipboard",
+        ),
+        (
+            RdpSubTab::Behavior,
+            "Enable Network Level Authentication",
+            "Enable anti-idle keepalive",
+        ),
+        (RdpSubTab::DisplayAudio, "Audio mode", "Redirect clipboard"),
+    ] {
+        show_rdp(&mut shell, tab);
+        let mut ui = tall_simulator(&shell);
+        ui.find(shown).expect(shown);
+        assert!(ui.find(hidden).is_err(), "{hidden} under {tab:?}");
+    }
+    // The form opens again on the first sub-tab.
+    show_rdp(&mut shell, RdpSubTab::Behavior);
+    let _ = shell.update(app(AppMessage::DismissDialog));
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    show(&mut shell, ProfileTab::Options);
+    let mut ui = tall_simulator(&shell);
+    ui.find("Audio mode").expect("back on Display & Audio");
+}
+
+#[test]
+fn the_far_end_list_is_on_the_general_tab_of_rdp_and_a_local_shell_as_in_the_csharp_dialog() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    for (protocol, offered) in [
+        (DraftProtocol::Rdp, true),
+        (DraftProtocol::Local, true),
+        (DraftProtocol::Ssh, true),
+        (DraftProtocol::Telnet, true),
+        (DraftProtocol::Vnc, false),
+        (DraftProtocol::Ftp, false),
+    ] {
+        let _ = shell.update(app(AppMessage::NewProfile));
+        let _ = shell.update(app(AppMessage::ChooseProtocol(protocol)));
+        let mut ui = tall_simulator(&shell);
+        assert_eq!(
+            ui.find("Operating system of the far end").is_ok(),
+            offered,
+            "{protocol:?}"
+        );
+    }
+}
+
+#[test]
+fn the_protocol_picker_has_a_save_that_waits_for_a_protocol() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let mut ui = simulator(&shell);
+    ui.find("Save").expect("the C# dialog shows Save at once");
+    ui.click("Save").expect("drawn");
+    assert!(
+        !ui.into_messages()
+            .any(|message| matches!(message, Message::SaveProfileForm)),
+        "nothing is saved before a protocol is chosen"
+    );
+}
+
+#[test]
+fn the_info_tab_names_the_favorite_mark_beside_the_environment_and_the_badge_says_rdp() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("RDP")
+            .expect("the C# connection type, not Remote Desktop");
+    }
+    show(&mut shell, ProfileTab::Info);
+    snapshot(&shell, "profile-info.png");
+    let mut ui = tall_simulator(&shell);
+    for label in ["Environment", "Favorite", "Mark as favorite"] {
+        ui.find(label).expect(label);
+    }
 }

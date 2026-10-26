@@ -69,6 +69,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     store.merge([web()]);
     store.merge_rdp([RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: id("rdp"),
         name: "dc".to_owned(),
@@ -114,6 +115,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
     // The default shell.
     let command = LocalCommand::default();
     store.merge_local([LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: id("local"),
         name: "shell".to_owned(),
         group: None,

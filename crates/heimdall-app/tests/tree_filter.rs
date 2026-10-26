@@ -70,6 +70,7 @@ fn app(dir: &Path) -> App {
         ssh("dev", "Dev", None),
     ]);
     store.merge_rdp([RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "dc".to_owned(),

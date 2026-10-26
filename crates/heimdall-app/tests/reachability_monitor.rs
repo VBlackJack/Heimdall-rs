@@ -56,6 +56,7 @@ fn app(dir: &Path) -> App {
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     store.merge([ssh("web", None), ssh("db", Some("bastion"))]);
     store.merge_local([LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("tool"),
         name: "tool".to_owned(),
         group: None,

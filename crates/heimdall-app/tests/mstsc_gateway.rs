@@ -72,6 +72,7 @@ async fn lab() -> Lab {
 
 fn rdp_profile(host: &str, port: u16, gateway: Option<&str>) -> RdpProfile {
     RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: RdpExtras {
             external: true,
             ..RdpExtras::default()

@@ -1294,6 +1294,7 @@ fn rdp_profile(
     rd_gateway: Option<&str>,
 ) -> RdpProfile {
     RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: RdpExtras {
             rd_gateway: rd_gateway.map(str::to_owned),
             ..RdpExtras::default()

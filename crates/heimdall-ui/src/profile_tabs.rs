@@ -103,9 +103,54 @@ impl ProfileTab {
     }
 }
 
+/// A pill sub-tab of the RDP options, as the C# `SegmentedTabControlStyle` of the Options
+/// tab: Display & Audio, Devices, Performance, Behavior.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RdpSubTab {
+    /// The audio mode, colour depth, resolution and monitors.
+    #[default]
+    DisplayAudio,
+    /// What this computer shares with the server.
+    Devices,
+    /// The connection's boxes, the visual experience and UDP.
+    Performance,
+    /// The security boxes, the administrative session and full screen.
+    Behavior,
+}
+
+impl RdpSubTab {
+    /// The sub-tabs, in the C# order.
+    pub const ALL: [Self; 4] = [
+        Self::DisplayAudio,
+        Self::Devices,
+        Self::Performance,
+        Self::Behavior,
+    ];
+
+    /// Its name, as the C# sub-tab's header.
+    #[must_use]
+    pub fn label(self) -> String {
+        match self {
+            Self::DisplayAudio => fl!("ui-profile-rdp-tab-display-audio"),
+            Self::Devices => fl!("ui-profile-rdp-tab-devices"),
+            Self::Performance => fl!("ui-profile-rdp-tab-performance"),
+            Self::Behavior => fl!("ui-profile-rdp-tab-behavior"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_rdp_sub_tabs_are_the_csharp_four_in_order_each_with_a_name() {
+        assert_eq!(RdpSubTab::ALL.len(), 4);
+        assert_eq!(RdpSubTab::default(), RdpSubTab::DisplayAudio);
+        let labels: std::collections::HashSet<String> =
+            RdpSubTab::ALL.iter().map(|tab| tab.label()).collect();
+        assert_eq!(labels.len(), 4, "each sub-tab has a name of its own");
+    }
 
     #[test]
     fn network_is_a_tab_only_of_the_protocols_a_gateway_routes() {

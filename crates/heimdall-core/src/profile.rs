@@ -443,6 +443,10 @@ pub struct RdpProfile {
     /// its name, as the C# `VaultEntryName`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault_entry: Option<String>,
+    /// The operating system of the far end, as the C# `RemoteOs`: `Auto` reads an RDP server
+    /// as Windows, which a Linux server running xrdp is not; written down only when declared.
+    #[serde(default, skip_serializing_if = "RemoteOs::is_auto")]
+    pub remote_os: RemoteOs,
     /// Ports this computer opens through the gateway while the session runs.
     #[serde(default, flatten)]
     pub forwards: Forwards,
@@ -1673,6 +1677,10 @@ pub struct LocalProfile {
     /// follows the Settings page's session logging, `Some` decides for this profile alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_logging: Option<bool>,
+    /// The operating system the shell reaches, as the C# `RemoteOs`: `Auto` reads a local
+    /// shell as Windows, which a WSL or a Git Bash shell is not; written down only when declared.
+    #[serde(default, skip_serializing_if = "RemoteOs::is_auto")]
+    pub remote_os: RemoteOs,
 }
 
 impl LocalProfile {
@@ -1723,6 +1731,7 @@ mod tests {
 
     fn profile(command: LocalCommand, approved: Option<LocalApproval>) -> LocalProfile {
         LocalProfile {
+            remote_os: crate::profile::RemoteOs::default(),
             id: ProfileId::new("p"),
             name: "P".to_owned(),
             group: None,

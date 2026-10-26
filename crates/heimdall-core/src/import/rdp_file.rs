@@ -341,6 +341,7 @@ impl Patch {
     #[must_use]
     pub fn new_profile(&self, id: ProfileId, name: String) -> RdpProfile {
         let mut profile = RdpProfile {
+            remote_os: crate::profile::RemoteOs::default(),
             extras: crate::profile::RdpExtras::default(),
             id,
             name,

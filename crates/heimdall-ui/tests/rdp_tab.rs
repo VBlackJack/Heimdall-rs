@@ -51,6 +51,7 @@ fn app_with(dir: &Path, options: heimdall_core::profile::RdpOptions) -> App {
 /// The RDP profile "dc", given `options`.
 fn profile(options: heimdall_core::profile::RdpOptions) -> RdpProfile {
     RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "Domain controller".to_owned(),
@@ -732,6 +733,7 @@ fn the_anti_idle_badge_shows_while_the_keys_go_and_its_click_stops_them() {
     let mut core = app_of(
         dir.path(),
         RdpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             anti_idle: true,
             ..profile(heimdall_core::profile::RdpOptions::default())
         },
@@ -1496,6 +1498,7 @@ fn a_session_sharing_its_drives_and_sound_shows_both() {
     let mut core = app_of(
         dir.path(),
         RdpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             redirect_clipboard: false,
             redirect_drives: true,
             ..profile(heimdall_core::profile::RdpOptions {
@@ -1547,6 +1550,7 @@ fn the_error_report_says_the_route_and_how_long_the_session_lasted_the_anonymize
     let mut core = app_of(
         dir.path(),
         RdpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             gateway: Some(ProfileId::new("edge")),
             // The failure stays on the card, no attempt chained.
             auto_reconnect: false,
@@ -1718,6 +1722,7 @@ fn failed_with(dir: &Path, error: UiError) -> (Shell, TabId) {
     let mut core = app_of(
         dir,
         RdpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             auto_reconnect: false,
             ..profile(heimdall_core::profile::RdpOptions::default())
         },
@@ -2043,6 +2048,7 @@ fn the_desktop_header_shows_the_redirections_not_shared_behind_their_badge() {
     snapshot(&shell, "rdp-redirections.png");
 
     let listed = heimdall_ui::rdp_status::redirections(&RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras {
             redirect_printers: true,
             ..heimdall_core::profile::RdpExtras::default()
