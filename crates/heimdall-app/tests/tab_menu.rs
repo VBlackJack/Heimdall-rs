@@ -194,11 +194,15 @@ fn a_tab_takes_the_name_typed_and_gives_it_back_when_emptied() {
         ConnectionEvent::Output(b"\x1b]0;shell title\x07".to_vec()),
     );
     let renamed = app.tab(tab).expect("tab");
-    assert_eq!(renamed.title, "shell title");
+    assert_eq!(
+        renamed.title, "server a",
+        "the terminal title never renames"
+    );
+    assert_eq!(renamed.terminal_title, "shell title");
     assert_eq!(renamed.display_title(), "prod db");
 
     menu(&mut app, TabMenuMessage::ResetTitle(tab));
-    assert_eq!(app.tab(tab).expect("tab").display_title(), "shell title");
+    assert_eq!(app.tab(tab).expect("tab").display_title(), "server a");
 
     menu(&mut app, TabMenuMessage::Rename(tab));
     menu(&mut app, TabMenuMessage::NameEdited("x".to_owned()));
