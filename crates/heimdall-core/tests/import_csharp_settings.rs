@@ -127,7 +127,7 @@ fn the_preferences_the_csharp_user_changed_are_laid_over_the_settings() {
 fn a_value_at_the_csharp_default_says_nothing_of_the_user() {
     // What the C# writes for a user who never changed them: the defaults of `AppSettings`.
     let read = read(&settings_json(
-        r#""defaultTheme": "Drakul", "defaultLocale": "en", "terminalFontFamily": "Consolas",
+        r#""defaultLocale": "en", "terminalFontFamily": "Consolas",
            "terminalFontSize": 14, "terminalColorScheme": "Dracula",
            "externalEditorPath": "%windir%\\system32\\notepad.exe",
            "sessionLogDirectory": "logs\\sessions", "rdpConnectWatchdogTimeoutMs": 45000,
@@ -137,6 +137,23 @@ fn a_value_at_the_csharp_default_says_nothing_of_the_user() {
     ));
     assert_eq!(read.rows, [], "nothing to say");
     assert_eq!(read.settings, Settings::default());
+}
+
+#[test]
+fn a_csharp_theme_is_kept_even_drakul_and_a_missing_one_is_magellan() {
+    let drakul = read(&settings_json(r#""defaultTheme": "Drakul""#));
+    assert_eq!(
+        drakul.settings.theme,
+        AppTheme::Drakul,
+        "the C# default is a choice kept here: ours is Magellan"
+    );
+    assert_eq!(
+        outcome(&drakul, "DefaultTheme"),
+        Some(PreferenceOutcome::Taken)
+    );
+    let missing = read(&settings_json(r#""terminalFontSize": 18"#));
+    assert_eq!(missing.settings.theme, AppTheme::Magellan);
+    assert_eq!(outcome(&missing, "DefaultTheme"), None);
 }
 
 #[test]

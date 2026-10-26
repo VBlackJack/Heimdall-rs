@@ -514,3 +514,35 @@ fn a_command_is_previewed_on_one_line_and_cut_at_the_limit() {
     let accented = "\u{e9}".repeat(PREVIEW_MAX_CHARS + 1);
     assert!(command_preview(&accented).ends_with("..."));
 }
+
+/// The separator of a Windows path.
+const BACKSLASH: char = '\\';
+
+/// The list `build.rs` generates, as written into the build folder.
+const GENERATED_LIST: &str = include_str!(concat!(env!("OUT_DIR"), "/command_catalogue_files.rs"));
+
+#[test]
+fn generated_file_list_holds_no_absolute_path() {
+    // A build folder shared between checkouts reuses this file: an absolute path in it
+    // points at a folder that may no longer exist (527 read errors on 2026-10-25).
+    let mut entries = 0;
+    for line in GENERATED_LIST
+        .lines()
+        .filter(|line| line.contains("include_str!"))
+    {
+        entries += 1;
+        assert!(
+            line.contains("env!(\"CARGO_MANIFEST_DIR\")"),
+            "not resolved from the manifest folder: {line}"
+        );
+        assert!(
+            !line.contains(":/") && !line.contains(BACKSLASH),
+            "absolute path: {line}"
+        );
+        assert!(
+            !line.contains("\"/home") && !line.contains("\"/mnt"),
+            "absolute path: {line}"
+        );
+    }
+    assert_eq!(entries, CATALOGUE_FILES.len());
+}

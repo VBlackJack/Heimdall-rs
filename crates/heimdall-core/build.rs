@@ -21,16 +21,13 @@
 
 use std::fmt::Write as _;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The catalogue's folder, under the crate.
 const CATALOGUE_FOLDER: &str = "data/command-catalogue/actions";
 
 /// The extension of an action file.
 const ACTION_EXTENSION: &str = "json";
-
-/// The separator of a Windows path.
-const BACKSLASH: char = '\\';
 
 /// The file written into the build folder.
 const OUTPUT_FILE: &str = "command_catalogue_files.rs";
@@ -43,7 +40,7 @@ fn main() {
     );
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets the output folder"));
     let folder = manifest.join(CATALOGUE_FOLDER);
-    let mut files: Vec<PathBuf> = fs::read_dir(&folder)
+    let mut names: Vec<String> = fs::read_dir(&folder)
         .expect("the catalogue folder is part of the crate")
         .filter_map(Result::ok)
         // Regular files only: a link or a folder named like an action is not one.
@@ -53,19 +50,24 @@ fn main() {
             path.extension()
                 .is_some_and(|extension| extension == ACTION_EXTENSION)
         })
+        .filter_map(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
         .collect();
     // A fixed order: the same source builds the same binary.
-    files.sort();
+    names.sort();
     let mut source = String::from("&[\n");
-    for path in &files {
-        writeln!(source, "    include_str!({:?}),", slashed(path))
-            .expect("writing to a string cannot fail");
+    // Paths stay relative to the crate and are resolved by the compiler from the current
+    // manifest folder: the generated file is identical in every checkout, so a build folder
+    // shared between worktrees never points at a folder that no longer exists.
+    for name in &names {
+        writeln!(
+            source,
+            "    include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/{CATALOGUE_FOLDER}/{name}\")),"
+        )
+        .expect("writing to a string cannot fail");
     }
     source.push_str("]\n");
     fs::write(out.join(OUTPUT_FILE), source).expect("the build folder is writable");
-}
-
-/// `path` with forward slashes, which every platform's compiler reads.
-fn slashed(path: &Path) -> String {
-    path.to_string_lossy().replace(BACKSLASH, "/")
 }

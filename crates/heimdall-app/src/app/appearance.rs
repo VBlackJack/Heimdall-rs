@@ -22,19 +22,19 @@ use std::path::PathBuf;
 use heimdall_core::import::citrix_cache;
 use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
 use heimdall_core::settings::{
-    Accent, AppTheme, ColorScheme, Language, Settings, anti_idle_interval_accepted,
-    auto_lock_idle_minutes_accepted, max_sessions_accepted, rdp_auto_reconnect_attempts_accepted,
-    rdp_connect_timeout_accepted, rdp_default_resolution_accepted,
-    rdp_keep_alive_interval_accepted, rdp_resize_enable_delay_accepted,
-    reachability_interval_accepted, reachability_probes_accepted, reachability_timeout_accepted,
-    reconnect_delay_accepted, session_log_retention_days_accepted, settings_path,
-    ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
+    Accent, AppTheme, ColorScheme, Language, Settings, TerminalMinimumContrast,
+    anti_idle_interval_accepted, auto_lock_idle_minutes_accepted, max_sessions_accepted,
+    rdp_auto_reconnect_attempts_accepted, rdp_connect_timeout_accepted,
+    rdp_default_resolution_accepted, rdp_keep_alive_interval_accepted,
+    rdp_resize_enable_delay_accepted, reachability_interval_accepted, reachability_probes_accepted,
+    reachability_timeout_accepted, reconnect_delay_accepted, session_log_retention_days_accepted,
+    settings_path, ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
     ssh_tmout_reset_interval_accepted, terminal_font_family, terminal_font_size_accepted,
     update_interval_accepted, windows_hello_grace_minutes_accepted,
     windows_hello_vault_max_days_accepted,
 };
 use heimdall_core::store::ProfileStore;
-use heimdall_term::Palette;
+use heimdall_term::{MinimumContrast, Palette};
 
 use super::{App, AppConfig, Dialog, Effect, RECOVERY_EXTENSION, TrustedKeysMessage};
 
@@ -43,6 +43,8 @@ use super::{App, AppConfig, Dialog, Effect, RECOVERY_EXTENSION, TrustedKeysMessa
 pub enum SettingsMessage {
     /// The terminals' colours.
     ColorScheme(ColorScheme),
+    /// How much contrast terminal text keeps against its background.
+    TerminalMinimumContrast(TerminalMinimumContrast),
     /// Session logging on or off.
     SessionLogging(bool),
     /// The folder transcripts go to.
@@ -212,6 +214,12 @@ pub fn palette(scheme: ColorScheme) -> Palette {
     }
 }
 
+/// The colours of `scheme`, text kept at least `contrast` against its background.
+#[must_use]
+pub fn palette_with_contrast(scheme: ColorScheme, contrast: TerminalMinimumContrast) -> Palette {
+    palette(scheme).with_minimum_contrast(contrast.tenths().map(MinimumContrast::from_tenths))
+}
+
 /// The settings beside the profiles of `config`, the file they are saved to, and the
 /// dialog to show at start: `dialog`, or else the reason the settings could not be read, or
 /// else the files of `store` and the settings read from their last good copy, as the C# says
@@ -257,7 +265,10 @@ impl App {
 
     /// The colours a new terminal draws with.
     pub(super) fn terminal_palette(&self) -> Palette {
-        palette(self.settings.color_scheme)
+        palette_with_contrast(
+            self.settings.color_scheme,
+            self.settings.terminal_minimum_contrast,
+        )
     }
 
     /// A settings change: applied as [`App::apply_settings`] says, once agreed to when it
@@ -551,12 +562,15 @@ impl App {
     }
 
     /// Applies `message` and saves the settings; one that cannot be saved is said and not
-    /// applied. A colour scheme colours the terminals open too.
+    /// applied. A colour scheme or a minimum contrast colours the terminals open too.
     #[expect(clippy::too_many_lines, reason = "one arm per setting")]
     fn apply_settings(&mut self, message: &SettingsMessage) -> Vec<Effect> {
         let before = self.settings.clone();
         match message {
             SettingsMessage::ColorScheme(scheme) => self.settings.color_scheme = *scheme,
+            SettingsMessage::TerminalMinimumContrast(contrast) => {
+                self.settings.terminal_minimum_contrast = *contrast;
+            }
             SettingsMessage::SessionLogging(on) => self.settings.session_logging = *on,
             SettingsMessage::SessionLogDirectory(_)
             | SettingsMessage::ExternalEditor(_)
@@ -696,7 +710,7 @@ impl App {
             self.dialog = Some(Dialog::save_failed(&error));
             return Vec::new();
         }
-        let palette = palette(self.settings.color_scheme);
+        let palette = self.terminal_palette();
         for tab in &mut self.tabs {
             tab.terminal.set_palette(palette);
         }

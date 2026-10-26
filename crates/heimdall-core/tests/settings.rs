@@ -95,11 +95,15 @@ fn a_name_is_read_whatever_its_case_and_an_unknown_one_is_dracula() {
 }
 
 #[test]
-fn the_theme_and_accent_are_drakul_and_its_own_until_chosen_then_kept_by_their_csharp_names() {
+fn the_theme_and_accent_are_magellan_and_its_own_until_chosen_then_kept_by_their_csharp_names() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);
     let settings = Settings::load(&path).expect("defaults");
-    assert_eq!(settings.theme, AppTheme::Drakul, "as the C# default");
+    assert_eq!(
+        settings.theme,
+        AppTheme::Magellan,
+        "an intentional divergence from the C# default, Drakul"
+    );
     assert_eq!(settings.accent, Accent::Default);
     for theme in AppTheme::ALL {
         for accent in Accent::ALL {
@@ -166,11 +170,11 @@ fn a_theme_or_accent_is_read_whatever_its_case_and_an_unknown_one_is_the_default
     );
     assert_eq!(
         read("version = 1\n[general]\ntheme = \"Alucard\"\naccent = \"Teal\"\n"),
-        (AppTheme::Drakul, Accent::Default)
+        (AppTheme::Magellan, Accent::Default)
     );
     assert_eq!(
         read("version = 1\n"),
-        (AppTheme::Drakul, Accent::Default),
+        (AppTheme::Magellan, Accent::Default),
         "no section"
     );
 }
@@ -2874,4 +2878,47 @@ cache_store_prefix = ''
     assert!(read.citrix_cache_directory.is_empty());
     // Nothing dropped, nothing said.
     assert!(Settings::default().citrix_ignored.is_empty());
+}
+
+#[test]
+fn minimum_contrast_is_off_by_default_and_is_kept_and_carried() {
+    use heimdall_core::settings::TerminalMinimumContrast;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(
+        settings.terminal_minimum_contrast,
+        TerminalMinimumContrast::Off,
+        "the C# draws the scheme as it is"
+    );
+    assert_eq!(TerminalMinimumContrast::Off.tenths(), None);
+    assert_eq!(TerminalMinimumContrast::Low.tenths(), Some(30));
+    assert_eq!(TerminalMinimumContrast::Standard.tenths(), Some(45));
+    assert_eq!(TerminalMinimumContrast::High.tenths(), Some(70));
+
+    for choice in TerminalMinimumContrast::ALL {
+        assert_eq!(TerminalMinimumContrast::named(choice.name()), choice);
+    }
+    assert_eq!(
+        TerminalMinimumContrast::named("bogus"),
+        TerminalMinimumContrast::Off
+    );
+
+    settings.terminal_minimum_contrast = TerminalMinimumContrast::Standard;
+    settings.save(&path).expect("save");
+    assert_eq!(
+        Settings::load(&path)
+            .expect("load")
+            .terminal_minimum_contrast,
+        TerminalMinimumContrast::Standard
+    );
+
+    let (text, _) = settings.export(None, false);
+    assert!(text.contains("minimum_contrast = \"4.5:1\""), "{text}");
+    let read = Settings::default().import(&text).expect("read");
+    assert_eq!(
+        read.settings.terminal_minimum_contrast,
+        TerminalMinimumContrast::Standard
+    );
 }

@@ -20,7 +20,9 @@
 //! Every decision stays in [`heimdall_app::App`]; this layer only draws its state, holds
 //! what the user is typing into a question, and runs effects.
 
-use heimdall_core::settings::{AgentPreference, CtrlKTerminal, CtrlVPaste, ExecutionPolicy};
+use heimdall_core::settings::{
+    AgentPreference, CtrlKTerminal, CtrlVPaste, ExecutionPolicy, TerminalMinimumContrast,
+};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
@@ -13984,6 +13986,21 @@ impl std::fmt::Display for CtrlVChoice {
             CtrlVPaste::Always => fl!("ui-settings-ctrl-v-always"),
             CtrlVPaste::OutsideFullScreenPrograms => fl!("ui-settings-ctrl-v-outside"),
             CtrlVPaste::Never => fl!("ui-settings-ctrl-v-never"),
+        })
+    }
+}
+
+/// A minimum contrast in the Settings page's list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ContrastChoice(TerminalMinimumContrast);
+
+impl std::fmt::Display for ContrastChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self.0 {
+            TerminalMinimumContrast::Off => fl!("ui-settings-minimum-contrast-off"),
+            TerminalMinimumContrast::Low => fl!("ui-settings-minimum-contrast-low"),
+            TerminalMinimumContrast::Standard => fl!("ui-settings-minimum-contrast-standard"),
+            TerminalMinimumContrast::High => fl!("ui-settings-minimum-contrast-high"),
         })
     }
 }
