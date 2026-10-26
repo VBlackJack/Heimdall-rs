@@ -28,7 +28,11 @@
 //! - **A delete removes only what was confirmed**: the entry's kind and inode, as listed when
 //!   the user confirmed, are checked again just before; one that changed is left as it is
 //!   ([`CHANGED`]). A folder goes with `rm -rf --one-file-system`, anything else with `rm
-//!   -f`; neither follows a link. Paths [`deletable_as_root`] refuses never reach it.
+//!   -f`; neither follows a link. Paths [`deletable_as_root`] refuses never reach it. This
+//!   still requires GNU coreutils, by its banner: uutils `rm` (0.8 to 0.10) takes
+//!   `--one-file-system` without enforcing it and lacks the fix against a link swapped
+//!   during the walk, so on such a server the delete stops with [`TOOLING`] and nothing
+//!   is removed. The read and the replace of [`crate::privileged`] do work there.
 //! - **Permissions are never changed through a link**, which `chmod` would follow.
 //!
 //! Success is the line [`SudoScript::done`] at the end of the output, which the script as
