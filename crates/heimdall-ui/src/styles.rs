@@ -1202,6 +1202,40 @@ pub fn field_box(theme: &Theme) -> BoxStyle {
     }
 }
 
+/// How loud a level badge is: the C# `RiskBrushKey`, `TextSecondaryBrush` for what only
+/// reads, `WarningBrush` for what changes something, `ErrorBrush` for what can destroy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    /// What only reads and shows.
+    Quiet,
+    /// What changes something that can be undone.
+    Warning,
+    /// What can destroy data or stop a machine.
+    Danger,
+}
+
+/// The level badge of a command's row, as the C# list row's risk `Border`: filled in the
+/// tone's colour, rounded as `CornerRadiusSm`, its label in whatever reads on that fill.
+pub fn level_badge(tone: Tone) -> impl Fn(&Theme) -> BoxStyle {
+    move |theme| {
+        let brushes = Brushes::of(theme);
+        let fill = match tone {
+            Tone::Quiet => brushes.secondary,
+            Tone::Warning => brushes.warning,
+            Tone::Danger => brushes.danger,
+        };
+        BoxStyle {
+            background: Some(Background::Color(fill)),
+            text_color: Some(brushes.label_on(fill)),
+            border: Border {
+                radius: radius::SM.into(),
+                ..Border::default()
+            },
+            ..BoxStyle::default()
+        }
+    }
+}
+
 /// The C# "Modified" badge of a setting: the window's background outlined in the accent.
 pub fn badge(theme: &Theme) -> BoxStyle {
     let brushes = Brushes::of(theme);

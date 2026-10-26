@@ -5483,7 +5483,7 @@ ui-tool-cmdlib-help =
     Choose a platform or type a word to find a command. Type its values: the command shows them as it will be copied. A value left empty takes the example shown.
     Opened from a session, the library starts on its platform and fills its host and user. Insert (Shift+Enter) types the command at the prompt of the terminal without running it: you read it, change it and press Enter yourself.
 ui-tool-cmdlib-search-placeholder = Search commands
-ui-tool-cmdlib-platform-all = All platforms
+ui-tool-cmdlib-platform-all = All Platforms
 ui-tool-cmdlib-category-security = Security & Encryption
 ui-tool-cmdlib-category-active-directory = Active Directory & GPO
 ui-tool-cmdlib-category-services-automation = Services & Automation
@@ -5511,16 +5511,21 @@ ui-tool-cmdlib-issue-parameter-type = the type { $kind } is not supported
 ui-tool-cmdlib-issue-choice-empty = the choice { $name } offers no value
 ui-tool-cmdlib-issue-default-refused = its default values are refused as unsafe
 ui-tool-cmdlib-catalogue-unbuildable = This catalogue command cannot be built safely by Heimdall.
-ui-tool-cmdlib-count =
-    { $count ->
-        [one] { $count } command
-       *[other] { $count } commands
-    }
 ui-tool-cmdlib-platform-both = Both
+ui-tool-cmdlib-filter-category-all = All Categories
+ui-tool-cmdlib-filter-tag-all = All tags
+ui-tool-cmdlib-filter-level-all = All Levels
+ui-tool-cmdlib-result-count = { $shown }/{ $total }
+ui-tool-cmdlib-badge-info = INFO
+ui-tool-cmdlib-badge-run = RUN
+ui-tool-cmdlib-badge-danger = DANGER
+ui-tool-cmdlib-badge-windows = WIN
+ui-tool-cmdlib-badge-linux = LIN
+ui-tool-cmdlib-badge-both = WIN/LIN
+ui-tool-cmdlib-details-close = Close details
 ui-tool-cmdlib-template-windows = PowerShell
 ui-tool-cmdlib-template-linux = Shell
 ui-tool-cmdlib-section-mine = My commands
-ui-tool-cmdlib-section-catalog = Catalog
 ui-tool-cmdlib-new = New command
 ui-tool-cmdlib-edit = Edit
 ui-tool-cmdlib-delete = Delete

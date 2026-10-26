@@ -38,7 +38,7 @@ use heimdall_core::tools::user_commands::{
     TemplatePlatform, UserCommand, UserLibrary, UserParameter, UserPlatform, ValueError,
 };
 use iced::widget::{
-    Column, Row, button, checkbox, column, container, row, scrollable, text, text_input,
+    Column, Row, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
 };
 use iced::{Element, Length, Task, window};
 
@@ -47,6 +47,7 @@ use super::command_library_runbooks::{Delivered, Ready, RunTarget, RunbookMessag
 use super::{CopySlot, ToolMessage, ToolPane};
 use crate::file_dialog::{self, FileDialog};
 use crate::i18n::fl;
+use crate::icons::{self, Icon, Tint};
 use crate::shell::{Message, main_window_task};
 use crate::styles;
 use crate::tokens::{font_size, spacing};
@@ -70,8 +71,51 @@ const NAME_SEPARATOR: &str = ", ";
 const TAG_JOINER: &str = ", ";
 
 /// The commands of the catalogue shown at first, and added by each press of "show more": the
-/// catalogue is hundreds of commands, and a card with its values is not cheap to draw.
-const CATALOG_PAGE_SIZE: usize = 30;
+/// catalogue is hundreds of commands, and even a one-line row is not free to draw.
+const CATALOG_PAGE_SIZE: usize = 100;
+
+/// Height of a command's row, as the C# list row (title, description and command preview).
+const ROW_HEIGHT: f32 = 63.0;
+
+/// Padding of a command's row: above and below, then at each side.
+const ROW_PADDING: [f32; 2] = [4.0, 12.0];
+
+/// Padding of a section's title, as the C# group header's `12,8,12,4`.
+const SECTION_PADDING: iced::Padding = iced::Padding {
+    top: 8.0,
+    right: 12.0,
+    bottom: 4.0,
+    left: 12.0,
+};
+
+/// Padding of the level badge of a row, as the C# `4,1`.
+const BADGE_PADDING: [f32; 2] = [1.0, 4.0];
+
+/// Width of the level badge, so the titles of the rows line up whatever the level.
+const BADGE_WIDTH: f32 = 56.0;
+
+/// Width of a row's favorite star.
+const STAR_SIDE: f32 = 16.0;
+
+/// Height of a section's title in the list: its line of text and its padding.
+const SECTION_HEIGHT: f32 = 30.0;
+
+/// Height of a "show more" button with its padding.
+const SHOW_MORE_HEIGHT: f32 = 40.0;
+
+/// The unit a scroll offset is given in: a thousandth of the scrollable range.
+const OFFSET_SCALE: f32 = 1000.0;
+
+/// The shares of the page's height the list and the details of the command opened take, so
+/// the list never collapses under tall details, whatever the window's height.
+const LIST_PORTION: u16 = 3;
+const DETAILS_PORTION: u16 = 2;
+
+/// Width of the category, tag, platform and level drop-downs, as the C# `MinWidth`s.
+const CATEGORY_FILTER_WIDTH: f32 = 180.0;
+const TAG_FILTER_WIDTH: f32 = 150.0;
+const PLATFORM_FILTER_WIDTH: f32 = 130.0;
+const LEVEL_FILTER_WIDTH: f32 = 120.0;
 
 /// The platforms the filter offers, in order; a command for both is under each.
 const PLATFORM_FILTERS: [UserPlatform; 3] = [
@@ -94,6 +138,23 @@ pub enum CommandRef {
 pub enum CommandLibraryMessage {
     /// The platform shown; `None` for every one.
     Platform(Option<UserPlatform>),
+    /// The category shown, by its stable key; `None` for every one.
+    Category(Option<String>),
+    /// The tag shown; `None` for every one.
+    Tag(Option<String>),
+    /// The level shown; `None` for every one.
+    Level(Option<Criticality>),
+    /// Open the details of the command (its values and its actions), as selecting a row of
+    /// the C# list.
+    Select(CommandRef),
+    /// Close the details.
+    CloseDetails,
+    /// Move the selection to the previous or the next visible row, as the arrow keys of the
+    /// C# list box.
+    MoveSelection {
+        /// Down when set, up otherwise.
+        forward: bool,
+    },
     /// The search typed.
     Search(String),
     /// Show more commands of the catalogue.
@@ -286,6 +347,8 @@ pub enum Outcome {
         /// Marked dangerous.
         dangerous: bool,
     },
+    /// Scroll the list so the row at this thousandth of its range is in view.
+    Reveal(u16),
     /// Ask for a file of commands and import it.
     Import,
     /// Ask where to write this export of the library.
@@ -299,6 +362,13 @@ impl Outcome {
     /// window `main`.
     pub fn task(self, tab: TabId, main: Option<window::Id>) -> Task<Message> {
         match self {
+            Self::Reveal(permille) => iced::widget::operation::snap_to(
+                list_id(tab),
+                iced::widget::scrollable::RelativeOffset {
+                    x: None,
+                    y: Some(f32::from(permille) / OFFSET_SCALE),
+                },
+            ),
             Self::Import => pick_import(tab, main),
             Self::Export(text) => pick_export(tab, main, text),
             Self::Sync(job) => job.task(tab),
@@ -416,6 +486,14 @@ enum Failure {
 #[derive(Debug, Default)]
 pub struct CommandLibraryPane {
     platform: Option<UserPlatform>,
+    /// The category key shown; `None` for every one.
+    category: Option<String>,
+    /// The tag shown; `None` for every one.
+    tag: Option<String>,
+    /// The level shown; `None` for every one.
+    level: Option<Criticality>,
+    /// The command whose details are open under the list.
+    opened: Option<CommandRef>,
     search: String,
     /// The pages of the catalogue shown besides the first.
     more_pages: usize,
@@ -441,8 +519,6 @@ pub struct CommandLibraryPane {
     favorites_only: bool,
     history_open: bool,
     clearing_history: bool,
-    /// The command last used, which Ctrl+D copies.
-    selected: Option<CommandRef>,
     /// The terminals ticked for a broadcast.
     broadcast: Vec<TabId>,
     awaited: Vec<Awaited>,
@@ -530,14 +606,127 @@ impl CommandLibraryPane {
             .or_else(|| self.targets.first())
     }
 
-    /// Applies `message`.
+    /// Applies `message`. The details close once their command is no longer in the list, as
+    /// the C# drops `SelectedEntry` when a filter hides it.
     pub fn update(&mut self, message: CommandLibraryMessage) -> Outcome {
+        let outcome = self.apply(message);
+        if let Some(opened) = &self.opened
+            && !self.is_listed(opened)
+        {
+            self.opened = None;
+        }
+        outcome
+    }
+
+    /// Whether `command` is among the rows the filters and the search keep.
+    fn is_listed(&self, command: &CommandRef) -> bool {
+        match command {
+            CommandRef::Catalog(id) => self.shown().iter().any(|entry| &entry.command().id == id),
+            CommandRef::User(id) => self.shown_user().iter().any(|each| &each.id == id),
+        }
+    }
+
+    /// The rows of the list in the order they are drawn: the user's commands, then the
+    /// catalogue by section; paging applies as in the view.
+    fn listed_rows(&self) -> Vec<CommandRef> {
+        let visible_mine = CATALOG_PAGE_SIZE.saturating_mul(self.more_mine_pages.saturating_add(1));
+        let visible = CATALOG_PAGE_SIZE.saturating_mul(self.more_pages.saturating_add(1));
+        let mine = self
+            .shown_user()
+            .into_iter()
+            .take(visible_mine)
+            .map(|command| CommandRef::User(command.id.clone()));
+        let catalogue = sections(self.shown(), visible)
+            .into_iter()
+            .flat_map(|(_, entries)| entries)
+            .map(|entry| CommandRef::Catalog(entry.command().id.clone()));
+        mine.chain(catalogue).collect()
+    }
+
+    /// The sizes of the list's sections in rows (the user's first, then the catalogue's), and
+    /// how many "show more" buttons end it.
+    fn layout(&self) -> (Vec<usize>, usize) {
+        let visible_mine = CATALOG_PAGE_SIZE.saturating_mul(self.more_mine_pages.saturating_add(1));
+        let visible = CATALOG_PAGE_SIZE.saturating_mul(self.more_pages.saturating_add(1));
+        let mine = self.shown_user().len();
+        let shown = self.shown();
+        let mut sizes = Vec::new();
+        if mine > 0 {
+            sizes.push(mine.min(visible_mine));
+        }
+        let more = usize::from(mine > visible_mine) + usize::from(shown.len() > visible);
+        sizes.extend(
+            sections(shown, visible)
+                .into_iter()
+                .map(|(_, rows)| rows.len()),
+        );
+        (sizes, more)
+    }
+
+    /// Selects the row before or after the one opened; with none opened, the first (or the
+    /// last going up). It stops at the ends, and going down from the last row of a page
+    /// turns to the next one. Gives where to scroll the list to keep the row in view.
+    fn move_selection(&mut self, forward: bool) -> Option<u16> {
+        let mut rows = self.listed_rows();
+        let at = self
+            .opened
+            .as_ref()
+            .and_then(|opened| rows.iter().position(|row| row == opened));
+        if forward && at.is_some_and(|at| at + 1 == rows.len()) {
+            let before = rows.len();
+            self.more_pages += 1;
+            rows = self.listed_rows();
+            if rows.len() == before {
+                self.more_pages -= 1;
+            }
+        }
+        let next = match (at, forward) {
+            (Some(at), true) => (at + 1).min(rows.len().saturating_sub(1)),
+            (Some(at), false) => at.saturating_sub(1),
+            (None, true) => 0,
+            (None, false) => rows.len().saturating_sub(1),
+        };
+        let row = rows.into_iter().nth(next)?;
+        self.opened = Some(row);
+        // The history and the editor are above the list and move it by a height not known.
+        if self.history_open || self.editor.is_some() {
+            return None;
+        }
+        let (sizes, more) = self.layout();
+        Some(row_permille(&sizes, next, more))
+    }
+
+    fn apply(&mut self, message: CommandLibraryMessage) -> Outcome {
         match message {
             CommandLibraryMessage::Platform(platform) => {
                 self.platform = platform;
                 self.more_pages = 0;
                 self.more_mine_pages = 0;
             }
+            CommandLibraryMessage::Category(category) => {
+                self.category = category;
+                self.more_pages = 0;
+                self.more_mine_pages = 0;
+            }
+            CommandLibraryMessage::Tag(tag) => {
+                self.tag = tag;
+                self.more_pages = 0;
+                self.more_mine_pages = 0;
+            }
+            CommandLibraryMessage::Level(level) => {
+                self.level = level;
+                self.more_pages = 0;
+                self.more_mine_pages = 0;
+            }
+            CommandLibraryMessage::Select(command) => self.opened = Some(command),
+            CommandLibraryMessage::MoveSelection { forward } => {
+                if self.editor.is_none() && !self.runbooks.is_open() {
+                    return self
+                        .move_selection(forward)
+                        .map_or(Outcome::None, Outcome::Reveal);
+                }
+            }
+            CommandLibraryMessage::CloseDetails => self.opened = None,
             CommandLibraryMessage::Search(typed) => {
                 self.search = typed;
                 self.more_pages = 0;
@@ -558,7 +747,7 @@ impl CommandLibraryPane {
                 self.user_templates.insert(id, platform);
             }
             CommandLibraryMessage::Copy(command) => {
-                self.selected = Some(command.clone());
+                self.opened = Some(command.clone());
                 return match self.command_text(&command) {
                     Some(text) => {
                         self.record_copy(&command);
@@ -568,18 +757,18 @@ impl CommandLibraryPane {
                 };
             }
             CommandLibraryMessage::Send(command) => {
-                self.selected = Some(command.clone());
+                self.opened = Some(command.clone());
                 return self.send(&command);
             }
             CommandLibraryMessage::Insert(command) => {
-                self.selected = Some(command.clone());
+                self.opened = Some(command.clone());
                 return self.insert(&command);
             }
             // The key is the library's own only while no editor has the keyboard.
             CommandLibraryMessage::InsertSelected => {
                 if self.editor.is_none()
                     && !self.runbooks.is_open()
-                    && let Some(command) = self.selected.clone()
+                    && let Some(command) = self.opened.clone()
                 {
                     return self.insert(&command);
                 }
@@ -592,7 +781,7 @@ impl CommandLibraryPane {
             } => self.open_for_session(host, user, platform, tab),
             CommandLibraryMessage::HistoryThisHostOnly(on) => self.history_this_host_only = on,
             CommandLibraryMessage::Broadcast(command) => {
-                self.selected = Some(command.clone());
+                self.opened = Some(command.clone());
                 return self.broadcast_outcome(&command);
             }
             CommandLibraryMessage::Target(tab) => {
@@ -622,7 +811,6 @@ impl CommandLibraryPane {
     fn activity_message(&mut self, message: CommandLibraryMessage) {
         match message {
             CommandLibraryMessage::ToggleFavorite(command) => {
-                self.selected = Some(command.clone());
                 let key = self.key_of(&command);
                 self.activity.toggle_favorite(&key);
                 self.keep_activity();
@@ -634,7 +822,7 @@ impl CommandLibraryPane {
             }
             CommandLibraryMessage::Duplicate(command) => self.duplicate(&command),
             CommandLibraryMessage::DuplicateSelected => {
-                if let Some(command) = self.selected.clone() {
+                if let Some(command) = self.opened.clone() {
                     self.duplicate(&command);
                 }
             }
@@ -1047,6 +1235,9 @@ impl CommandLibraryPane {
             CommandLibraryMessage::AskDelete(id) if self.can_edit() => self.deleting = Some(id),
             CommandLibraryMessage::ConfirmDelete(id) if self.can_edit() => {
                 self.deleting = None;
+                if self.opened == Some(CommandRef::User(id.clone())) {
+                    self.opened = None;
+                }
                 let before = self.library.clone();
                 if self.library.delete(&id) {
                     self.keep(&before);
@@ -1437,7 +1628,6 @@ impl CommandLibraryPane {
             self.notice = Some(Notice::ReplayGone);
             return Outcome::None;
         };
-        self.selected = Some(command.clone());
         match &command {
             CommandRef::User(id) => {
                 if let Some(found) = self.library.get(id)
@@ -1462,8 +1652,9 @@ impl CommandLibraryPane {
         outcome
     }
 
-    /// The template of `command`, written `shown`, that is shown: the one chosen, else this
-    /// system's.
+    /// The template of `command`, written `shown`, that is shown: the one chosen, else the one
+    /// the platform filter asks for, else this system's, as the C# `ResolveCommandPreview`.
+    /// The row's preview and the details read the same.
     fn template_shown(
         &self,
         reference: &CommandRef,
@@ -1474,6 +1665,7 @@ impl CommandLibraryPane {
             CommandRef::User(id) => self.user_templates.get(id),
         }
         .copied()
+        .or_else(|| self.filtered_template())
         .filter(|platform| shown.template_platforms().contains(platform));
         chosen.or_else(|| shown.preferred_platform(cfg!(windows)))
     }
@@ -1529,13 +1721,39 @@ impl CommandLibraryPane {
         Ok(command)
     }
 
-    /// The commands of the catalogue the platform, the favorites and the search keep.
+    /// Whether the category, the tag and the level chosen keep `command`: the category by its
+    /// stable key, the tag without regard to case, as the C# `ShouldShowAction`.
+    fn keeps(&self, command: &UserCommand) -> bool {
+        self.category
+            .as_ref()
+            .is_none_or(|wanted| &command.category == wanted)
+            && self.tag.as_ref().is_none_or(|wanted| {
+                command
+                    .tags
+                    .iter()
+                    .any(|tag| tag.trim().to_lowercase() == wanted.to_lowercase())
+            })
+            && self.level.is_none_or(|wanted| command.level == wanted)
+    }
+
+    /// The template the platform filter asks for; `None` for every platform or for both.
+    fn filtered_template(&self) -> Option<TemplatePlatform> {
+        match self.platform {
+            Some(UserPlatform::Windows) => Some(TemplatePlatform::Windows),
+            Some(UserPlatform::Linux) => Some(TemplatePlatform::Linux),
+            Some(UserPlatform::Both) | None => None,
+        }
+    }
+
+    /// The commands of the catalogue the platform, the category, the tag, the level, the
+    /// favorites and the search keep.
     fn shown(&self) -> Vec<&'static CatalogueEntry> {
         let language = language();
         command_library::shipped()
             .entries()
             .iter()
             .filter(|entry| command_library::on_platform(entry.command().platform, self.platform))
+            .filter(|entry| self.keeps(entry.command()))
             .filter(|entry| {
                 !self.favorites_only
                     || self.is_favorite(&CommandRef::Catalog(entry.command().id.clone()))
@@ -1568,6 +1786,7 @@ impl CommandLibraryPane {
                 !self.favorites_only || self.is_favorite(&CommandRef::User(command.id.clone()))
             })
             .filter(|command| command_library::on_platform(command.platform, self.platform))
+            .filter(|command| self.keeps(command))
             .filter(|command| {
                 command_library::matches_query(command, &command.category, &self.search)
             })
@@ -1578,25 +1797,6 @@ impl CommandLibraryPane {
     /// editor when open, then the user's commands and the catalog.
     pub fn view<'a>(&'a self, tab: TabId, state: &ToolPane) -> Element<'a, Message> {
         let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
-        let platform = |label: String, choice: Option<UserPlatform>| {
-            button(text(label).size(font_size::BODY))
-                .padding(super::COPY_PADDING)
-                .style(if self.platform == choice {
-                    styles::primary
-                } else {
-                    styles::secondary
-                })
-                .on_press(send(CommandLibraryMessage::Platform(choice)))
-                .into()
-        };
-        let platforms = Row::with_children(
-            std::iter::once(platform(fl!("ui-tool-cmdlib-platform-all"), None)).chain(
-                PLATFORM_FILTERS
-                    .into_iter()
-                    .map(|choice| platform(user_platform_name(choice), Some(choice))),
-            ),
-        )
-        .spacing(spacing::SM);
         let search = text_input(&fl!("ui-tool-cmdlib-search-placeholder"), &self.search)
             .size(font_size::BODY)
             .padding(super::INPUT_PADDING)
@@ -1692,16 +1892,9 @@ impl CommandLibraryPane {
         let shown = self.shown();
         let mine = self.shown_user();
         let count = shown.len() + mine.len();
-        let mut page = column![
-            row![platforms, search]
-                .spacing(spacing::MD)
-                .align_y(iced::Alignment::Center),
-            tools,
-            text(fl!("ui-tool-cmdlib-count", count = count))
-                .size(font_size::CAPTION)
-                .style(text::secondary),
-        ]
-        .spacing(spacing::SM);
+        let total = command_library::shipped().entries().len() + self.library.commands().len();
+        let mut page =
+            column![search, tools, self.filter_row(tab, count, total)].spacing(spacing::SM);
         if self.export_choice {
             page = page.push(export_choice_view(tab));
         }
@@ -1742,53 +1935,247 @@ impl CommandLibraryPane {
         if count == 0 && self.editor.is_none() && !self.history_open {
             return super::tool_body(page.push(super::empty_state(fl!("ui-tool-cmdlib-empty"))));
         }
+        let language = language();
+        let mut list: Column<'a, Message> = Column::new();
         if !mine.is_empty() {
-            cards = cards.push(
-                text(fl!("ui-tool-cmdlib-section-mine"))
-                    .size(font_size::BODY_LARGE)
-                    .font(styles::SEMIBOLD),
-            );
+            list = list.push(section_title(fl!("ui-tool-cmdlib-section-mine")));
             let visible_mine =
                 CATALOG_PAGE_SIZE.saturating_mul(self.more_mine_pages.saturating_add(1));
             let remaining_mine = mine.len().saturating_sub(visible_mine);
             for command in mine.into_iter().take(visible_mine) {
-                cards = cards.push(self.user_card(tab, state, command));
+                list =
+                    list.push(self.list_row(tab, &CommandRef::User(command.id.clone()), command));
             }
             if remaining_mine > 0 {
-                cards = cards.push(
-                    button(
-                        text(fl!("ui-tool-cmdlib-show-more", count = remaining_mine))
-                            .size(font_size::BODY),
-                    )
-                    .padding(super::COPY_PADDING)
-                    .style(styles::secondary)
-                    .on_press(send(CommandLibraryMessage::ShowMoreMine)),
-                );
-            }
-            if !shown.is_empty() {
-                cards = cards.push(
-                    text(fl!("ui-tool-cmdlib-section-catalog"))
-                        .size(font_size::BODY_LARGE)
-                        .font(styles::SEMIBOLD),
-                );
+                list = list.push(show_more(
+                    remaining_mine,
+                    send(CommandLibraryMessage::ShowMoreMine),
+                ));
             }
         }
         let visible = CATALOG_PAGE_SIZE.saturating_mul(self.more_pages.saturating_add(1));
         let remaining = shown.len().saturating_sub(visible);
-        for entry in shown.into_iter().take(visible) {
-            cards = cards.push(self.catalogue_card(tab, state, entry));
+        for (category, entries) in sections(shown, visible) {
+            list = list.push(section_title(category_name(&category)));
+            for entry in entries {
+                let command = entry.localized(&language);
+                list = list.push(self.list_row(
+                    tab,
+                    &CommandRef::Catalog(command.id.clone()),
+                    &command,
+                ));
+            }
         }
         if remaining > 0 {
-            cards = cards.push(
-                button(
-                    text(fl!("ui-tool-cmdlib-show-more", count = remaining)).size(font_size::BODY),
-                )
-                .padding(super::COPY_PADDING)
-                .style(styles::secondary)
-                .on_press(send(CommandLibraryMessage::ShowMore)),
-            );
+            list = list.push(show_more(remaining, send(CommandLibraryMessage::ShowMore)));
         }
-        super::tool_body(page.push(scrollable(cards).height(Length::Fill)))
+        cards = cards.push(list);
+        let mut page = page.push(
+            styles::scroll(cards)
+                .id(list_id(tab))
+                .height(Length::FillPortion(LIST_PORTION)),
+        );
+        if let Some(details) = self.details(tab, state) {
+            page = page.push(details);
+        }
+        super::tool_body(page)
+    }
+
+    /// The filters under the search, as the C# wrap panel: how many commands of how many are
+    /// shown, then the category, tag, platform and level drop-downs.
+    fn filter_row<'a>(&'a self, tab: TabId, count: usize, total: usize) -> Element<'a, Message> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
+        let mut categories: Vec<String> = Vec::new();
+        let mut tags: Vec<String> = Vec::new();
+        let mut gather = |command: &UserCommand| {
+            categories.push(command.category.clone());
+            tags.extend(command.tags.iter().map(|tag| tag.trim().to_owned()));
+        };
+        for entry in command_library::shipped().entries() {
+            gather(entry.command());
+        }
+        for command in self.library.commands() {
+            gather(command);
+        }
+        categories.retain(|category| !category.trim().is_empty());
+        categories.sort();
+        categories.dedup();
+        tags.retain(|tag| !tag.is_empty());
+        tags.sort_by_key(|tag| tag.to_lowercase());
+        tags.dedup_by(|a, b| a.to_lowercase() == b.to_lowercase());
+        let category_choices =
+            std::iter::once(Choice::new(None, fl!("ui-tool-cmdlib-filter-category-all")))
+                .chain(categories.into_iter().map(|key| {
+                    let label = category_name(&key);
+                    Choice::new(Some(key), label)
+                }))
+                .collect();
+        let tag_choices = std::iter::once(Choice::new(None, fl!("ui-tool-cmdlib-filter-tag-all")))
+            .chain(
+                tags.into_iter()
+                    .map(|tag| Choice::new(Some(tag.clone()), tag)),
+            )
+            .collect();
+        let platform_choices =
+            std::iter::once(Choice::new(None, fl!("ui-tool-cmdlib-platform-all")))
+                .chain(
+                    PLATFORM_FILTERS
+                        .into_iter()
+                        .map(|each| Choice::new(Some(each), user_platform_name(each))),
+                )
+                .collect();
+        let level_choices =
+            std::iter::once(Choice::new(None, fl!("ui-tool-cmdlib-filter-level-all")))
+                .chain(
+                    Criticality::ALL
+                        .into_iter()
+                        .map(|each| Choice::new(Some(each), level_name(each))),
+                )
+                .collect();
+        row![
+            text(fl!(
+                "ui-tool-cmdlib-result-count",
+                shown = count,
+                total = total
+            ))
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+            filter_list(
+                category_choices,
+                &self.category,
+                CATEGORY_FILTER_WIDTH,
+                move |key| send(CommandLibraryMessage::Category(key)),
+            ),
+            filter_list(tag_choices, &self.tag, TAG_FILTER_WIDTH, move |tag| {
+                send(CommandLibraryMessage::Tag(tag))
+            }),
+            filter_list(
+                platform_choices,
+                &self.platform,
+                PLATFORM_FILTER_WIDTH,
+                move |platform| send(CommandLibraryMessage::Platform(platform)),
+            ),
+            filter_list(
+                level_choices,
+                &self.level,
+                LEVEL_FILTER_WIDTH,
+                move |level| { send(CommandLibraryMessage::Level(level)) }
+            ),
+        ]
+        .spacing(spacing::MD)
+        .align_y(iced::Alignment::Center)
+        .wrap()
+        .vertical_spacing(spacing::SM)
+        .into()
+    }
+
+    /// One command as one compact row, as the C# list row: the level badge, the title with
+    /// its description and the command under it, the platform, and the favorite star. A press
+    /// opens the details.
+    fn list_row<'a>(
+        &'a self,
+        tab: TabId,
+        reference: &CommandRef,
+        command: &UserCommand,
+    ) -> Element<'a, Message> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
+        let opened = self.opened.as_ref() == Some(reference);
+        let favorite = self.is_favorite(reference);
+        let tone = match command.level {
+            Criticality::Info => styles::Tone::Quiet,
+            Criticality::Run => styles::Tone::Warning,
+            Criticality::Dangerous => styles::Tone::Danger,
+        };
+        let badge = container(
+            text(level_badge_name(command.level))
+                .size(font_size::BADGE)
+                .font(styles::BOLD),
+        )
+        .padding(BADGE_PADDING)
+        .center_x(BADGE_WIDTH)
+        .style(styles::level_badge(tone));
+        let one_line =
+            |label: String, size: f32| text(label).size(size).wrapping(text::Wrapping::None);
+        let preview = self
+            .template_shown(reference, command)
+            .and_then(|platform| command.template(platform))
+            .map(|template| command_library::command_preview(&template.command_pattern))
+            .unwrap_or_default();
+        let lines = column![
+            one_line(command.title.clone(), font_size::BODY).font(styles::SEMIBOLD),
+            one_line(command.description.clone(), font_size::CAPTION).style(text::secondary),
+            one_line(preview, font_size::CAPTION)
+                .font(super::BOX_FONT)
+                .style(text::secondary),
+        ];
+        let platform = text(user_platform_badge(command.platform))
+            .size(font_size::SMALL_CAPTION)
+            .style(text::secondary);
+        let main = button(
+            row![
+                badge,
+                container(lines).width(Length::Fill).clip(true),
+                platform
+            ]
+            .spacing(spacing::SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding(ROW_PADDING)
+        .width(Length::Fill)
+        .height(ROW_HEIGHT)
+        .style(styles::palette_row(opened))
+        .on_press(send(CommandLibraryMessage::Select(reference.clone())));
+        let star_label = if favorite {
+            fl!("ui-tool-cmdlib-unfavorite")
+        } else {
+            fl!("ui-tool-cmdlib-favorite")
+        };
+        let star = button(icons::icon(
+            if favorite {
+                Icon::FavoriteStarFill
+            } else {
+                Icon::FavoriteStar
+            },
+            Tint::Warning,
+            STAR_SIDE,
+        ))
+        .padding(spacing::SM)
+        .style(styles::bare)
+        .on_press(send(CommandLibraryMessage::ToggleFavorite(
+            reference.clone(),
+        )));
+        row![
+            main,
+            styles::tip(
+                star,
+                text(star_label).size(font_size::CAPTION),
+                iced::widget::tooltip::Position::Left,
+            ),
+        ]
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
+    /// The details of the command opened, under the list as the C# generator panel: its
+    /// values, its command and its actions, or why it cannot be made; `None` while none is
+    /// open or when the command is gone.
+    fn details<'a>(&'a self, tab: TabId, state: &ToolPane) -> Option<Element<'a, Message>> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
+        let card = match self.opened.as_ref()? {
+            CommandRef::Catalog(id) => self.catalogue_card(tab, state, catalogue_entry(id)?),
+            CommandRef::User(id) => self.user_card(tab, state, self.library.get(id)?),
+        };
+        let close = button(text(fl!("ui-tool-cmdlib-details-close")).size(font_size::BODY))
+            .padding(super::COPY_PADDING)
+            .style(styles::secondary)
+            .on_press(send(CommandLibraryMessage::CloseDetails));
+        Some(
+            container(styles::scroll(
+                column![row![iced::widget::space::horizontal(), close], card].spacing(spacing::SM),
+            ))
+            .height(Length::FillPortion(DETAILS_PORTION))
+            .into(),
+        )
     }
 
     /// Where commands are sent: the terminals offered, the one chosen marked; a hint when
@@ -2299,6 +2686,133 @@ impl CommandLibraryPane {
     }
 }
 
+/// The scrollable of the list of commands of tab `tab`.
+pub(super) fn list_id(tab: TabId) -> iced::widget::Id {
+    iced::widget::Id::from(format!("cmdlib-list-{}", tab.value()))
+}
+
+/// Where to scroll a list of sections of `sizes` rows, `more` buttons at its end, so that
+/// row `index` (counted over all the sections) is in view, in thousandths of the scrollable
+/// range. The row's top is at that share of the content less one row, which is in the
+/// viewport at the same share of its own height less one row, whatever the viewport.
+fn row_permille(sizes: &[usize], index: usize, more: usize) -> u16 {
+    let rows = |count: usize| count as f32 * ROW_HEIGHT;
+    let mut top = 0.0;
+    let mut left = index;
+    let mut found = false;
+    let mut total = more as f32 * SHOW_MORE_HEIGHT;
+    for &size in sizes {
+        total += SECTION_HEIGHT + rows(size);
+        if !found {
+            if left < size {
+                // The first row of a section brings its title into view too.
+                if left > 0 {
+                    top += SECTION_HEIGHT + rows(left);
+                }
+                found = true;
+            } else {
+                top += SECTION_HEIGHT + rows(size);
+                left -= size;
+            }
+        }
+    }
+    let range = total - ROW_HEIGHT;
+    if range <= 0.0 {
+        return 0;
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped to 0..=OFFSET_SCALE before the cast"
+    )]
+    let permille = (top / range * OFFSET_SCALE).clamp(0.0, OFFSET_SCALE) as u16;
+    permille
+}
+
+/// One entry of a filter drop-down: a value, or `None` for "all", and its label.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Choice<T> {
+    value: Option<T>,
+    label: String,
+}
+
+impl<T> Choice<T> {
+    fn new(value: Option<T>, label: String) -> Self {
+        Self { value, label }
+    }
+}
+
+impl<T> std::fmt::Display for Choice<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
+/// A filter drop-down of `width`, `current` chosen in `options`.
+fn filter_list<'a, T: Clone + PartialEq + 'a>(
+    options: Vec<Choice<T>>,
+    current: &Option<T>,
+    width: f32,
+    on_choose: impl Fn(Option<T>) -> Message + 'a,
+) -> Element<'a, Message> {
+    let chosen = options.iter().find(|each| &each.value == current).cloned();
+    pick_list(options, chosen, move |choice: Choice<T>| {
+        on_choose(choice.value)
+    })
+    .width(width)
+    .text_size(font_size::BODY)
+    .style(styles::pick_list)
+    .menu_style(styles::menu)
+    .into()
+}
+
+/// The title of a section of the list, as the C# group header.
+fn section_title<'a>(title: String) -> Element<'a, Message> {
+    container(
+        text(title)
+            .size(font_size::BODY_LARGE)
+            .font(styles::SEMIBOLD)
+            .style(styles::accent_text),
+    )
+    .padding(SECTION_PADDING)
+    .into()
+}
+
+/// The button that shows `count` more commands.
+fn show_more<'a>(count: usize, message: Message) -> Element<'a, Message> {
+    container(
+        button(text(fl!("ui-tool-cmdlib-show-more", count = count)).size(font_size::BODY))
+            .padding(super::COPY_PADDING)
+            .style(styles::secondary)
+            .on_press(message),
+    )
+    .padding(SECTION_PADDING)
+    .into()
+}
+
+/// The first `limit` of `entries`, grouped under their category key in the order the keys
+/// first appear, so a section holds all its commands whatever the order of the catalogue.
+fn sections(
+    entries: Vec<&'static CatalogueEntry>,
+    limit: usize,
+) -> Vec<(String, Vec<&'static CatalogueEntry>)> {
+    let mut grouped: Vec<(String, Vec<&'static CatalogueEntry>)> = Vec::new();
+    for entry in entries {
+        let key = &entry.command().category;
+        match grouped.iter_mut().find(|(each, _)| each == key) {
+            Some((_, group)) => group.push(entry),
+            None => grouped.push((key.clone(), vec![entry])),
+        }
+    }
+    let mut left = limit;
+    for (_, group) in &mut grouped {
+        group.truncate(left);
+        left -= group.len();
+    }
+    grouped.retain(|(_, group)| !group.is_empty());
+    grouped
+}
+
 /// The command of the catalogue of this identity.
 fn catalogue_entry(id: &str) -> Option<&'static CatalogueEntry> {
     command_library::shipped().get(id)
@@ -2752,6 +3266,24 @@ fn template_name(platform: TemplatePlatform) -> String {
     match platform {
         TemplatePlatform::Windows => fl!("ui-tool-cmdlib-template-windows"),
         TemplatePlatform::Linux => fl!("ui-tool-cmdlib-template-linux"),
+    }
+}
+
+/// The badge of `level` on a row, as the C# `ResolveRiskBadge`.
+fn level_badge_name(level: Criticality) -> String {
+    match level {
+        Criticality::Info => fl!("ui-tool-cmdlib-badge-info"),
+        Criticality::Run => fl!("ui-tool-cmdlib-badge-run"),
+        Criticality::Dangerous => fl!("ui-tool-cmdlib-badge-danger"),
+    }
+}
+
+/// The platform mark of a row, as the C# `ResolvePlatformLabel`.
+fn user_platform_badge(platform: UserPlatform) -> String {
+    match platform {
+        UserPlatform::Windows => fl!("ui-tool-cmdlib-badge-windows"),
+        UserPlatform::Linux => fl!("ui-tool-cmdlib-badge-linux"),
+        UserPlatform::Both => fl!("ui-tool-cmdlib-badge-both"),
     }
 }
 
@@ -5117,5 +5649,365 @@ mod tests {
         run_message(&mut pane, RunbookMessage::RunStop);
         run_message(&mut pane, RunbookMessage::Run(id));
         assert_eq!(pane.notice, None);
+    }
+
+    /// Every category key of the commands `pane` shows, in the order the list groups them.
+    fn section_keys(pane: &CommandLibraryPane, limit: usize) -> Vec<String> {
+        sections(pane.shown(), limit)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect()
+    }
+
+    #[test]
+    fn the_catalogue_is_grouped_by_category_key_each_section_once() {
+        let pane = CommandLibraryPane::default();
+        let grouped = sections(pane.shown(), usize::MAX);
+        let keys: Vec<&String> = grouped.iter().map(|(key, _)| key).collect();
+        let mut distinct = keys.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(keys.len(), distinct.len(), "a category is one section only");
+        assert!(keys.len() > 1, "{keys:?}");
+        let rows: usize = grouped.iter().map(|(_, group)| group.len()).sum();
+        assert_eq!(rows, command_library::shipped().entries().len());
+        for (key, group) in &grouped {
+            assert!(
+                group.iter().all(|entry| &entry.command().category == key),
+                "{key}"
+            );
+        }
+        // The label is the window's, the key stays the stable one.
+        assert_eq!(
+            category_name("security"),
+            fl!("ui-tool-cmdlib-category-security")
+        );
+    }
+
+    #[test]
+    fn a_page_cuts_the_rows_across_the_sections_and_drops_the_empty_ones() {
+        let pane = CommandLibraryPane::default();
+        let grouped = sections(pane.shown(), 5);
+        let rows: usize = grouped.iter().map(|(_, group)| group.len()).sum();
+        assert_eq!(rows, 5);
+        assert!(grouped.iter().all(|(_, group)| !group.is_empty()));
+        assert!(sections(pane.shown(), 0).is_empty());
+    }
+
+    #[test]
+    fn the_category_filter_keeps_one_section_by_its_stable_key() {
+        let mut pane = CommandLibraryPane::default();
+        let all = pane.shown().len();
+        pane.update(CommandLibraryMessage::Category(Some("security".to_owned())));
+        let shown = pane.shown();
+        assert!(!shown.is_empty() && shown.len() < all);
+        assert!(
+            shown
+                .iter()
+                .all(|entry| entry.command().category == "security")
+        );
+        assert_eq!(section_keys(&pane, usize::MAX), ["security"]);
+        pane.update(CommandLibraryMessage::Category(None));
+        assert_eq!(pane.shown().len(), all);
+    }
+
+    #[test]
+    fn the_tag_filter_ignores_case_and_the_level_filter_keeps_one_level() {
+        let mut pane = CommandLibraryPane::default();
+        let all = pane.shown().len();
+        let tag = command_library::shipped()
+            .entries()
+            .iter()
+            .find_map(|entry| entry.command().tags.first().cloned())
+            .expect("a shipped command has a tag");
+        pane.update(CommandLibraryMessage::Tag(Some(tag.to_uppercase())));
+        let tagged = pane.shown();
+        assert!(!tagged.is_empty() && tagged.len() <= all);
+        assert!(tagged.iter().all(|entry| {
+            entry
+                .command()
+                .tags
+                .iter()
+                .any(|each| each.trim().to_lowercase() == tag.to_lowercase())
+        }));
+        pane.update(CommandLibraryMessage::Tag(None));
+        pane.update(CommandLibraryMessage::Level(Some(Criticality::Dangerous)));
+        let dangerous = pane.shown();
+        assert!(!dangerous.is_empty() && dangerous.len() < all);
+        assert!(
+            dangerous
+                .iter()
+                .all(|entry| entry.command().level == Criticality::Dangerous)
+        );
+        pane.update(CommandLibraryMessage::Level(None));
+        assert_eq!(pane.shown().len(), all);
+    }
+
+    #[test]
+    fn the_filters_combine_and_a_new_one_starts_the_pages_over() {
+        let mut pane = CommandLibraryPane::default();
+        pane.update(CommandLibraryMessage::ShowMore);
+        pane.update(CommandLibraryMessage::Category(Some("security".to_owned())));
+        assert_eq!(pane.more_pages, 0);
+        pane.update(CommandLibraryMessage::ShowMore);
+        pane.update(CommandLibraryMessage::Level(Some(Criticality::Info)));
+        assert_eq!(pane.more_pages, 0);
+        pane.update(CommandLibraryMessage::ShowMore);
+        pane.update(CommandLibraryMessage::Tag(None));
+        assert_eq!(pane.more_pages, 0);
+        assert!(pane.shown().iter().all(|entry| {
+            entry.command().category == "security" && entry.command().level == Criticality::Info
+        }));
+    }
+
+    #[test]
+    fn the_user_commands_obey_the_category_tag_and_level_filters_too() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let id = make_ping(&mut pane);
+        let key = pane
+            .library
+            .get(&id)
+            .expect("the command made")
+            .category
+            .clone();
+        assert_eq!(pane.shown_user().len(), 1);
+        pane.update(CommandLibraryMessage::Category(Some(format!(
+            "{key}-other"
+        ))));
+        assert!(pane.shown_user().is_empty());
+        pane.update(CommandLibraryMessage::Category(Some(key)));
+        assert_eq!(pane.shown_user().len(), 1);
+        pane.update(CommandLibraryMessage::Level(Some(Criticality::Dangerous)));
+        assert!(pane.shown_user().is_empty());
+    }
+
+    #[test]
+    fn selecting_a_row_opens_its_details_and_makes_it_the_command_the_keys_act_on() {
+        let mut pane = CommandLibraryPane::default();
+        assert!(pane.opened.is_none());
+        pane.update(CommandLibraryMessage::Select(fsmo()));
+        assert_eq!(pane.opened, Some(fsmo()));
+        pane.update(CommandLibraryMessage::Select(fsck()));
+        assert_eq!(pane.opened, Some(fsck()));
+        pane.update(CommandLibraryMessage::CloseDetails);
+        assert_eq!(pane.opened, None);
+    }
+
+    #[test]
+    fn a_favorite_toggled_elsewhere_leaves_the_keyboard_on_the_row_selected() {
+        let mut plain = CommandLibraryPane::default();
+        plain.update(CommandLibraryMessage::Select(fsmo()));
+        plain.update(CommandLibraryMessage::ToggleFavorite(fsck()));
+        assert_eq!(plain.opened, Some(fsmo()));
+        assert!(plain.is_favorite(&fsck()));
+        // Ctrl+D targets the row selected: the editor opens on a copy of it, not of the
+        // favorite.
+        let folder = tempfile::tempdir().expect("folder");
+        let mut saved = pane(folder.path());
+        saved.update(CommandLibraryMessage::Select(fsmo()));
+        saved.update(CommandLibraryMessage::ToggleFavorite(fsck()));
+        saved.update(CommandLibraryMessage::DuplicateSelected);
+        let editor = saved.editor.as_ref().expect("a copy is opened");
+        let expected = catalogue_entry("ad-check-fsmo-roles")
+            .expect("the command")
+            .localized(&language())
+            .title
+            .clone();
+        assert!(
+            editor.draft.title.contains(&expected),
+            "{}",
+            editor.draft.title
+        );
+    }
+
+    #[test]
+    fn a_replay_leaves_the_keyboard_on_the_row_selected() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let id = make_ping(&mut pane);
+        let [first, ..] = tab_ids();
+        pane.set_targets(vec![target(first, "web-1")]);
+        pane.update(CommandLibraryMessage::UserParam(
+            id.clone(),
+            "host".to_owned(),
+            "web.lab".to_owned(),
+        ));
+        let Outcome::Send { command, .. } =
+            pane.update(CommandLibraryMessage::Send(CommandRef::User(id)))
+        else {
+            panic!("asked");
+        };
+        pane.record_sent(&[receipt(first, "web-1", &command)]);
+        pane.update(CommandLibraryMessage::Select(fsmo()));
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Replay(0)),
+            Outcome::Send { .. }
+        ));
+        assert_eq!(pane.opened, Some(fsmo()));
+    }
+
+    #[test]
+    fn the_offset_of_a_row_counts_the_titles_of_the_sections_before_it() {
+        // One section of 10 rows: the first row is at the start, the last at the end.
+        assert_eq!(row_permille(&[10], 0, 0), 0);
+        // The last row of a section: its title and the rows before it are above.
+        assert_eq!(row_permille(&[10], 9, 0), 1000);
+        // Two sections: the first row of the second shows its own title, under the first section.
+        let top = SECTION_HEIGHT + ROW_HEIGHT * 3.0;
+        let total = SECTION_HEIGHT * 2.0 + ROW_HEIGHT * 8.0;
+        let expected = (top / (total - ROW_HEIGHT) * OFFSET_SCALE) as u16;
+        assert_eq!(row_permille(&[3, 5], 3, 0), expected);
+        // A button at the end lengthens the content: the same row sits earlier.
+        assert!(row_permille(&[3, 5], 3, 1) < row_permille(&[3, 5], 3, 0));
+        // Nothing to scroll.
+        assert_eq!(row_permille(&[1], 0, 0), 0);
+        assert_eq!(row_permille(&[], 0, 0), 0);
+    }
+
+    #[test]
+    fn going_down_from_the_last_row_of_a_page_turns_to_the_next_page() {
+        let mut pane = CommandLibraryPane::default();
+        let all = pane.shown().len();
+        assert!(all > CATALOG_PAGE_SIZE, "a catalogue of several pages");
+        let rows = pane.listed_rows();
+        assert_eq!(rows.len(), CATALOG_PAGE_SIZE);
+        pane.update(CommandLibraryMessage::Select(rows[rows.len() - 1].clone()));
+        let outcome = pane.update(CommandLibraryMessage::MoveSelection { forward: true });
+        assert!(matches!(outcome, Outcome::Reveal(_)));
+        assert_eq!(pane.more_pages, 1);
+        let next = pane.listed_rows();
+        assert_eq!(pane.opened.as_ref(), next.get(CATALOG_PAGE_SIZE));
+        // At the very end the page stays and so does the selection.
+        pane.more_pages = (all / CATALOG_PAGE_SIZE) + 1;
+        let last = pane.listed_rows().pop().expect("rows");
+        pane.update(CommandLibraryMessage::Select(last.clone()));
+        let pages = pane.more_pages;
+        pane.update(CommandLibraryMessage::MoveSelection { forward: true });
+        assert_eq!((pane.more_pages, pane.opened.clone()), (pages, Some(last)));
+    }
+
+    #[test]
+    fn the_arrow_keys_move_the_selection_over_the_visible_rows_and_stop_at_the_ends() {
+        let mut pane = CommandLibraryPane::default();
+        let rows = pane.listed_rows();
+        assert!(rows.len() > 3);
+        pane.update(CommandLibraryMessage::MoveSelection { forward: true });
+        assert_eq!(pane.opened.as_ref(), rows.first());
+        pane.update(CommandLibraryMessage::MoveSelection { forward: true });
+        assert_eq!(pane.opened.as_ref(), rows.get(1));
+        pane.update(CommandLibraryMessage::MoveSelection { forward: false });
+        pane.update(CommandLibraryMessage::MoveSelection { forward: false });
+        assert_eq!(
+            pane.opened.as_ref(),
+            rows.first(),
+            "the first row is the end"
+        );
+        pane.update(CommandLibraryMessage::CloseDetails);
+        pane.update(CommandLibraryMessage::MoveSelection { forward: false });
+        assert_eq!(
+            pane.opened.as_ref(),
+            rows.last(),
+            "up from nothing starts at the end"
+        );
+    }
+
+    #[test]
+    fn the_details_close_when_a_filter_or_the_search_hides_their_command() {
+        let mut pane = CommandLibraryPane::default();
+        pane.update(CommandLibraryMessage::Select(fsmo()));
+        pane.update(CommandLibraryMessage::Category(Some("security".to_owned())));
+        assert_eq!(
+            pane.opened, None,
+            "an Active Directory command under Security"
+        );
+        pane.update(CommandLibraryMessage::Category(None));
+        pane.update(CommandLibraryMessage::Select(fsmo()));
+        pane.update(CommandLibraryMessage::Search(
+            "zzzz no such command".to_owned(),
+        ));
+        assert_eq!(pane.opened, None);
+        pane.update(CommandLibraryMessage::Search(String::new()));
+        pane.update(CommandLibraryMessage::Select(fsmo()));
+        pane.update(CommandLibraryMessage::Level(Some(Criticality::Dangerous)));
+        assert_eq!(pane.opened, None);
+    }
+
+    #[test]
+    fn the_actions_of_the_details_run_on_the_command_selected() {
+        let mut pane = CommandLibraryPane::default();
+        pane.update(CommandLibraryMessage::Select(fsmo()));
+        let Outcome::Copy(_, text) = pane.update(CommandLibraryMessage::Copy(fsmo())) else {
+            panic!("a copy of the command opened");
+        };
+        assert!(!text.is_empty());
+        let none = pane.update(CommandLibraryMessage::Send(fsmo()));
+        assert_eq!(none, Outcome::None, "no terminal, nothing is sent");
+    }
+
+    #[test]
+    fn the_details_and_the_row_preview_read_the_template_of_the_platform_shown() {
+        let mut pane = CommandLibraryPane::default();
+        let both = command_library::shipped()
+            .entries()
+            .iter()
+            .map(|entry| entry.command())
+            .find(|command| {
+                command.template_platforms().len() == 2 && command.platform == UserPlatform::Both
+            })
+            .expect("a shipped command with two templates");
+        let reference = CommandRef::Catalog(both.id.clone());
+        pane.update(CommandLibraryMessage::Platform(Some(UserPlatform::Windows)));
+        assert_eq!(
+            pane.template_shown(&reference, both),
+            Some(TemplatePlatform::Windows)
+        );
+        pane.update(CommandLibraryMessage::Platform(Some(UserPlatform::Linux)));
+        assert_eq!(
+            pane.template_shown(&reference, both),
+            Some(TemplatePlatform::Linux),
+            "a new filter changes it at once"
+        );
+        pane.update(CommandLibraryMessage::Template(
+            both.id.clone(),
+            TemplatePlatform::Windows,
+        ));
+        assert_eq!(
+            pane.template_shown(&reference, both),
+            Some(TemplatePlatform::Windows),
+            "the choice of the user wins"
+        );
+    }
+
+    #[test]
+    fn a_refused_command_stays_selectable_and_says_why_it_gives_nothing() {
+        let mut pane = CommandLibraryPane::default();
+        let trace = trace(&mut pane, "a; rm -rf x");
+        pane.update(CommandLibraryMessage::Select(trace.clone()));
+        assert_eq!(pane.opened, Some(trace.clone()));
+        let CommandRef::Catalog(id) = &trace else {
+            unreachable!()
+        };
+        let entry = catalogue_entry(id).expect("the tracer");
+        let error = pane
+            .render(&trace, &entry.localized(&language()))
+            .expect_err("shell syntax is refused");
+        assert!(!generate_error(&error).is_empty());
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Copy(trace)),
+            Outcome::None
+        );
+    }
+
+    #[test]
+    fn a_command_deleted_closes_its_details() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let id = make_ping(&mut pane);
+        let mine = CommandRef::User(id.clone());
+        pane.update(CommandLibraryMessage::Select(mine));
+        pane.update(CommandLibraryMessage::AskDelete(id.clone()));
+        pane.update(CommandLibraryMessage::ConfirmDelete(id));
+        assert_eq!(pane.opened, None);
     }
 }
