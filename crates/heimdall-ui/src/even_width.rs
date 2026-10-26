@@ -35,6 +35,8 @@ pub struct EvenWidth<'a, M> {
     min_width: f32,
     bar_height: f32,
     items: Vec<Element<'a, M, Theme, iced::Renderer>>,
+    /// Which items keep to `min_width` instead of the common width, one flag per item.
+    capped: Vec<bool>,
 }
 
 impl<'a, M> EvenWidth<'a, M> {
@@ -53,7 +55,18 @@ impl<'a, M> EvenWidth<'a, M> {
             min_width,
             bar_height,
             items,
+            capped: Vec::new(),
         }
+    }
+
+    /// The items flagged keep to the minimum width, whatever the widest is: a folder's header
+    /// ends at the sidebar's edge, its count badge in view while the tree is not scrolled
+    /// sideways (it scrolls away with the rest when it is). One flag per item; an item
+    /// without one is not capped.
+    #[must_use]
+    pub fn capped(mut self, flags: Vec<bool>) -> Self {
+        self.capped = flags;
+        self
     }
 }
 
@@ -68,6 +81,12 @@ pub fn foot(width: f32, min_width: f32, bar_height: f32) -> f32 {
 #[must_use]
 pub fn common_width(measured: impl IntoIterator<Item = f32>, min_width: f32) -> f32 {
     measured.into_iter().fold(min_width, f32::max)
+}
+
+/// The width of one item: the common width, or the minimum when it is `capped`.
+#[must_use]
+pub fn item_width(capped: bool, common: f32, min_width: f32) -> f32 {
+    if capped { min_width } else { common }
 }
 
 impl<M> Widget<M, Theme, iced::Renderer> for EvenWidth<'_, M> {
@@ -92,11 +111,14 @@ impl<M> Widget<M, Theme, iced::Renderer> for EvenWidth<'_, M> {
         // Measured as their content takes them: an item that fills its width shrinks to it.
         let measure =
             layout::Limits::with_compression(Size::ZERO, Size::INFINITE, Size::new(true, false));
+        let capped = |index: usize| self.capped.get(index).copied().unwrap_or(false);
         let measured: Vec<f32> = self
             .items
             .iter_mut()
             .zip(tree.children.iter_mut())
-            .map(|(item, tree)| {
+            .enumerate()
+            .filter(|(index, _)| !capped(*index))
+            .map(|(_, (item, tree))| {
                 item.as_widget_mut()
                     .layout(tree, renderer, &measure)
                     .size()
@@ -104,7 +126,6 @@ impl<M> Widget<M, Theme, iced::Renderer> for EvenWidth<'_, M> {
             })
             .collect();
         let width = common_width(measured, self.min_width);
-        let exact = layout::Limits::new(Size::new(width, 0.0), Size::new(width, f32::INFINITY));
         let mut nodes = Vec::with_capacity(self.items.len());
         let mut y = 0.0_f32;
         for (index, (item, tree)) in self
@@ -116,6 +137,8 @@ impl<M> Widget<M, Theme, iced::Renderer> for EvenWidth<'_, M> {
             if index > 0 {
                 y += self.spacing;
             }
+            let at = item_width(capped(index), width, self.min_width);
+            let exact = layout::Limits::new(Size::new(at, 0.0), Size::new(at, f32::INFINITY));
             let node = item
                 .as_widget_mut()
                 .layout(tree, renderer, &exact)
@@ -245,6 +268,12 @@ mod tests {
     fn the_foot_is_kept_only_while_the_sideways_bar_is_shown() {
         assert!((foot(340.0, 260.0, 12.0) - 12.0).abs() < f32::EPSILON);
         assert!(foot(260.0, 260.0, 12.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_capped_item_keeps_the_sidebar_width_while_the_rest_share_the_widest() {
+        assert!((item_width(true, 340.0, 260.0) - 260.0).abs() < f32::EPSILON);
+        assert!((item_width(false, 340.0, 260.0) - 340.0).abs() < f32::EPSILON);
     }
 
     #[test]

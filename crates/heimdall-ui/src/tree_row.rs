@@ -85,6 +85,17 @@ fn fill(renderer: &mut iced::Renderer, bounds: Rectangle, color: Color, radius: 
     );
 }
 
+/// Whether the highlight is drawn behind a row marked `mark` with the pointer `hovered` over
+/// it. Not behind a selected session: the C# selected trigger replaces the hover one, and the
+/// two tints stacked read as a stronger fill than the selection's own (most visible in Folio).
+fn shows_highlight(mark: Mark, hovered: bool) -> bool {
+    match mark {
+        Mark::Selected => false,
+        Mark::Cursor => true,
+        Mark::None => hovered,
+    }
+}
+
 /// The row's corners, as the C# chrome's `CornerRadiusSm` (`MainWindow.xaml:792`, `:918`).
 fn row_radius() -> Radius {
     Radius::from(crate::tokens::radius::SM)
@@ -206,7 +217,7 @@ impl Widget<Message, Theme, iced::Renderer> for RowChrome<'_> {
         let bounds = layout.bounds();
         let palette = theme.extended_palette();
         // The C# `HighlightBrush`, under the pointer and on the keyboard's folder.
-        if cursor.is_over(bounds) || self.mark == Mark::Cursor {
+        if shows_highlight(self.mark, cursor.is_over(bounds)) {
             fill(
                 renderer,
                 bounds,
@@ -449,6 +460,20 @@ impl<'a> From<Guided<'a>> for Element<'a, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hover_highlight_never_stacks_under_the_selection_tint() {
+        assert!(!shows_highlight(Mark::None, false));
+        assert!(shows_highlight(Mark::None, true));
+        assert!(
+            !shows_highlight(Mark::Selected, true),
+            "the tint stands alone"
+        );
+        assert!(
+            shows_highlight(Mark::Cursor, false),
+            "the keyboard's folder stays lit"
+        );
+    }
 
     #[test]
     fn a_guide_runs_down_the_whole_row_and_the_gap_above_it_to_join_the_one_before() {

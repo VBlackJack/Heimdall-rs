@@ -133,10 +133,11 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         let mut ui = simulator(&shell);
         // A glyph alone, as the C#'s Add button: found by its identifier.
         ui.click(tree_add_id()).expect("add button");
-        assert!(
-            ui.into_messages()
-                .any(|message| matches!(message, Message::OpenTreeMenu(TreeMenu::Add)))
-        );
+        // Opened under the button, as the C# toolbar menus are.
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::OpenTreeMenuBelow(TreeMenu::Add, button) if button.y > 0.0
+        )));
     }
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Add));
     {

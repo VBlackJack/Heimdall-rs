@@ -111,11 +111,30 @@ const OFFSET_SCALE: f32 = 1000.0;
 const LIST_PORTION: u16 = 3;
 const DETAILS_PORTION: u16 = 2;
 
-/// Width of the category, tag, platform and level drop-downs, as the C# `MinWidth`s.
-const CATEGORY_FILTER_WIDTH: f32 = 180.0;
-const TAG_FILTER_WIDTH: f32 = 150.0;
-const PLATFORM_FILTER_WIDTH: f32 = 130.0;
-const LEVEL_FILTER_WIDTH: f32 = 120.0;
+/// The longest item of the category, tag, platform and level drop-downs, in characters, over
+/// English, French and Spanish ("Toutes les catégories", "Todas las etiquetas", "Toutes les
+/// plateformes", "Todos los niveles"): each drop-down is as wide as its longest item, so that
+/// no language clips its text against the arrow. A test holds these to the language files.
+const CATEGORY_FILTER_CHARS: usize = 21;
+const TAG_FILTER_CHARS: usize = 19;
+const PLATFORM_FILTER_CHARS: usize = 22;
+const LEVEL_FILTER_CHARS: usize = 17;
+
+/// What a character of a drop-down's text takes, as a share of its size: wide enough for
+/// capitals and accented letters.
+const FILTER_CHAR_EM: f32 = 0.6;
+
+/// Room a drop-down keeps besides its text: its padding at each side and the arrow.
+const FILTER_CHROME_WIDTH: f32 = 36.0;
+
+/// The width of a drop-down whose longest item has `chars` characters.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a count of a few dozen characters, far below the 2^24 where f32 loses units"
+)]
+fn filter_width(chars: usize) -> f32 {
+    chars as f32 * FILTER_CHAR_EM * font_size::BODY + FILTER_CHROME_WIDTH
+}
 
 /// The platforms the filter offers, in order; a command for both is under each.
 const PLATFORM_FILTERS: [UserPlatform; 3] = [
@@ -2043,22 +2062,25 @@ impl CommandLibraryPane {
             filter_list(
                 category_choices,
                 &self.category,
-                CATEGORY_FILTER_WIDTH,
+                filter_width(CATEGORY_FILTER_CHARS),
                 move |key| send(CommandLibraryMessage::Category(key)),
             ),
-            filter_list(tag_choices, &self.tag, TAG_FILTER_WIDTH, move |tag| {
-                send(CommandLibraryMessage::Tag(tag))
-            }),
+            filter_list(
+                tag_choices,
+                &self.tag,
+                filter_width(TAG_FILTER_CHARS),
+                move |tag| send(CommandLibraryMessage::Tag(tag)),
+            ),
             filter_list(
                 platform_choices,
                 &self.platform,
-                PLATFORM_FILTER_WIDTH,
+                filter_width(PLATFORM_FILTER_CHARS),
                 move |platform| send(CommandLibraryMessage::Platform(platform)),
             ),
             filter_list(
                 level_choices,
                 &self.level,
-                LEVEL_FILTER_WIDTH,
+                filter_width(LEVEL_FILTER_CHARS),
                 move |level| { send(CommandLibraryMessage::Level(level)) }
             ),
         ]
@@ -3483,6 +3505,63 @@ pub(super) fn value_error(error: &ValueError) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The value of message `key` in a language file's `source`.
+    fn message_text(source: &str, key: &str) -> String {
+        source
+            .lines()
+            .find_map(|line| line.strip_prefix(key)?.strip_prefix(" = "))
+            .unwrap_or_else(|| panic!("{key} is in every language file"))
+            .trim()
+            .to_owned()
+    }
+
+    #[test]
+    fn each_filter_drop_down_fits_its_longest_item_in_every_language() {
+        let languages = [
+            include_str!("../../i18n/en/heimdall-ui.ftl"),
+            include_str!("../../i18n/fr/heimdall-ui.ftl"),
+            include_str!("../../i18n/es/heimdall-ui.ftl"),
+        ];
+        let widest = |keys: &[&str]| {
+            languages
+                .iter()
+                .flat_map(|source| keys.iter().map(|key| message_text(source, key)))
+                .map(|text| text.chars().count())
+                .max()
+                .expect("a text")
+        };
+        assert!(
+            widest(&["ui-tool-cmdlib-filter-category-all"]) <= super::CATEGORY_FILTER_CHARS,
+            "the category drop-down clips its first item"
+        );
+        assert!(
+            widest(&["ui-tool-cmdlib-filter-tag-all"]) <= super::TAG_FILTER_CHARS,
+            "the tag drop-down clips its first item"
+        );
+        assert!(
+            widest(&[
+                "ui-tool-cmdlib-platform-all",
+                "ui-tool-cmdlib-platform-linux",
+                "ui-tool-cmdlib-platform-windows",
+                "ui-tool-cmdlib-platform-both",
+            ]) <= super::PLATFORM_FILTER_CHARS,
+            "the platform drop-down clips an item"
+        );
+        assert!(
+            widest(&[
+                "ui-tool-cmdlib-filter-level-all",
+                "ui-tool-cmdlib-level-info",
+                "ui-tool-cmdlib-level-run",
+                "ui-tool-cmdlib-level-dangerous",
+            ]) <= super::LEVEL_FILTER_CHARS,
+            "the level drop-down clips an item (\"Tous les niveaux\")"
+        );
+        assert!(
+            super::filter_width(super::LEVEL_FILTER_CHARS) > 120.0,
+            "wider than the fixed 120 that clipped"
+        );
+    }
+
     use std::collections::BTreeMap;
 
     use heimdall_core::tools::runbooks::{RUNBOOKS_FILE, Runbook, RunbookStore, Step};

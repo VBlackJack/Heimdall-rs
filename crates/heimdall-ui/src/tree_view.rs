@@ -37,7 +37,7 @@ use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget};
 use iced::advanced::{Clipboard, Shell, mouse, overlay, renderer};
 use iced::widget::{
-    Container, button, checkbox, column, container, mouse_area, row, rule, text, tooltip,
+    Container, button, checkbox, column, container, mouse_area, row, text, tooltip,
 };
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector};
 
@@ -119,6 +119,8 @@ pub enum TreeMenu {
     MoveSelection,
     /// What can be set on the profiles selected together at once.
     EditSelection,
+    /// The protocols the tree can be narrowed to, in the filter menu.
+    FilterProtocols,
     /// The route the profiles selected together can be given: direct, or a gateway.
     GatewaySelection,
     /// The server's folders bookmarked in a Files tab.
@@ -170,6 +172,7 @@ impl TreeMenu {
                 | Self::MoveProfile(_)
                 | Self::MoveSelection
                 | Self::EditSelection
+                | Self::FilterProtocols
                 | Self::GatewaySelection
         )
     }
@@ -177,6 +180,16 @@ impl TreeMenu {
 
 /// Side of a session's protocol icon, as the C# `GeoIconSmall`.
 const PROTOCOL_ICON_SIDE: f32 = 14.0;
+
+/// Room around the entries of a menu card, as the C# `ThemedContextMenuStyle` padding.
+const MENU_CARD_PADDING: f32 = 6.0;
+
+/// Room around a menu's separator line: above and below, then at each side, as the C#
+/// separator's margin of 4 and 6.
+const MENU_SEPARATOR_PADDING: [f32; 2] = [4.0, 6.0];
+
+/// Side of the arrow that ends a submenu's entry, as the C# `SubmenuGlyph` (5 by 10).
+const SUBMENU_ARROW_SIDE: f32 = 10.0;
 
 /// Side of a folder's icon, as the C# `SessionTreeFolderIconSize`.
 const FOLDER_ICON_SIDE: f32 = 13.0;
@@ -190,9 +203,20 @@ const EXPANDER_GAP: f32 = 2.0;
 /// Space after a folder's icon, as the C# margin.
 const FOLDER_ICON_GAP: f32 = 7.0;
 
-/// Height of a row's content: the C# `SessionTreeServerRowMinHeight` (24) and
-/// `SessionTreeFolderRowMinHeight` (26) less their padding.
+/// Height of a row's content, the icon and the text line.
 const ROW_CONTENT_HEIGHT: f32 = 20.0;
+
+/// Room above and below a session row's content: with [`ROW_GAP`], the 30 pixels the C#
+/// tree gives a session row (its `SessionTreeServerRowMinHeight` of 24 and the item's own
+/// padding), measured on the C# window.
+const SESSION_ROW_PADDING_Y: f32 = 4.0;
+
+/// Room above and below a folder row's content: the C# folder chrome is its
+/// `SessionTreeFolderRowMinHeight` of 26 and 3 above and below, 32 in all.
+const FOLDER_ROW_PADDING_Y: f32 = 6.0;
+
+/// Room right of a row, as the C# row's right margin.
+const ROW_MARGIN_RIGHT: f32 = 4.0;
 
 /// The space around a state dot the pointer reaches it in, as the C#
 /// `SessionTreeStatusHitPadding`.
@@ -444,9 +468,9 @@ pub fn folder_row<'a>(
         )
         .width(Length::Fill)
         .padding(iced::Padding {
-            top: 3.0,
+            top: FOLDER_ROW_PADDING_Y,
             right: 8.0,
-            bottom: 3.0,
+            bottom: FOLDER_ROW_PADDING_Y,
             left: EDGE_WIDTH + 1.0,
         }),
         if selected { Mark::Cursor } else { Mark::None },
@@ -458,6 +482,7 @@ pub fn folder_row<'a>(
     )
     .padding(iced::Padding {
         top: 3.0,
+        right: ROW_MARGIN_RIGHT,
         bottom: 1.0,
         ..iced::Padding::ZERO
     });
@@ -621,9 +646,9 @@ pub fn owned_row(
     .align_y(iced::Alignment::Center);
     let body = RowChrome::new(
         container(label).width(Length::Fill).padding(iced::Padding {
-            top: 2.0,
+            top: SESSION_ROW_PADDING_Y,
             right: 4.0,
-            bottom: 2.0,
+            bottom: SESSION_ROW_PADDING_Y,
             left: EDGE_WIDTH + 3.0,
         }),
         if selected { Mark::Selected } else { Mark::None },
@@ -646,6 +671,7 @@ pub fn owned_row(
             .padding(styles::TOOLTIP_PADDING)
             .style(styles::tooltip),
         ),
+        iced::widget::space().width(ROW_MARGIN_RIGHT),
     ]
     .into()
 }
@@ -987,12 +1013,21 @@ fn scrolled_menu_card(entries: MenuColumn<'_, Message>) -> Element<'_, Message> 
 /// The card itself, around `content`.
 fn card_of<'a>(content: impl Into<Element<'a, Message>>) -> Container<'a, Message> {
     container(content)
-        .padding(spacing::XS)
-        .style(container::rounded_box)
+        .padding(MENU_CARD_PADDING)
+        .style(styles::menu_card)
 }
 
+/// A line across the menu between two groups of entries, as the C# `Separator`: one pixel
+/// of the border colour, with room above and below and a little at each side.
 fn separator<'a>() -> Element<'a, Message> {
-    rule::horizontal(1).into()
+    container(
+        container(iced::widget::space())
+            .width(Length::Fill)
+            .height(1)
+            .style(styles::rule),
+    )
+    .padding(MENU_SEPARATOR_PADDING)
+    .into()
 }
 
 /// The entries of `menu`, as the C# Heimdall orders them, limited to what this version does;
@@ -1067,77 +1102,83 @@ pub fn menu_entries<'a>(
     menu_card(entries).into()
 }
 
-/// The tree's filters, as the C# filter button's menu: the protocols, then connected and
-/// through a gateway, then the view choices: the gateway badge and the properties panel. A
-/// box ticked leaves the menu open, as the C# entries stay open, so several can be chosen.
+/// The tree's filters, as the C# filter button's menu: "Protocols" opening the list of
+/// protocols, then favorites, connected and through a gateway, then the view choices: the
+/// gateway badge and the properties panel. A box ticked leaves the menu open, as the C#
+/// entries stay open, so several can be chosen.
 /// `badge`: rows show their gateway; `properties`: the properties panel is shown.
 pub fn filter_entries<'a>(
     filter: &TreeFilter,
     badge: bool,
     properties: bool,
 ) -> Element<'a, Message> {
-    let filter_box = |label: String, on: bool, message: FilterMessage| -> Element<'a, Message> {
-        container(
-            checkbox(on)
-                .style(styles::checkbox)
-                .label(label)
-                .text_size(font_size::BODY_LARGE)
-                .on_toggle(move |_| Message::App(AppMessage::Filter(message))),
-        )
-        .padding(spacing::XS)
-        .menu_item()
-    };
-    let mut entries = menu_column![
-        container(text(fl!("ui-tree-filter-protocols")).size(font_size::BODY_LARGE))
-            .padding(spacing::XS)
-    ];
-    for kind in ProfileKind::ALL {
-        entries = entries.push(filter_box(
-            kind.label().to_owned(),
-            filter.has_protocol(kind),
-            FilterMessage::Protocol(kind),
-        ));
-    }
-    entries = entries
-        .push(separator())
-        .push(filter_box(
-            fl!("ui-tree-filter-connected"),
-            filter.connected(),
-            FilterMessage::Connected,
-        ))
-        .push(filter_box(
-            fl!("ui-tree-filter-gateway"),
-            filter.gateway(),
-            FilterMessage::Gateway,
-        ))
-        .push(filter_box(
+    let entries = menu_column![
+        submenu(fl!("ui-tree-filter-protocols"), TreeMenu::FilterProtocols),
+        separator(),
+        filter_box(
             fl!("ui-tree-filter-favorites"),
             filter.favorites(),
             FilterMessage::Favorites,
-        ))
-        .push(separator())
-        .push(filter_box(
+        ),
+        filter_box(
+            fl!("ui-tree-filter-connected"),
+            filter.connected(),
+            FilterMessage::Connected,
+        ),
+        filter_box(
+            fl!("ui-tree-filter-gateway"),
+            filter.gateway(),
+            FilterMessage::Gateway,
+        ),
+        separator(),
+        filter_box(
             fl!("ui-tree-filter-gateway-badge"),
             badge,
             FilterMessage::GatewayBadge,
-        ))
+        ),
         // Its key at its right, as the C# `InputGestureText`.
-        .push(
-            row![
-                container(filter_box(
-                    fl!("ui-tree-filter-properties-panel"),
-                    properties,
-                    FilterMessage::PropertiesPanel,
-                ))
-                .width(Length::Fill),
-                text(fl!("ui-menu-keys-properties-panel"))
-                    .size(font_size::BODY_LARGE)
-                    .style(text::secondary),
-            ]
-            .spacing(GESTURE_GAP)
-            .align_y(iced::Alignment::Center),
-        );
+        row![
+            container(filter_box(
+                fl!("ui-tree-filter-properties-panel"),
+                properties,
+                FilterMessage::PropertiesPanel,
+            ))
+            .width(Length::Fill),
+            text(fl!("ui-menu-keys-properties-panel"))
+                .size(font_size::BODY_LARGE)
+                .style(text::secondary),
+        ]
+        .spacing(GESTURE_GAP)
+        .align_y(iced::Alignment::Center),
+    ];
     menu_card(entries).into()
+}
+
+/// The protocols the tree can be narrowed to, as the C# filter menu's "Protocols" submenu:
+/// one box each, ticked for those chosen.
+#[must_use]
+pub fn filter_protocol_entries<'a>(filter: &TreeFilter) -> Element<'a, Message> {
+    let entries = MenuColumn::new().extend(ProfileKind::ALL.into_iter().map(|kind| {
+        filter_box(
+            kind.label().to_owned(),
+            filter.has_protocol(kind),
+            FilterMessage::Protocol(kind),
+        )
+    }));
+    menu_card(entries).into()
+}
+
+/// A box of the filter menu: ticking it narrows the tree and leaves the menu open.
+fn filter_box<'a>(label: String, on: bool, message: FilterMessage) -> Element<'a, Message> {
+    container(
+        checkbox(on)
+            .style(styles::checkbox)
+            .label(label)
+            .text_size(font_size::BODY_LARGE)
+            .on_toggle(move |_| Message::App(AppMessage::Filter(message))),
+    )
+    .padding(spacing::XS)
+    .menu_item()
 }
 
 /// The entries of a session's menu about its server: its address copied, whether it
@@ -1314,7 +1355,7 @@ fn profile_entries<'a>(
         ))
         .push(separator())
         .push(
-            button(text(fl!("ui-tree-move-to-folder")).size(font_size::BODY_LARGE))
+            button(submenu_label(fl!("ui-tree-move-to-folder")))
                 .width(Length::Fill)
                 .style(menu_style)
                 .on_press_maybe(
@@ -1357,7 +1398,7 @@ fn tool_entries<'a>(
         ))
         .push(separator())
         .push(
-            button(text(fl!("ui-tree-move-to-folder")).size(font_size::BODY_LARGE))
+            button(submenu_label(fl!("ui-tree-move-to-folder")))
                 .width(Length::Fill)
                 .style(menu_style)
                 .on_press_maybe(
@@ -1425,9 +1466,9 @@ pub fn external_tools_entries<'a>(id: &ProfileId, names: &[String]) -> Element<'
 /// folder.
 fn add_entries(entries: MenuColumn<'_, Message>) -> MenuColumn<'_, Message> {
     entries
-        .push(keyed_entry(
+        // No key said beside it: the C# Add menu names none.
+        .push(entry(
             fl!("ui-tree-add-session"),
-            Some(fl!("ui-menu-keys-new-session")),
             Some(AppMessage::NewProfile),
         ))
         .push(entry(
@@ -2131,9 +2172,21 @@ fn profile_tab_entries<'a>(
     entries
 }
 
+/// The label of an entry that opens another menu: its text, and at its right the arrow that
+/// says so, as the C# `MenuItem` template's submenu glyph.
+fn submenu_label<'a>(label: String) -> Element<'a, Message> {
+    row![
+        text(label).size(font_size::BODY_LARGE).width(Length::Fill),
+        icons::icon(Icon::ChevronRight, Tint::Secondary, SUBMENU_ARROW_SIDE),
+    ]
+    .spacing(GESTURE_GAP)
+    .align_y(iced::Alignment::Center)
+    .into()
+}
+
 /// An entry that opens the menu `menu` beside the one shown.
 fn submenu<'a>(label: String, menu: TreeMenu) -> Element<'a, Message> {
-    button(text(label).size(font_size::BODY_LARGE))
+    button(submenu_label(label))
         .width(Length::Fill)
         .style(menu_style)
         .on_press(Message::OpenTreeMenu(menu))
@@ -2583,7 +2636,7 @@ pub fn folder_menu_entries<'a>(path: &str, connectable: usize) -> Element<'a, Me
                 TreeMenu::MoveFolder(path.to_owned()),
             ))
             .push(
-                button(text(fl!("ui-folder-color")).size(font_size::BODY_LARGE))
+                button(submenu_label(fl!("ui-folder-color")))
                     .width(Length::Fill)
                     .style(menu_style)
                     .on_press(Message::OpenTreeMenu(TreeMenu::FolderColor(
@@ -2713,13 +2766,14 @@ pub fn edit_selection_entries<'a>(
         );
     }
     let entries = entries.push(
-        button(text(fl!("ui-selection-set-gateway", count = routed)).size(font_size::BODY_LARGE))
-            .width(Length::Fill)
-            .style(menu_style)
-            .on_press_maybe(
-                (routed > 0).then_some(Message::OpenTreeMenu(TreeMenu::GatewaySelection)),
-            )
-            .opens_menu(),
+        button(submenu_label(fl!(
+            "ui-selection-set-gateway",
+            count = routed
+        )))
+        .width(Length::Fill)
+        .style(menu_style)
+        .on_press_maybe((routed > 0).then_some(Message::OpenTreeMenu(TreeMenu::GatewaySelection)))
+        .opens_menu(),
     );
     menu_card(entries).into()
 }

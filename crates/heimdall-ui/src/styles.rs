@@ -46,8 +46,9 @@ use iced::{Background, Border, Color, Element, Font, Pixels, Shadow, Theme, font
 
 use crate::tokens::{
     BORDER_WIDTH, DIALOG_SHADOW_ALPHA, DIALOG_SHADOW_BLUR, DIALOG_SHADOW_DEPTH, FOCUS_BORDER_WIDTH,
-    HIGH_CONTRAST_BORDER_WIDTH, INPUT_LINE_HEIGHT, INPUT_PADDING, OPACITY_DISABLED,
-    SELECTION_ALPHA, SELECTION_ALPHA_MIN, SELECTION_ALPHA_STEP, radius,
+    HIGH_CONTRAST_BORDER_WIDTH, INPUT_LINE_HEIGHT, INPUT_PADDING, MENU_SHADOW_ALPHA,
+    MENU_SHADOW_BLUR, MENU_SHADOW_DEPTH, OPACITY_DISABLED, SELECTION_ALPHA, SELECTION_ALPHA_MIN,
+    SELECTION_ALPHA_STEP, radius,
 };
 
 // The C# `AppFocusVisualStyle` (`CommonControls.xaml:240-253`) rings a focused button in a
@@ -1009,6 +1010,32 @@ pub fn panel(theme: &Theme) -> BoxStyle {
     }
 }
 
+/// The shadow under a context menu, as the C# `ContextMenu`'s `HasDropShadow`: a soft one,
+/// much lighter than a dialog's.
+pub fn menu_shadow() -> Shadow {
+    Shadow {
+        color: Color {
+            a: MENU_SHADOW_ALPHA,
+            ..Color::BLACK
+        },
+        offset: iced::Vector::new(0.0, MENU_SHADOW_DEPTH),
+        blur_radius: MENU_SHADOW_BLUR,
+    }
+}
+
+/// A context menu's card, as the C# `ThemedContextMenuStyle`: the window's background,
+/// outlined in the border colour, rounded as `CornerRadiusLg`, with a drop shadow.
+pub fn menu_card(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.surface)),
+        text_color: Some(brushes.text),
+        border: brushes.outline(brushes.edge, radius::LG),
+        shadow: menu_shadow(),
+        ..BoxStyle::default()
+    }
+}
+
 /// A bar along an edge of the window, as the C# toolbar and status bar: the window's
 /// background, square, no outline; a [`rule`] beside it draws the C# edge on its one side.
 pub fn bar(theme: &Theme) -> BoxStyle {
@@ -1518,6 +1545,18 @@ mod tests {
         assert!((style.shadow.offset.y - 8.0).abs() < f32::EPSILON);
         assert!(style.shadow.offset.x.abs() < f32::EPSILON);
         assert!((style.shadow.color.a - 0.4).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_context_menu_is_a_bordered_rounded_card_with_a_light_shadow() {
+        let style = menu_card(&magellan());
+        assert!((style.border.width - BORDER_WIDTH).abs() < f32::EPSILON);
+        assert!((style.border.radius.top_left - radius::LG).abs() < f32::EPSILON);
+        assert!(style.shadow.blur_radius > 0.0);
+        assert!(
+            style.shadow.blur_radius < dialog(&magellan()).shadow.blur_radius,
+            "lighter than a dialog's"
+        );
     }
 
     #[test]

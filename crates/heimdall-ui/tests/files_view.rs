@@ -1265,29 +1265,45 @@ fn pixel_of(view: iced::Element<'_, Message>, x: u32, y: u32) -> [u8; 4] {
     [bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]
 }
 
+/// `menu` drawn over a backdrop of one loud colour, as a menu is over the listing: the RGBA
+/// pixel at logical `(x, y)` and the backdrop's own.
+fn pixel_over_backdrop(menu: iced::Element<'_, Message>, x: u32, y: u32) -> ([u8; 4], [u8; 4]) {
+    let backdrop = || -> iced::Element<'_, Message> {
+        iced::widget::container(iced::widget::space().width(iced::Fill).height(iced::Fill))
+            .style(|_: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Color::from_rgb(1.0, 0.0, 1.0).into()),
+                ..iced::widget::container::Style::default()
+            })
+            .into()
+    };
+    (
+        pixel_of(iced::widget::stack![backdrop(), menu].into(), x, y),
+        pixel_of(backdrop(), x, y),
+    )
+}
+
 #[tokio::test]
 async fn the_files_menus_are_drawn_on_a_card_that_hides_what_is_under_them() {
     let dir = tempfile::tempdir().expect("dir");
     let (_core, tab) = files_tab(dir.path()).await;
-    let window = pixel_of(iced::widget::space().into(), 2, 20);
-    // In the card's margin, left of the entries: the card's colour, not the window's, or
-    // the listing under the menu shows through its entries.
-    let entry_menu = pixel_of(
+    // In the card's margin, left of the entries: the card's own colour, not the backdrop's,
+    // or the listing under the menu shows through its entries.
+    let (entry_menu, backdrop) = pixel_over_backdrop(
         heimdall_ui::tree_view::files_entry_menu(
             (tab, Side::Remote),
             Some(a_file(0)),
             sftp_tab(false, false),
         ),
-        2,
+        4,
         20,
     );
-    assert_ne!(entry_menu, window, "the entry menu has no card");
-    let bookmarks = pixel_of(
+    assert_ne!(entry_menu, backdrop, "the entry menu has no card");
+    let (bookmarks, backdrop) = pixel_over_backdrop(
         heimdall_ui::tree_view::files_bookmarks_menu(tab, &["/home/admin".to_owned()]),
-        2,
+        4,
         20,
     );
-    assert_ne!(bookmarks, window, "the bookmarks menu has no card");
+    assert_ne!(bookmarks, backdrop, "the bookmarks menu has no card");
 }
 
 #[tokio::test]

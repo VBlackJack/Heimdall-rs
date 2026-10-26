@@ -68,6 +68,7 @@ pub mod local_form;
 mod logging;
 mod macros_view;
 pub mod masked_copy_view;
+mod menu_anchor;
 mod menu_column;
 mod menu_fit;
 mod menu_nav;

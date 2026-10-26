@@ -133,8 +133,12 @@ use heimdall_app::split::{Axis, Layout as SplitLayout, MAX_PANES, Placement, Spl
 /// Grid of a tab before its first layout.
 const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
 
-/// Width of the profile list, in logical pixels, as the C# `SessionTreeColumn`'s.
-const SIDEBAR_WIDTH: f32 = 260.0;
+/// Width of the profile list at a first start, in logical pixels: the width the C# window
+/// draws its session tree at; a width the user dragged to is kept from then on.
+const SIDEBAR_WIDTH: f32 = 250.0;
+/// The width every earlier version saved without the sidebar ever being dragged: it is the
+/// old default, so it is read as "never dragged" and the current default takes its place.
+const LEGACY_SIDEBAR_WIDTH: f32 = 260.0;
 /// Narrowest the sidebar is dragged to, as the C# column's minimum.
 const SIDEBAR_MIN_WIDTH: f32 = 243.0;
 /// Widest it is dragged to, as the C# column's maximum.
@@ -911,6 +915,9 @@ pub enum Message {
     CopyRouteReport,
     /// Open a menu of the profile tree at the pointer.
     OpenTreeMenu(TreeMenu),
+    /// A menu opened under its toolbar button, of the bounds given, as the C# menus of the
+    /// filter, Add and More buttons.
+    OpenTreeMenuBelow(TreeMenu, Rectangle),
     /// Close the open menu.
     CloseTreeMenu,
     /// Left in a submenu: back to the menu it was opened from.
@@ -1280,6 +1287,9 @@ impl fmt::Debug for Message {
             Self::TestRouteForm => f.write_str("TestRouteForm"),
             Self::CopyRouteReport => f.write_str("CopyRouteReport"),
             Self::OpenTreeMenu(menu) => write!(f, "OpenTreeMenu({menu:?})"),
+            Self::OpenTreeMenuBelow(menu, button) => {
+                write!(f, "OpenTreeMenuBelow({menu:?}, {button:?})")
+            }
             Self::CloseTreeMenu => f.write_str("CloseTreeMenu"),
             Self::MenuBack => f.write_str("MenuBack"),
             Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
@@ -1752,6 +1762,12 @@ pub struct Shell {
     monitors: Option<Vec<crate::rdp_options::Monitor>>,
     /// The sidebar's width, as dragged.
     sidebar_width: f32,
+    /// The splitter was dragged: only then is the width saved, so a default that changes
+    /// is not frozen by the last version's save.
+    sidebar_dragged: bool,
+    /// The height of the toolbar button the open menu hangs under, so that flipped up it
+    /// clears the button; none for a menu at the pointer.
+    menu_lift: f32,
     /// The handle between the sidebar and the sessions is held.
     sidebar_drag: bool,
     /// The height of the properties panel under the tree, as dragged.
@@ -1916,8 +1932,17 @@ impl Destination {
     }
 }
 
+/// The sidebar width to keep from a saved one: a finite width the user dragged to, clamped;
+/// none for no width, and for the old default, which no drag chose.
+#[must_use]
+pub fn kept_sidebar_width(saved: Option<f32>) -> Option<f32> {
+    saved
+        .filter(|width| width.is_finite() && (*width - LEGACY_SIDEBAR_WIDTH).abs() > f32::EPSILON)
+        .map(|width| width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH))
+}
+
 /// The application's name, at the head of the navigation: a name, not translated.
-const APP_NAME: &str = "Heimdall";
+const APP_NAME: &str = "Heimdall-rs";
 /// Between the folders listed in a question.
 const FOLDER_LIST_SEPARATOR: &str = ", ";
 
@@ -1989,8 +2014,9 @@ impl Shell {
         let mut shell = Self::with_config(config);
         // The sidebar as the window was left.
         let left = heimdall_core::window_state::load(&memory);
-        if let Some(width) = left.sidebar_width.filter(|width| width.is_finite()) {
-            shell.sidebar_width = width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+        if let Some(width) = kept_sidebar_width(left.sidebar_width) {
+            shell.sidebar_width = width;
+            shell.sidebar_dragged = true;
         }
         shell.sidebar_hidden = left.sidebar_hidden;
         shell.properties_height =
@@ -2101,6 +2127,8 @@ impl Shell {
             window_extent: None,
             monitors: None,
             sidebar_width: SIDEBAR_WIDTH,
+            sidebar_dragged: false,
+            menu_lift: 0.0,
             sidebar_drag: false,
             properties_height: crate::properties_panel::DEFAULT_HEIGHT,
             properties_drag: None,
@@ -3149,6 +3177,7 @@ impl Shell {
             Message::SaveGatewayForm => self.save_gateway_form(),
             Message::TestRouteForm => self.test_route_form(),
             message @ (Message::OpenTreeMenu(_)
+            | Message::OpenTreeMenuBelow(..)
             | Message::CloseTreeMenu
             | Message::MenuBack
             | Message::ResetTreeFilters) => return self.tree_menu_message(message),
@@ -4356,6 +4385,9 @@ impl Shell {
             (true, Some((_, at))) => *at,
             _ => cursor,
         };
+        if !menu.is_submenu() {
+            self.menu_lift = 0.0;
+        }
         // What Left goes back to: the menu a submenu came out of.
         self.menu_parent = match &self.menu {
             Some((parent, _)) if menu.is_submenu() => Some(parent.clone()),
@@ -5439,7 +5471,7 @@ impl Shell {
             return iced::exit();
         };
         let leaving = heimdall_core::window_state::WindowState {
-            sidebar_width: Some(self.sidebar_width),
+            sidebar_width: self.sidebar_dragged.then_some(self.sidebar_width),
             sidebar_hidden: self.sidebar_hidden,
             properties_panel_height: Some(self.properties_height),
             folded: self.app.folded_folders(),
@@ -5652,9 +5684,12 @@ impl Shell {
             let token = crate::menu_nav::menu_token(&self.menu.as_ref().map(|(menu, _)| menu));
             let back = self.menu_parent.is_some().then_some(Message::MenuBack);
             layers = layers.push(opaque(
-                mouse_area(menu_at(crate::menu_nav::menu_nav(entries, token, back), at))
-                    .on_press(Message::CloseTreeMenu)
-                    .on_right_press(Message::CloseTreeMenu),
+                mouse_area(
+                    menu_at(crate::menu_nav::menu_nav(entries, token, back), at)
+                        .lifted(self.menu_lift),
+                )
+                .on_press(Message::CloseTreeMenu)
+                .on_right_press(Message::CloseTreeMenu),
             ));
         }
         container(CursorTracker::new(layers, self.cursor.clone()))
@@ -5932,6 +5967,8 @@ impl Shell {
                 self.app.shows_gateway_badge(),
                 self.app.shows_properties_panel(),
             )
+        } else if let TreeMenu::FilterProtocols = menu {
+            tree_view::filter_protocol_entries(self.app.tree_filter())
         } else if let TreeMenu::Selection = menu {
             let selected = self.app.selected_profiles();
             let connectable = selected
@@ -6002,6 +6039,7 @@ impl Shell {
                 TreeMenu::Add
                 | TreeMenu::More
                 | TreeMenu::Filter
+                | TreeMenu::FilterProtocols
                 | TreeMenu::Tab(_)
                 | TreeMenu::Pane(_)
                 | TreeMenu::ConnectWith(_)
@@ -6059,10 +6097,15 @@ impl Shell {
                 .and_then(|id| self.app.profile_summary(id));
             return match selected {
                 Some(profile) => crate::detail_view::view(
-                    &profile,
-                    self.app.selected_credentials(),
-                    self.app.can_edit(&profile.id),
+                    crate::properties_panel::Facts {
+                        profile: &profile,
+                        saved: self.app.selected_credentials(),
+                        provider: self.app.provider_consulted(&profile.id),
+                        reachability: self.app.reachability(&profile.id),
+                        gateway_badge: self.app.shows_gateway_badge(),
+                    },
                     self.app.profile_state(&profile.id),
+                    self.app.can_edit(&profile.id),
                 ),
                 None => crate::launchpad::select(
                     fl!("ui-home-select"),
@@ -6874,12 +6917,11 @@ impl Shell {
     /// an intentional divergence from the C# tree, which turned its horizontal bar off in
     /// 0f5cd2f1. Every row is as wide as the widest or `viewport`, so the selection spans it.
     fn tree_scroll(&self, viewport: f32) -> Element<'_, Message> {
-        styles::scroll(EvenWidth::new(
-            tree_view::ROW_GAP,
-            viewport,
-            styles::SCROLLBAR_WIDTH,
-            self.tree_list(),
-        ))
+        let (capped, rows): (Vec<bool>, Vec<_>) = self.tree_list().into_iter().unzip();
+        styles::scroll(
+            EvenWidth::new(tree_view::ROW_GAP, viewport, styles::SCROLLBAR_WIDTH, rows)
+                .capped(capped),
+        )
         .id(tree_scroll_id())
         .width(Length::Fill)
         // The whole area, so the sideways bar sits at its foot, not under the last row.
@@ -6891,11 +6933,13 @@ impl Shell {
         .into()
     }
 
-    /// The tree's rows, searched and filtered, and what it says when none passes.
-    fn tree_list(&self) -> Vec<Element<'_, Message>> {
-        let mut list: Vec<Element<'_, Message>> = Vec::new();
+    /// The tree's rows, searched and filtered, and what it says when none passes; each with
+    /// whether it keeps to the sidebar's width (a folder's header, its count in view at rest)
+    /// instead of sharing the widest row's.
+    fn tree_list(&self) -> Vec<(bool, Element<'_, Message>)> {
+        let mut list: Vec<(bool, Element<'_, Message>)> = Vec::new();
         if self.app.profile_summaries().is_empty() {
-            list.push(text(fl!("ui-sidebar-empty")).into());
+            list.push((false, text(fl!("ui-sidebar-empty")).into()));
         }
         let rows = self.app.tree_rows(&self.search);
         let filter = self.app.tree_filter();
@@ -6915,14 +6959,15 @@ impl Shell {
                     Message::Search(String::new()),
                 )
             };
-            list.push(text(said).size(font_size::CAPTION).into());
-            list.push(
+            list.push((false, text(said).size(font_size::CAPTION).into()));
+            list.push((
+                false,
                 button(text(way_back).size(font_size::CAPTION))
                     .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::secondary)
                     .on_press(message)
                     .into(),
-            );
+            ));
         }
         let badge = self.app.shows_gateway_badge();
         // As the C# tree: folders nested and folded, sub-folders first, "(No Folder)" last.
@@ -6936,29 +6981,32 @@ impl Shell {
                 total,
             } => {
                 if let Some(editor) = self.inline_editor(&TreeCursor::Folder(path.clone()), depth) {
-                    return editor;
+                    return (false, editor);
                 }
                 let color = self.app.folder_color(&path);
                 let target = heimdall_app::DropTarget::Folder(path.clone());
                 let selected = self.app.selected_folder.as_deref() == Some(path.as_str());
-                crate::tree_drag::drop_zone(
-                    tree_view::folder_row(
-                        path,
-                        name,
-                        (depth, open),
-                        (count, total),
-                        color,
-                        selected,
+                (
+                    true,
+                    crate::tree_drag::drop_zone(
+                        tree_view::folder_row(
+                            path,
+                            name,
+                            (depth, open),
+                            (count, total),
+                            color,
+                            selected,
+                        ),
+                        target,
+                        self.tree_drag.as_ref(),
                     ),
-                    target,
-                    self.tree_drag.as_ref(),
                 )
             }
             TreeRow::Profile { mut profile, depth } => {
                 if let Some(editor) =
                     self.inline_editor(&TreeCursor::Profile(profile.id.clone()), depth)
                 {
-                    return editor;
+                    return (false, editor);
                 }
                 if !badge {
                     profile.gateway = None;
@@ -6975,17 +7023,18 @@ impl Shell {
                     depth,
                 );
                 // Sessions dragged go before or after a session; a folder, into its folder.
-                match self.tree_drag.as_ref().filter(|drag| {
+                let row = match self.tree_drag.as_ref().filter(|drag| {
                     drag.active && matches!(drag.source, crate::tree_drag::DragSource::Profiles(_))
                 }) {
                     Some(drag) => crate::tree_drag::positioned_zone(row, &profile.id, drag),
                     None => crate::tree_drag::drop_zone(row, target, self.tree_drag.as_ref()),
-                }
+                };
+                (false, row)
             }
         }));
         // The shared files' sessions, read-only, under the saved ones.
         if let Some(shared) = crate::shared_view::section(&self.app) {
-            list.push(shared);
+            list.push((false, shared));
         }
         list
     }
@@ -6995,6 +7044,10 @@ impl Shell {
     fn tree_menu_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::OpenTreeMenu(menu) => self.open_tree_menu(menu),
+            Message::OpenTreeMenuBelow(menu, button) => {
+                self.open_tree_menu_at(menu, crate::menu_anchor::under(button), None);
+                self.menu_lift = button.height;
+            }
             Message::CloseTreeMenu => self.menu = None,
             // The submenu goes, the menu it came from comes back where it was.
             Message::MenuBack => {
@@ -7063,12 +7116,16 @@ impl Shell {
         });
         let tool = |glyph: Element<'static, Message>, tip: String, menu: TreeMenu| {
             styles::tip(
-                button(glyph)
-                    .width(icons::BUTTON_SIDE)
-                    .height(icons::BUTTON_SIDE)
-                    .padding(0.0)
-                    .style(styles::subtle)
-                    .on_press(Message::OpenTreeMenu(menu)),
+                // The menu opens under the button, as the C# toolbar menus do.
+                crate::menu_anchor::below(
+                    button(glyph)
+                        .width(icons::BUTTON_SIDE)
+                        .height(icons::BUTTON_SIDE)
+                        .padding(0.0)
+                        .style(styles::subtle)
+                        .on_press(Message::OpenTreeMenu(menu.clone())),
+                    menu,
+                ),
                 text(tip).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
@@ -7316,6 +7373,7 @@ impl Shell {
             ) => {}
             Message::App(AppMessage::ToggleFolder(_))
             | Message::OpenTreeMenu(_)
+            | Message::OpenTreeMenuBelow(..)
             | Message::TreeClick(_)
             // The desktop takes no more keys: the tree has them, as after a click in it.
             | Message::ContentRelease => self.tree_focused = true,
@@ -7705,6 +7763,7 @@ impl Shell {
             }
             Message::SidebarDragged(x) if self.sidebar_drag => {
                 self.sidebar_width = x.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+                self.sidebar_dragged = true;
                 Vec::new()
             }
             Message::SidebarDragEnd => {
@@ -14837,6 +14896,19 @@ mod tests {
     use iced::keyboard::{Key, Location, Modifiers};
 
     use super::*;
+
+    #[test]
+    fn a_saved_sidebar_width_is_kept_only_when_a_drag_chose_it() {
+        assert_eq!(kept_sidebar_width(None), None, "never dragged");
+        assert_eq!(
+            kept_sidebar_width(Some(260.0)),
+            None,
+            "the old default, saved by every earlier version, gives way to the new one"
+        );
+        assert_eq!(kept_sidebar_width(Some(300.0)), Some(300.0), "dragged");
+        assert_eq!(kept_sidebar_width(Some(9000.0)), Some(SIDEBAR_MAX_WIDTH));
+        assert_eq!(kept_sidebar_width(Some(f32::NAN)), None);
+    }
 
     fn pressed(key: Named, modifiers: Modifiers) -> iced::Event {
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
