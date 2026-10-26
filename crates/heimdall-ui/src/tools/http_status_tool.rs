@@ -185,13 +185,16 @@ impl HttpStatusPane {
     }
 }
 
-fn category_color(category: HttpStatusCategory, theme: &Theme) -> iced::Color {
+pub(crate) fn category_color(category: HttpStatusCategory, theme: &Theme) -> iced::Color {
     let colors = crate::themes::colors_of(theme);
-    match category {
-        HttpStatusCategory::Informational => colors.cyan,
-        HttpStatusCategory::Success => colors.green,
-        HttpStatusCategory::Redirection => colors.blue,
-        HttpStatusCategory::ClientError => colors.orange,
-        HttpStatusCategory::ServerError => colors.red,
-    }
+    crate::styles::hue_text(
+        theme,
+        match category {
+            HttpStatusCategory::Informational => colors.cyan,
+            HttpStatusCategory::Success => colors.green,
+            HttpStatusCategory::Redirection => colors.blue,
+            HttpStatusCategory::ClientError => colors.orange,
+            HttpStatusCategory::ServerError => colors.red,
+        },
+    )
 }

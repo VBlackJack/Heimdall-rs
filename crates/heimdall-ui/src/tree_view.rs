@@ -237,26 +237,31 @@ pub fn sized_state_dot<'a>(state: Option<SessionState>, side: f32) -> Element<'a
     container(iced::widget::space())
         .width(side)
         .height(side)
-        .style(move |theme: &Theme| {
-            let palette = theme.extended_palette();
-            let colour = match state {
-                Some(SessionState::Connected) => palette.success.base.color,
-                Some(SessionState::Connecting | SessionState::Reconnecting) => {
-                    palette.warning.base.color
-                }
-                Some(SessionState::Failed) => palette.danger.base.color,
-                Some(SessionState::Ended) | None => palette.secondary.base.color,
-            };
-            container::Style {
-                background: Some(colour.into()),
-                border: iced::Border {
-                    radius: (side / 2.0).into(),
-                    ..iced::Border::default()
-                },
-                ..container::Style::default()
-            }
+        .style(move |theme: &Theme| container::Style {
+            background: Some(state_color(theme, state).into()),
+            border: iced::Border {
+                radius: (side / 2.0).into(),
+                ..iced::Border::default()
+            },
+            ..container::Style::default()
         })
         .into()
+}
+
+/// The colour of the dot of a session in `state`.
+pub(crate) fn state_color(theme: &Theme, state: Option<SessionState>) -> iced::Color {
+    let palette = theme.extended_palette();
+    crate::themes::row_mark(
+        theme,
+        match state {
+            Some(SessionState::Connected) => palette.success.base.color,
+            Some(SessionState::Connecting | SessionState::Reconnecting) => {
+                palette.warning.base.color
+            }
+            Some(SessionState::Failed) => palette.danger.base.color,
+            Some(SessionState::Ended) | None => crate::themes::comment_of(theme),
+        },
+    )
 }
 
 /// Width of the ring that says what the background check found, in logical pixels, as the
@@ -281,12 +286,15 @@ fn profile_dot<'a>(state: Option<SessionState>, reach: Option<&Verdict>) -> Elem
         .height(DOT_SIZE)
         .style(move |theme: &Theme| {
             let palette = theme.extended_palette();
-            let colour = match tone {
-                Tone::Success => palette.success.base.color,
-                Tone::Danger => palette.danger.base.color,
-                Tone::Warning => palette.warning.base.color,
-                Tone::Unknown => palette.secondary.base.color,
-            };
+            let colour = crate::themes::row_mark(
+                theme,
+                match tone {
+                    Tone::Success => palette.success.base.color,
+                    Tone::Danger => palette.danger.base.color,
+                    Tone::Warning => palette.warning.base.color,
+                    Tone::Unknown => crate::themes::comment_of(theme),
+                },
+            );
             container::Style {
                 border: iced::Border {
                     color: colour,
@@ -660,6 +668,23 @@ fn gateway_badge_text(badge: &GatewayBadge) -> String {
     }
 }
 
+/// The border and the text of the gateway badge: the info colour's border and the secondary
+/// text, as the C# badge; the warning colour for both when the gateway is missing.
+pub(crate) fn gateway_badge_colors(theme: &Theme, missing: bool) -> (iced::Color, iced::Color) {
+    let palette = theme.extended_palette();
+    if missing {
+        (
+            palette.warning.base.color,
+            crate::styles::warning_text_color(theme),
+        )
+    } else {
+        (
+            crate::themes::colors_of(theme).cyan,
+            palette.secondary.base.color,
+        )
+    }
+}
+
 /// "via name" when a gateway is on the way, "gateway missing" in the warning colour when it
 /// is not saved: the C# tree's badge.
 fn gateway_badge(badge: &GatewayBadge) -> Element<'static, Message> {
@@ -676,14 +701,7 @@ fn gateway_badge(badge: &GatewayBadge) -> Element<'static, Message> {
         // As the C# badge: the card's background, the info colour's border and the
         // secondary text; the warning colour when the gateway is missing.
         let palette = theme.extended_palette();
-        let (border, text_colour) = if missing {
-            (palette.warning.base.color, palette.warning.base.color)
-        } else {
-            (
-                crate::themes::colors_of(theme).cyan,
-                palette.secondary.base.color,
-            )
-        };
+        let (border, text_colour) = gateway_badge_colors(theme, missing);
         container::Style {
             text_color: Some(text_colour),
             background: Some(palette.background.weak.color.into()),
@@ -769,7 +787,7 @@ fn row_tooltip(profile: &ProfileSummary, reach: Option<&Verdict>) -> String {
 
 /// A menu entry as the C# menu draws one: plain text, the whole row lit under the pointer,
 /// faded when it cannot be chosen.
-fn menu_style(theme: &Theme, status: button::Status) -> button::Style {
+pub(crate) fn menu_style(theme: &Theme, status: button::Status) -> button::Style {
     let palette = theme.extended_palette();
     let plain = button::Style {
         text_color: palette.background.base.text,
@@ -781,11 +799,15 @@ fn menu_style(theme: &Theme, status: button::Status) -> button::Style {
     };
     match status {
         button::Status::Active => plain,
-        button::Status::Hovered | button::Status::Pressed => button::Style {
-            background: Some(palette.primary.weak.color.into()),
-            text_color: palette.primary.weak.text,
-            ..plain
-        },
+        button::Status::Hovered | button::Status::Pressed => {
+            // As the drop-down's entry under the pointer.
+            let (lit, on_lit) = crate::styles::menu_entry_lit(theme);
+            button::Style {
+                background: Some(lit.into()),
+                text_color: on_lit,
+                ..plain
+            }
+        }
         button::Status::Disabled => button::Style {
             // The C# `TextDisabledBrush`, the secondary text, at `OpacityDisabled`.
             text_color: palette
@@ -799,7 +821,7 @@ fn menu_style(theme: &Theme, status: button::Status) -> button::Style {
 }
 
 /// The Delete entry: in the error colour, as in the C# menu.
-fn danger_style(theme: &Theme, status: button::Status) -> button::Style {
+pub(crate) fn danger_style(theme: &Theme, status: button::Status) -> button::Style {
     let palette = theme.extended_palette();
     match status {
         button::Status::Hovered | button::Status::Pressed => button::Style {
@@ -808,7 +830,7 @@ fn danger_style(theme: &Theme, status: button::Status) -> button::Style {
             ..menu_style(theme, status)
         },
         _ => button::Style {
-            text_color: palette.danger.base.color,
+            text_color: crate::styles::error_text_color(theme),
             ..menu_style(theme, status)
         },
     }

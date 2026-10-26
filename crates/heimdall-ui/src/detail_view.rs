@@ -81,14 +81,24 @@ fn credentials(saved: &SavedCredentials) -> String {
     kept.join(", ")
 }
 
+/// The text and the fill of the pill of protocol `kind` in `theme`.
+pub(crate) fn pill_colors(theme: &Theme, kind: ProfileKind) -> (iced::Color, iced::Color) {
+    let fill = crate::icons::protocol_color(theme, kind);
+    // The C# `BadgeTextBrush`: the background's colour on the protocol's; black or white
+    // where that leaves the name under 4.5:1.
+    (
+        crate::themes::label_on(theme.palette().background, fill),
+        fill,
+    )
+}
+
 /// Protocol `kind`, its name on its colour, as the C# badge.
 pub(crate) fn pill<'a>(kind: ProfileKind) -> Element<'a, Message> {
     container(text(kind.label()).size(font_size::CAPTION).font(SEMIBOLD))
         .padding([PILL_PADDING_Y, SMALL_GAP])
         .style(move |theme: &Theme| container::Style {
-            // The C# `BadgeTextBrush`: the background's colour on the protocol's.
-            text_color: Some(theme.palette().background),
-            background: Some(crate::icons::protocol_color(theme, kind).into()),
+            text_color: Some(pill_colors(theme, kind).0),
+            background: Some(pill_colors(theme, kind).1.into()),
             border: iced::Border {
                 radius: radius::SM.into(),
                 ..iced::Border::default()

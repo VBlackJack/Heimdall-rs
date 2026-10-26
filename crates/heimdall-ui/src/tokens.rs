@@ -105,6 +105,20 @@ pub const COUNT_BADGE_PADDING: [f32; 2] = [0.0, 5.0];
 /// Opacity of a control that cannot be used, as the C# `OpacityDisabled`.
 pub const OPACITY_DISABLED: f32 = 0.6;
 
+/// Opacity of the accent behind the selected row of the session tree, as the C# selected
+/// item: the ground its text has to read on besides the window and a card.
+pub const SELECTED_ROW_ALPHA: f32 = 0.18;
+
+/// Opacity of the accent behind the text selected in a field, before it is lowered until the
+/// text reads on it.
+pub const SELECTION_ALPHA: f32 = 0.35;
+
+/// How much the selection's opacity drops per step while the text does not read on it.
+pub const SELECTION_ALPHA_STEP: f32 = 0.05;
+
+/// The least opacity the selection is lowered to: a fainter one would not be seen.
+pub const SELECTION_ALPHA_MIN: f32 = 0.1;
+
 /// How much lighter the accent is under the pointer, and darker pressed, as `ThemeForge`'s
 /// accent tint moves its lightness.
 pub const ACCENT_SHIFT: f32 = 0.08;

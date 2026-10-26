@@ -356,7 +356,6 @@ impl TcpPingPane {
         state: &'a ToolPane,
         theme: &Theme,
     ) -> Element<'a, Message> {
-        let colors = crate::themes::colors_of(theme);
         let default_port = DEFAULT_PORT.to_string();
         let default_count = DEFAULT_COUNT.to_string();
 
@@ -450,7 +449,7 @@ impl TcpPingPane {
             body_col = body_col.push(
                 text(Self::problem_text(problem))
                     .size(font_size::BODY)
-                    .color(colors.red),
+                    .color(crate::styles::error_text_color(theme)),
             );
         }
 
@@ -490,9 +489,9 @@ impl TcpPingPane {
             let mut list = column!().spacing(spacing::XS);
             for probe in &self.probes {
                 let color = if probe.outcome.is_ok() {
-                    colors.green
+                    crate::styles::success_text_color(theme)
                 } else {
-                    colors.red
+                    crate::styles::error_text_color(theme)
                 };
                 list = list.push(
                     text(self.probe_line(probe))

@@ -51,7 +51,7 @@ const ICON_GAP: f32 = 6.0;
 const DETAIL_INDENT: f32 = ICON_SIDE + ICON_GAP;
 
 /// How strongly a badge's colour fills behind it, as the C# template's `Opacity="0.15"`.
-const BADGE_ALPHA: f32 = 0.15;
+pub(crate) const BADGE_ALPHA: f32 = 0.15;
 
 /// Room around a badge's text, as the C# template's `Margin="6,2"`.
 const BADGE_PADDING: [f32; 2] = [2.0, 6.0];
@@ -264,6 +264,19 @@ fn badge(result: &QuickResult, theme: &Theme) -> (String, Color) {
     }
 }
 
+/// The colour of the text of a badge whose fill is `color` at [`BADGE_ALPHA`] over the
+/// dialog, a card or a row under the pointer.
+pub(crate) fn badge_text(theme: &Theme, color: Color) -> Color {
+    let fill = color.scale_alpha(BADGE_ALPHA);
+    let grounds = [
+        theme.palette().background,
+        styles::card_color(theme),
+        crate::themes::selection_of(theme),
+    ]
+    .map(|ground| crate::themes::over(fill, ground));
+    crate::themes::legible_on(color, &grounds, crate::themes::MIN_TEXT_CONTRAST)
+}
+
 /// `title` with what `query` matches in it bold in `accent`.
 fn lit_title<'a>(title: String, query: &str, accent: Color) -> Element<'a, Message> {
     let Some((start, end)) = highlight(&title, query) else {
@@ -304,12 +317,12 @@ fn result_line<'a>(
             text(fl!("ui-palette-account", account = account.as_str())).size(font_size::CAPTION),
         );
     }
-    let (badge_text, badge_color) = badge(&row.result, theme);
+    let (badge_label, badge_color) = badge(&row.result, theme);
     let badge = container(
-        text(badge_text)
+        text(badge_label)
             .size(font_size::SMALL_CAPTION)
             .font(styles::SEMIBOLD)
-            .color(badge_color),
+            .color(badge_text(theme, badge_color)),
     )
     .padding(BADGE_PADDING)
     .style(move |_: &Theme| {
