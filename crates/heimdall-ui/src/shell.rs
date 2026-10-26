@@ -80,8 +80,8 @@ use iced::keyboard::key::Named;
 use iced::task::Handle;
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
-    Column, button, center, checkbox, column, combo_box, container, mouse_area, opaque, operation,
-    pick_list, pin, responsive, row, scrollable, stack, text, text_input, tooltip,
+    Column, button, center, checkbox, column, container, mouse_area, opaque, operation, pick_list,
+    pin, responsive, row, scrollable, stack, text, text_input, tooltip,
 };
 use iced::{
     Color, Element, Length, Point, Rectangle, Subscription, Task, Theme, event, keyboard, window,
@@ -234,14 +234,6 @@ const TAB_HEADERS_PADDING: iced::Padding = iced::Padding {
     bottom: 0.0,
     left: spacing::SM,
 };
-
-/// The shells the local shell form's list offers.
-fn shell_presets() -> Vec<String> {
-    heimdall_app::local_draft::SHELL_PRESETS
-        .iter()
-        .map(|preset| (*preset).to_owned())
-        .collect()
-}
 
 /// Width of the "Operating system of the far end" list, as the C# `MinWidth` of 200 and the
 /// longest name it shows.
@@ -904,6 +896,10 @@ pub enum Message {
     SettingsSection(SettingsSection),
     /// Show this tab of the profile form.
     ProfileTab(ProfileTab),
+    /// Open or close the local shell form's list of common shells.
+    ToggleShellList,
+    /// Take this shell from the list into the form's executable, and close the list.
+    ShellPreset(String),
     /// Show this pill sub-tab of the RDP options of the profile form.
     RdpSubTab(RdpSubTab),
     /// The RDP profile form's "Refresh" of its monitors, as the C# `RefreshMonitorsCommand`:
@@ -1294,6 +1290,8 @@ impl fmt::Debug for Message {
             Self::SettingsSection(section) => write!(f, "SettingsSection({section:?})"),
             Self::ProfileTab(tab) => write!(f, "ProfileTab({tab:?})"),
             Self::RdpSubTab(tab) => write!(f, "RdpSubTab({tab:?})"),
+            Self::ToggleShellList => f.write_str("ToggleShellList"),
+            Self::ShellPreset(preset) => write!(f, "ShellPreset({preset:?})"),
             Self::RefreshMonitors => f.write_str("RefreshMonitors"),
             Self::SettingsSearch(typed) => write!(f, "SettingsSearch({typed:?})"),
             Self::FindModifiedSettings => f.write_str("FindModifiedSettings"),
@@ -1845,11 +1843,8 @@ pub struct Shell {
     profile_tab: ProfileTab,
     /// The pill sub-tab of the RDP options shown, Display & Audio each time the form opens.
     rdp_sub_tab: RdpSubTab,
-    /// The executable list of the local shell form, a combo box that can be typed in: its
-    /// text is kept equal to the form's by [`Shell::keep_executables`].
-    executables: combo_box::State<String>,
-    /// What [`Shell::executables`] was last made to hold.
-    executables_text: String,
+    /// Whether the local shell form's list of common shells is open.
+    presets_open: bool,
     /// Whether a save of the open profile form was refused: from then on, as the C# server
     /// dialog, each tab's header counts the fields left to fix on it.
     profile_refused: bool,
@@ -2183,8 +2178,7 @@ impl Shell {
             settings_rail_focused: false,
             profile_tab: ProfileTab::default(),
             rdp_sub_tab: RdpSubTab::default(),
-            executables: combo_box::State::new(shell_presets()),
-            executables_text: String::new(),
+            presets_open: false,
             profile_refused: false,
             settings_search: String::new(),
             settings_highlight: None,
@@ -3079,6 +3073,8 @@ impl Shell {
             | Message::SettingsSection(_)
             | Message::ProfileTab(_)
             | Message::RdpSubTab(_)
+            | Message::ToggleShellList
+            | Message::ShellPreset(_)
             | Message::ProfilePassword(_)
             | Message::BulkPasswordField { .. }
             | Message::FocusBulkPasswordField(_)
@@ -3403,12 +3399,12 @@ impl Shell {
         }
         self.forget_finished();
         self.keep_monitors();
-        self.keep_executables();
         // The form closed, or back to its protocols: it opens again on General. A gateway
         // edited from it keeps its tab for its return.
         if !self.profile_form_open() {
             self.profile_tab = ProfileTab::General;
             self.rdp_sub_tab = RdpSubTab::default();
+            self.presets_open = false;
             self.profile_refused = false;
         }
         // The previous run's sessions, offered once nothing else is asked and the window is
@@ -3517,6 +3513,14 @@ impl Shell {
             }
             // A pill sub-tab shows within the tab, which keeps its place.
             Message::RdpSubTab(tab) => self.rdp_sub_tab = tab,
+            Message::ToggleShellList => self.presets_open = !self.presets_open,
+            Message::ShellPreset(preset) => {
+                self.presets_open = false;
+                return self.update(Message::App(AppMessage::ProfileField {
+                    field: ProfileField::LocalProgram,
+                    value: preset,
+                }));
+            }
             Message::ProfilePassword(value) => self.profile_password = Zeroizing::new(value),
             Message::BulkPasswordField { index, value } => {
                 if let Some(field) = self.bulk_password.get_mut(index) {
@@ -3818,7 +3822,7 @@ impl Shell {
             passwords: self.password_store(),
             profile_tab: self.profile_tab,
             rdp_sub_tab: self.rdp_sub_tab,
-            executables: &self.executables,
+            presets_open: self.presets_open,
             profile_refused: self.profile_refused,
             scheduled: self.scheduled_dialog(),
         }
@@ -4767,21 +4771,6 @@ impl Shell {
                 y: Some(share),
             },
         )
-    }
-
-    /// Keeps the text of the local shell form's executable list equal to the form's, which a
-    /// choice from the list, or the form opening on a saved profile, sets without typing: the
-    /// list shows its own text while it has the keyboard.
-    fn keep_executables(&mut self) {
-        let Some(Dialog::EditProfile { draft, .. }) = &self.app.dialog else {
-            return;
-        };
-        if draft.protocol != DraftProtocol::Local || draft.local_program == self.executables_text {
-            return;
-        }
-        self.executables_text.clone_from(&draft.local_program);
-        self.executables =
-            combo_box::State::with_selection(shell_presets(), Some(&self.executables_text));
     }
 
     /// Drops the tasks of closed tabs and the drafts of questions no longer asked.
@@ -11059,8 +11048,8 @@ struct Forms<'a> {
     profile_tab: ProfileTab,
     /// The RDP options' pill sub-tab shown.
     rdp_sub_tab: RdpSubTab,
-    /// The local shell form's executable list, with what is typed in it.
-    executables: &'a combo_box::State<String>,
+    /// Whether the local shell form's list of common shells is open.
+    presets_open: bool,
     /// Whether a save of the profile form was refused, its tabs counting what to fix.
     profile_refused: bool,
     /// The settings' wait after connecting, in milliseconds: what an RDP profile leaving
@@ -12371,7 +12360,10 @@ fn rdp_sub_tabs<'a>(
             })
             .padding(SEGMENT_PADDING)
             .style(styles::segment(tab == shown))
-            .on_press(Message::RdpSubTab(tab)),
+            // As the C#: the whole tab control is disabled while the defaults decide.
+            .on_press_maybe(
+                (!draft.is_on(ProfileToggle::FollowDefaults)).then_some(Message::RdpSubTab(tab)),
+            ),
         )
     });
     let page = match shown {
@@ -12604,9 +12596,7 @@ fn general_tab<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column<'a, Mes
     }
     // What the far end runs, under the address and above its test, as the C# General tab's
     // list.
-    if draft.shows_remote_os() {
-        basics = basics.push(remote_os_choice(draft));
-    }
+    basics = basics.push(remote_os_choice(draft));
     if draft.shows(ProfileField::Host) {
         basics = basics.push(crate::address_test_view::view(draft, forms.gateways));
     }
@@ -12626,7 +12616,7 @@ fn general_tab<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column<'a, Mes
     if draft.protocol == DraftProtocol::Local {
         tab = tab.push(dialog_parts::card(crate::local_form::basics(
             draft,
-            forms.executables,
+            forms.presets_open,
             |field| form_field(draft, field),
         )));
     }
@@ -15325,6 +15315,7 @@ mod tests {
         use heimdall_core::profile::{ProfileId, RdpOptions, RdpProfile, Resolution, VncProfile};
 
         let vnc = VncProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: ProfileId::new("v"),
             name: "v".to_owned(),
             group: None,

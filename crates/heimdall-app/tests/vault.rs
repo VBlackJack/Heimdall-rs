@@ -1172,6 +1172,7 @@ fn a_password_saved_for_an_ftp_account_answers_its_question() {
     let profiles_file = dir.path().join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     store.merge_ftp([FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("f"),
         name: "files".to_owned(),
         group: None,

@@ -72,6 +72,7 @@ pub(super) fn convert(server: &LegacyServer) -> Result<WebProfile, SkipReason> {
         Some(value) => u16::try_from(value).map_err(|_| SkipReason::InvalidPort(value))?,
     };
     Ok(WebProfile {
+        remote_os: super::remote_os_of(server),
         id: ProfileId::new(server.id.clone()),
         name: if server.display_name.trim().is_empty() {
             server.remote_server.clone()

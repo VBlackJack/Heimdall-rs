@@ -60,6 +60,7 @@ fn app(dir: &Path) -> App {
         remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.merge_winrm([WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("w"),
         name: "w".to_owned(),
         group: None,
@@ -194,6 +195,7 @@ fn a_local_shell_runs_the_same_program_again() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     let shell = LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name: "tools".to_owned(),
         program: Some("tool".to_owned()),
         arguments: LocalArguments::List(vec!["--flag".to_owned()]),

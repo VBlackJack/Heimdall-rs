@@ -1359,6 +1359,10 @@ pub struct WinRmProfile {
     /// the C# "Choose the tunnel port automatically".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_tunnel_port: Option<u16>,
+    /// The operating system of the far end, as the C# `RemoteOs`: written down only when
+    /// declared. Nothing reads it to guess a platform here, the protocol opens no prompt.
+    #[serde(default, skip_serializing_if = "RemoteOs::is_auto")]
+    pub remote_os: RemoteOs,
 }
 
 /// Port of an FTP server when a profile names none, as the C# `DefaultPorts.Ftp`.
@@ -1395,6 +1399,10 @@ pub struct FtpProfile {
     /// its name, as the C# `VaultEntryName`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault_entry: Option<String>,
+    /// The operating system of the far end, as the C# `RemoteOs`: written down only when
+    /// declared. Nothing reads it to guess a platform here, the protocol opens no prompt.
+    #[serde(default, skip_serializing_if = "RemoteOs::is_auto")]
+    pub remote_os: RemoteOs,
 }
 
 /// A Citrix Workspace published application, as the C# Citrix connection type: launched
@@ -1433,6 +1441,10 @@ pub struct CitrixProfile {
     /// as the C# `CitrixId`: what a second import matches it by, to refresh it in place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub citrix_id: Option<String>,
+    /// The operating system of the far end, as the C# `RemoteOs`: written down only when
+    /// declared. Nothing reads it to guess a platform here, the protocol opens no prompt.
+    #[serde(default, skip_serializing_if = "RemoteOs::is_auto")]
+    pub remote_os: RemoteOs,
 }
 
 /// A web console (iLO, iDRAC, a NAS or a switch), as the C# WEB connection type: opened in
@@ -1470,6 +1482,10 @@ pub struct WebProfile {
     /// The SSH gateway the console is reached through, if any, as the C# `SshGatewayId`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<ProfileId>,
+    /// The operating system of the far end, as the C# `RemoteOs`: written down only when
+    /// declared. Nothing reads it to guess a platform here, the protocol opens no prompt.
+    #[serde(default, skip_serializing_if = "RemoteOs::is_auto")]
+    pub remote_os: RemoteOs,
 }
 
 impl WebProfile {
@@ -1584,6 +1600,10 @@ pub struct VncProfile {
     /// its name, as the C# `VaultEntryName`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault_entry: Option<String>,
+    /// The operating system of the far end, as the C# `RemoteOs`: written down only when
+    /// declared. Nothing reads it to guess a platform here, the protocol opens no prompt.
+    #[serde(default, skip_serializing_if = "RemoteOs::is_auto")]
+    pub remote_os: RemoteOs,
 }
 
 /// The arguments of a local program.

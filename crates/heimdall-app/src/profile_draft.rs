@@ -793,6 +793,7 @@ impl ProfileDraft {
     #[must_use]
     pub fn from_ftp(profile: &FtpProfile) -> Self {
         Self {
+            remote_os: profile.remote_os,
             editing: Some(profile.id.clone()),
             name: profile.name.clone(),
             group: profile.group.clone().unwrap_or_default(),
@@ -817,6 +818,7 @@ impl ProfileDraft {
     #[must_use]
     pub fn from_citrix(profile: &CitrixProfile) -> Self {
         Self {
+            remote_os: profile.remote_os,
             editing: Some(profile.id.clone()),
             name: profile.name.clone(),
             group: profile.group.clone().unwrap_or_default(),
@@ -842,6 +844,7 @@ impl ProfileDraft {
     fn saved_citrix(&self, id: ProfileId, name: String, group: Option<String>) -> DraftProfile {
         let optional = |text: &str| Some(text.trim().to_owned()).filter(|text| !text.is_empty());
         DraftProfile::Citrix(CitrixProfile {
+            remote_os: self.remote_os,
             id,
             name,
             group,
@@ -858,6 +861,7 @@ impl ProfileDraft {
     #[must_use]
     pub fn from_web(profile: &WebProfile) -> Self {
         Self {
+            remote_os: profile.remote_os,
             editing: Some(profile.id.clone()),
             name: profile.name.clone(),
             group: profile.group.clone().unwrap_or_default(),
@@ -946,7 +950,7 @@ impl ProfileDraft {
             },
             approved: None,
             session_logging: self.session_logging,
-            remote_os: self.saved_remote_os(),
+            remote_os: self.remote_os,
         }))
     }
 
@@ -1031,6 +1035,7 @@ impl ProfileDraft {
             toggles.push(ProfileToggle::RequireTls);
         }
         Self {
+            remote_os: profile.remote_os,
             editing: Some(profile.id.clone()),
             name: profile.name.clone(),
             group: profile.group.clone().unwrap_or_default(),
@@ -1059,6 +1064,7 @@ impl ProfileDraft {
             toggles.push(ProfileToggle::SkipCertificateCheck);
         }
         Self {
+            remote_os: profile.remote_os,
             editing: Some(profile.id.clone()),
             name: profile.name.clone(),
             group: profile.group.clone().unwrap_or_default(),
@@ -1664,29 +1670,6 @@ impl ProfileDraft {
         }
     }
 
-    /// Whether the form offers the operating system of the far end: for the protocols that
-    /// open a prompt a command can be typed at, and whose platform the protocol alone cannot
-    /// tell (SSH reads as Linux, which is wrong towards Windows OpenSSH; Telnet is anything;
-    /// RDP reads as Windows, wrong towards xrdp; a local shell, wrong for WSL). The C# list
-    /// shows for every protocol; the others here open no prompt, so there is nothing for it
-    /// to decide.
-    #[must_use]
-    pub fn shows_remote_os(&self) -> bool {
-        matches!(
-            self.protocol,
-            DraftProtocol::Ssh | DraftProtocol::Telnet | DraftProtocol::Rdp | DraftProtocol::Local
-        )
-    }
-
-    /// The operating system saved: a protocol that opens no prompt keeps `Auto`.
-    fn saved_remote_os(&self) -> RemoteOs {
-        if self.shows_remote_os() {
-            self.remote_os
-        } else {
-            RemoteOs::Auto
-        }
-    }
-
     /// X11 forwarding saved: for a shell only, as the C# box shows for SSH alone.
     fn saved_x11_forwarding(&self) -> bool {
         self.protocol == DraftProtocol::Ssh && self.is_on(ProfileToggle::X11Forwarding)
@@ -1846,7 +1829,7 @@ impl ProfileDraft {
                 session_logging: self.saved_session_logging(),
                 ssh_mode: self.saved_ssh_mode(),
                 x11_forwarding: self.saved_x11_forwarding(),
-                remote_os: self.saved_remote_os(),
+                remote_os: self.remote_os,
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 extras: RdpExtras {
@@ -1865,7 +1848,7 @@ impl ProfileDraft {
                 allow_tls_only: !self.is_on(ProfileToggle::Nla),
                 gateway: self.routed_gateway(),
                 local_tunnel_port: self.saved_local_tunnel_port()?,
-                remote_os: self.saved_remote_os(),
+                remote_os: self.remote_os,
                 redirect_clipboard: self.is_on(ProfileToggle::RedirectClipboard),
                 redirect_drives: self.is_on(ProfileToggle::RedirectDrives),
                 options: self.saved_rdp_options()?,
@@ -1877,6 +1860,7 @@ impl ProfileDraft {
                 auto_reconnect: self.is_on(ProfileToggle::AutoReconnect),
             }),
             DraftProtocol::Vnc => DraftProfile::Vnc(VncProfile {
+                remote_os: self.remote_os,
                 id,
                 name,
                 group,
@@ -1895,6 +1879,7 @@ impl ProfileDraft {
                 }
                 let use_ssl = self.uses_ssl();
                 DraftProfile::WinRm(WinRmProfile {
+                    remote_os: self.remote_os,
                     id,
                     name,
                     group,
@@ -1915,6 +1900,7 @@ impl ProfileDraft {
                     return Err(error);
                 }
                 DraftProfile::Web(WebProfile {
+                    remote_os: self.remote_os,
                     id,
                     name,
                     group,
@@ -1927,6 +1913,7 @@ impl ProfileDraft {
                 })
             }
             DraftProtocol::Ftp => DraftProfile::Ftp(FtpProfile {
+                remote_os: self.remote_os,
                 id,
                 name,
                 group,
@@ -1944,7 +1931,7 @@ impl ProfileDraft {
                 host,
                 port,
                 session_logging: self.session_logging,
-                remote_os: self.saved_remote_os(),
+                remote_os: self.remote_os,
             }),
         })
     }
@@ -2163,7 +2150,7 @@ impl ProfileDraft {
             session_logging: self.session_logging,
             ssh_mode: self.saved_ssh_mode(),
             x11_forwarding: self.saved_x11_forwarding(),
-            remote_os: self.saved_remote_os(),
+            remote_os: self.remote_os,
         })
     }
 }
@@ -2849,7 +2836,6 @@ mod tests {
             Ok(DraftProfile::Ssh(profile)) => profile,
             other => panic!("{other:?}"),
         };
-        assert!(ssh.shows_remote_os());
         assert_eq!(saved(&ssh).remote_os, RemoteOs::Auto, "nothing declared");
         ssh.choose(ProfileChoice::RemoteOs(RemoteOs::Windows));
         let profile = saved(&ssh);
@@ -2862,10 +2848,9 @@ mod tests {
             ssh.to_profile(id()).expect("profile").remote_os,
             RemoteOs::Windows
         );
-        // An SFTP profile opens no prompt: nothing is kept, even chosen.
+        // The C# list is there for SFTP too: kept as chosen.
         ssh.protocol = DraftProtocol::Sftp;
-        assert!(!ssh.shows_remote_os());
-        assert_eq!(saved(&ssh).remote_os, RemoteOs::Auto);
+        assert_eq!(saved(&ssh).remote_os, RemoteOs::Windows);
 
         let mut telnet = ProfileDraft::new_for(DraftProtocol::Telnet);
         telnet.set(ProfileField::Name, "switch".to_owned());
@@ -2880,11 +2865,30 @@ mod tests {
             RemoteOs::Linux
         );
 
-        // A protocol that reaches no prompt offers nothing and keeps nothing.
-        for protocol in [DraftProtocol::Vnc, DraftProtocol::Ftp] {
+        // As the C# list, every other protocol keeps what was chosen too.
+        for protocol in [
+            DraftProtocol::Vnc,
+            DraftProtocol::Ftp,
+            DraftProtocol::WinRm,
+            DraftProtocol::Web,
+        ] {
             let mut draft = ProfileDraft::new_for(protocol);
+            draft.set(ProfileField::Name, "x".to_owned());
+            draft.set(ProfileField::Host, "x.lab".to_owned());
             draft.choose(ProfileChoice::RemoteOs(RemoteOs::Linux));
-            assert!(!draft.shows_remote_os(), "{protocol:?}");
+            let saved = draft.to_saved(id()).expect("saved");
+            let (kept, back) = match saved {
+                DraftProfile::Vnc(p) => (p.remote_os, ProfileDraft::from_vnc(&p).remote_os),
+                DraftProfile::Ftp(p) => (p.remote_os, ProfileDraft::from_ftp(&p).remote_os),
+                DraftProfile::WinRm(p) => (p.remote_os, ProfileDraft::from_winrm(&p).remote_os),
+                DraftProfile::Web(p) => (p.remote_os, ProfileDraft::from_web(&p).remote_os),
+                other => panic!("{other:?}"),
+            };
+            assert_eq!(
+                (kept, back),
+                (RemoteOs::Linux, RemoteOs::Linux),
+                "{protocol:?}"
+            );
         }
     }
 
@@ -2893,7 +2897,6 @@ mod tests {
         let mut rdp = ProfileDraft::new_for(DraftProtocol::Rdp);
         rdp.set(ProfileField::Name, "xrdp".to_owned());
         rdp.set(ProfileField::Host, "xrdp.lab".to_owned());
-        assert!(rdp.shows_remote_os());
         let Ok(DraftProfile::Rdp(profile)) = rdp.to_saved(id()) else {
             panic!("an RDP profile");
         };
@@ -2907,7 +2910,6 @@ mod tests {
 
         let mut local = ProfileDraft::new_for(DraftProtocol::Local);
         local.set(ProfileField::Name, "wsl".to_owned());
-        assert!(local.shows_remote_os());
         local.choose(ProfileChoice::RemoteOs(RemoteOs::Linux));
         let Ok(DraftProfile::Local(profile)) = local.to_saved(id()) else {
             panic!("a local profile");
@@ -3255,6 +3257,7 @@ mod tests {
             Ok(DraftProfile::Rdp(nla))
         );
         let vnc = VncProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: id(),
             name: "kiosk".to_owned(),
             group: None,
@@ -3273,6 +3276,7 @@ mod tests {
         );
         // The user name of VeNCrypt Plain.
         let plain = VncProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             username: Some("viewer".to_owned()),
             ..vnc
         };
@@ -3281,6 +3285,7 @@ mod tests {
             Ok(DraftProfile::Vnc(plain))
         );
         let winrm = WinRmProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: id(),
             name: "ps".to_owned(),
             group: None,

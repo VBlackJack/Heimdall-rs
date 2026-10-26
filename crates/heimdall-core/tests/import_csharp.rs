@@ -2313,6 +2313,7 @@ fn a_web_console_is_imported_with_its_address_account_and_gateway_never_its_pass
     assert_eq!(
         report.web[0],
         WebProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: ProfileId::new("ilo"),
             name: "iLO".to_owned(),
             group: Some("Lab/BMC".to_owned()),
@@ -2423,7 +2424,7 @@ fn an_rdp_profile_and_a_local_shell_keep_their_far_end_os() {
 }
 
 #[test]
-fn a_telnet_profile_keeps_its_far_end_os_and_an_sftp_one_has_none() {
+fn a_telnet_profile_and_an_sftp_one_keep_their_far_end_os() {
     use heimdall_core::profile::RemoteOs;
     let report = import(
         &servers(
@@ -2434,5 +2435,30 @@ fn a_telnet_profile_keeps_its_far_end_os_and_an_sftp_one_has_none() {
     )
     .expect("valid JSON");
     assert_eq!(report.telnet[0].remote_os, RemoteOs::Linux);
-    assert_eq!(report.profiles[0].remote_os, RemoteOs::Auto);
+    assert_eq!(
+        report.profiles[0].remote_os,
+        RemoteOs::Linux,
+        "the C# list is on SFTP too"
+    );
+}
+
+#[test]
+fn every_other_protocol_keeps_its_far_end_os() {
+    use heimdall_core::profile::RemoteOs;
+    let report = import(
+        &servers(
+            r#"{"id": "v", "remoteServer": "h", "connectionType": "VNC", "remoteOs": "Linux"},
+               {"id": "f", "remoteServer": "h", "connectionType": "FTP", "remoteOs": "Windows"},
+               {"id": "w", "remoteServer": "h", "connectionType": "WINRM", "remoteOs": "Linux"},
+               {"id": "c", "remoteServer": "h", "connectionType": "Citrix", "remoteOs": "Linux"},
+               {"id": "b", "remoteServer": "h", "connectionType": "WEB", "remoteOs": "Linux"}"#,
+        ),
+        None,
+    )
+    .expect("valid JSON");
+    assert_eq!(report.vnc[0].remote_os, RemoteOs::Linux);
+    assert_eq!(report.ftp[0].remote_os, RemoteOs::Windows);
+    assert_eq!(report.winrm[0].remote_os, RemoteOs::Linux);
+    assert_eq!(report.citrix[0].remote_os, RemoteOs::Linux);
+    assert_eq!(report.web[0].remote_os, RemoteOs::Linux);
 }

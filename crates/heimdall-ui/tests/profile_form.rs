@@ -21,6 +21,7 @@ mod common;
 
 use std::path::Path;
 
+use heimdall_app::local_draft::SHELL_PRESETS;
 use heimdall_app::profile_draft::{DraftProtocol, ProfileField, ProfileToggle};
 use heimdall_app::{App, AppConfig, Message as AppMessage};
 use heimdall_ssh::AgentSource;
@@ -1653,6 +1654,20 @@ fn the_rdp_options_are_pill_sub_tabs_each_showing_only_its_own_boxes() {
             assert!(ui.find(other).is_err(), "{other} is on another sub-tab");
         }
     }
+    // While the global defaults decide, the pills are disabled as the C# tab control is.
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.click("Devices").expect("drawn");
+        assert!(
+            !ui.into_messages()
+                .any(|message| matches!(message, Message::RdpSubTab(_))),
+            "disabled while the defaults are followed"
+        );
+    }
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::FollowDefaults,
+        on: false,
+    }));
     // A click on a pill sends its sub-tab.
     {
         let mut ui = tall_simulator(&shell);
@@ -1692,25 +1707,15 @@ fn the_rdp_options_are_pill_sub_tabs_each_showing_only_its_own_boxes() {
 }
 
 #[test]
-fn the_far_end_list_is_on_the_general_tab_of_rdp_and_a_local_shell_as_in_the_csharp_dialog() {
+fn the_far_end_list_is_on_the_general_tab_of_every_protocol_as_in_the_csharp_dialog() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
-    for (protocol, offered) in [
-        (DraftProtocol::Rdp, true),
-        (DraftProtocol::Local, true),
-        (DraftProtocol::Ssh, true),
-        (DraftProtocol::Telnet, true),
-        (DraftProtocol::Vnc, false),
-        (DraftProtocol::Ftp, false),
-    ] {
+    for protocol in DraftProtocol::ALL {
         let _ = shell.update(app(AppMessage::NewProfile));
         let _ = shell.update(app(AppMessage::ChooseProtocol(protocol)));
         let mut ui = tall_simulator(&shell);
-        assert_eq!(
-            ui.find("Operating system of the far end").is_ok(),
-            offered,
-            "{protocol:?}"
-        );
+        ui.find("Operating system of the far end")
+            .unwrap_or_else(|_| panic!("{protocol:?}"));
     }
 }
 
@@ -1746,4 +1751,32 @@ fn the_info_tab_names_the_favorite_mark_beside_the_environment_and_the_badge_say
     for label in ["Environment", "Favorite", "Mark as favorite"] {
         ui.find(label).expect(label);
     }
+}
+
+#[test]
+fn the_executable_box_saves_on_enter_and_takes_a_listed_shell_by_a_click_only() {
+    let (first, second) = (SHELL_PRESETS[0], SHELL_PRESETS[1]);
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Local)));
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.find(first)
+            .map(|_| ())
+            .expect_err("the list starts closed");
+    }
+    let _ = shell.update(Message::ToggleShellList);
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.click(first).expect("a shell of the list");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::ShellPreset(preset) if preset == first))
+        );
+    }
+    let _ = shell.update(Message::ShellPreset(first.to_owned()));
+    let mut ui = tall_simulator(&shell);
+    ui.find("Executable").expect("its label");
+    assert!(ui.find(second).is_err(), "the list closed on the pick");
 }

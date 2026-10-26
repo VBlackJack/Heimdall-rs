@@ -253,6 +253,7 @@ async fn winrm_command(lab: &Lab, dir: &Path, port: Option<u16>) -> String {
     let registry = AnswerRegistry::default();
     let request = heimdall_app::winrm_driver::WinRmRequest {
         profile: heimdall_core::profile::WinRmProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: ProfileId::new("w"),
             name: "DC".to_owned(),
             group: None,

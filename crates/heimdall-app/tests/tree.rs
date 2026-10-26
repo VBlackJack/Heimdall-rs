@@ -101,6 +101,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.merge_vnc([VncProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: id("vnc"),
         name: "kiosk".to_owned(),
         group: None,
@@ -131,6 +132,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         },
     );
     store.merge_winrm([WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: id("winrm"),
         name: "ps".to_owned(),
         group: None,

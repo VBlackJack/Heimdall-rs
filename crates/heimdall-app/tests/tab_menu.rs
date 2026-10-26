@@ -74,6 +74,7 @@ fn app(dir: &Path) -> App {
         remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.merge_winrm([WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("w"),
         name: "w".to_owned(),
         group: None,
@@ -271,6 +272,7 @@ fn a_duplicate_opens_beside_and_leaves_the_tab() {
     assert_eq!(app.active, Some(copy));
 
     let shell = LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name: "sh".to_owned(),
         program: Some("sh".to_owned()),
         arguments: LocalArguments::List(Vec::new()),
@@ -481,6 +483,7 @@ fn past_the_sessions_threshold_a_banner_shows_and_nothing_is_refused_as_the_csha
     assert_eq!(app.session_load_notice(), None);
     // This computer's own shells are not counted.
     let effects = app.update(Message::OpenLocal(heimdall_app::local_driver::LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name: "shell".to_owned(),
         program: None,
         arguments: LocalArguments::List(Vec::new()),

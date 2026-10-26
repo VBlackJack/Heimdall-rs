@@ -103,6 +103,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         auto_reconnect: true,
     }]);
     store.merge_ftp([FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: id("ftp"),
         name: "files".to_owned(),
         group: None,
@@ -114,6 +115,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         vault_entry: None,
     }]);
     store.merge_vnc([VncProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: id("vnc"),
         name: "kiosk".to_owned(),
         group: None,
@@ -126,6 +128,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         vault_entry: None,
     }]);
     store.merge_winrm([WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: id("winrm"),
         name: "ps".to_owned(),
         group: None,
@@ -138,6 +141,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         local_tunnel_port: None,
     }]);
     store.merge_winrm([WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: id("winrm-current"),
         name: "ps-current".to_owned(),
         group: None,

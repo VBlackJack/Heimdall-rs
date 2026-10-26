@@ -433,6 +433,7 @@ fn vnc_profiles_read_back_with_their_options_and_are_removed_like_the_others() {
     let mut store = ProfileStore::open(&path).expect("opens");
     store.merge_telnet([telnet("t")]);
     let watch = VncProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("v"),
         name: "Kiosk".to_owned(),
         group: None,
@@ -769,6 +770,7 @@ fn a_colour_depth_the_session_cannot_have_is_refused() {
 
 fn winrm(id: &str) -> WinRmProfile {
     WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new(id),
         name: format!("WinRM {id}"),
         group: Some("Windows".to_owned()),
@@ -789,6 +791,7 @@ fn winrm_profiles_read_back_and_are_removed_like_the_others() {
     let mut store = ProfileStore::open(&path).expect("opens");
     store.merge([profile("s", "h")]);
     let moved = WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         port: 5985,
         use_ssl: false,
         ..winrm("w")
@@ -848,6 +851,7 @@ fn a_renamed_profile_keeps_its_old_name_as_its_vault_entry_as_the_csharp_rename_
     store.merge([profile("a", "h1")]);
     store.merge_rdp([rdp("r")]);
     store.merge_vnc([VncProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("v"),
         name: "Kiosk".to_owned(),
         group: None,
@@ -961,6 +965,7 @@ fn ftp_profiles_read_back_and_passive_is_written_only_when_off() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join(PROFILES_FILE_NAME);
     let ftp = |id: &str, passive: bool| FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new(id),
         name: id.to_owned(),
         group: Some("Files".to_owned()),
@@ -999,6 +1004,7 @@ fn citrix_profiles_read_back_with_their_launch_settings() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join(PROFILES_FILE_NAME);
     let store_front = CitrixProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("outlook"),
         name: "Outlook".to_owned(),
         group: Some("Apps".to_owned()),
@@ -1010,6 +1016,7 @@ fn citrix_profiles_read_back_with_their_launch_settings() {
         citrix_id: None,
     };
     let ica = CitrixProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("erp"),
         name: "ERP".to_owned(),
         group: None,
@@ -1032,6 +1039,7 @@ fn citrix_profiles_read_back_with_their_launch_settings() {
 
 fn web_console(id: &str) -> heimdall_core::profile::WebProfile {
     heimdall_core::profile::WebProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new(id),
         name: "iLO".to_owned(),
         group: Some("Lab/BMC".to_owned()),
@@ -1050,6 +1058,7 @@ fn web_consoles_read_back_with_their_address_and_gateway() {
     let path = dir.path().join(PROFILES_FILE_NAME);
     let routed = web_console("ilo");
     let plain = heimdall_core::profile::WebProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("nas"),
         name: "NAS".to_owned(),
         group: None,

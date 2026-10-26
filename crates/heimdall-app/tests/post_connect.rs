@@ -489,6 +489,7 @@ fn an_ftp_profile_opens_a_files_tab_and_its_certificate_question_reconnects_it()
     let profiles_file = dir.path().join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     store.merge_ftp([FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("files"),
         name: "Files".to_owned(),
         group: None,

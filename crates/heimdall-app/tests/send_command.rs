@@ -80,6 +80,7 @@ fn app(dir: &Path) -> App {
         remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.merge_vnc([VncProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("screen"),
         name: "Screen".to_owned(),
         group: None,

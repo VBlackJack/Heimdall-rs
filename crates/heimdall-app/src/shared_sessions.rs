@@ -1270,6 +1270,7 @@ fn ssh_profile(
 /// accepted on the file's word.
 fn vnc_profile(id: &ProfileId, name: &str, host: &str, port: u16) -> VncProfile {
     VncProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: id.clone(),
         name: name.to_owned(),
         group: None,

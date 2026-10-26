@@ -740,6 +740,7 @@ fn detach_secondary_leaves_the_keyboard_where_it_was_outside_the_split() {
 /// A local shell started, with the file browser docked beside it; the shell and the browser.
 fn shell_with_browser(app: &mut App, folder: &Path) -> (TabId, TabId) {
     let local = LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name: "Shell".to_owned(),
         program: None,
         arguments: LocalArguments::List(Vec::new()),

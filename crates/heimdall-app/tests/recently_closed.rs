@@ -277,6 +277,7 @@ fn a_local_shell_is_not_remembered() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     let effects = app.update(Message::OpenLocal(LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name: "tools".to_owned(),
         program: Some("tool".to_owned()),
         arguments: LocalArguments::List(Vec::new()),

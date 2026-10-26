@@ -89,6 +89,7 @@ fn app(dir: &Path) -> App {
 /// A local shell, started in `folder` when one is given.
 fn local(folder: Option<PathBuf>) -> LocalShell {
     LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name: "Shell".to_owned(),
         program: None,
         arguments: LocalArguments::List(Vec::new()),
@@ -1548,6 +1549,7 @@ fn expected_run(name: &str, folder: &Path) -> (LocalShell, String, bool) {
         other => panic!("{name} does not run here: {other:?}"),
     };
     let shell = LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name: name.to_owned(),
         program: Some(program),
         arguments,

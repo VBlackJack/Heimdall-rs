@@ -1276,12 +1276,17 @@ pub fn segment(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
         } else {
             (None, brushes.secondary_text, brushes.quiet_edge)
         };
-        ButtonStyle {
+        let look = ButtonStyle {
             background: background.map(Background::Color),
             text_color,
             border: brushes.outline(edge, radius::SM),
             shadow: Shadow::default(),
             snap: true,
+        };
+        if status == ButtonStatus::Disabled {
+            faded(&look)
+        } else {
+            look
         }
     }
 }

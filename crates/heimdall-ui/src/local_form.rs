@@ -23,53 +23,75 @@
 
 use heimdall_app::Message as AppMessage;
 use heimdall_app::elevated_shell;
+use heimdall_app::local_draft::SHELL_PRESETS;
 use heimdall_app::profile_draft::{ProfileDraft, ProfileField, ProfileToggle};
 use iced::Element;
-use iced::widget::{checkbox, column, combo_box, text};
+use iced::Length;
+use iced::widget::{button, checkbox, column, container, row, text};
 
 use crate::dialog_parts;
 use crate::i18n::fl;
-use crate::shell::Message;
+use crate::icons::{self, Icon, Tint};
+use crate::shell::{Message, profile_field_id};
 use crate::styles;
-use crate::tokens::{INPUT_LINE_HEIGHT, INPUT_PADDING, font_size, spacing};
+use crate::tokens::{font_size, spacing};
 
-/// The "Local shell" card of the General tab: the executable in one list that can be typed
-/// in, as the C# editable combo (the common shells offered, any path allowed), `shells`
-/// holding what is typed; `field` draws the other fields of the form as the other cards do.
+/// Side of the arrow opening the list of shells.
+const ARROW_SIDE: f32 = 12.0;
+
+/// The "Local shell" card of the General tab: the executable in one box that takes any
+/// path, with the common shells in a list its arrow opens, as the C# editable combo; Enter
+/// in it saves the form, a shell is taken from the list by a click only. `list_open` is
+/// whether the list is shown; `field` draws the other fields of the form as the other cards
+/// do.
 pub fn basics<'a>(
     draft: &'a ProfileDraft,
-    shells: &'a combo_box::State<String>,
+    list_open: bool,
     field: impl Fn(ProfileField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let set = |value: String| {
-        Message::App(AppMessage::ProfileField {
-            field: ProfileField::LocalProgram,
-            value,
-        })
-    };
+    let program = ProfileField::LocalProgram;
+    let mut executable = column![
+        dialog_parts::label(fl!("ui-profile-local-executable")),
+        row![
+            styles::field(&fl!("ui-profile-local-default-shell"), draft.value(program))
+                .id(profile_field_id(program))
+                .on_input(move |value| Message::App(AppMessage::ProfileField {
+                    field: program,
+                    value
+                }))
+                .on_submit(Message::SaveProfileForm),
+            button(icons::icon(Icon::ChevronDown, Tint::Text, ARROW_SIDE))
+                .padding(crate::tokens::BUTTON_PADDING)
+                .style(styles::secondary)
+                .on_press(Message::ToggleShellList),
+        ]
+        .spacing(spacing::SM)
+        .align_y(iced::Alignment::Center),
+    ]
+    .spacing(spacing::XS);
+    if list_open {
+        let shells = SHELL_PRESETS.iter().fold(column![], |shells, preset| {
+            shells.push(
+                button(text(*preset).size(font_size::BODY))
+                    .width(Length::Fill)
+                    .padding(crate::tokens::BUTTON_COMPACT_PADDING)
+                    .style(styles::bare)
+                    .on_press(Message::ShellPreset((*preset).to_owned())),
+            )
+        });
+        executable = executable.push(
+            container(shells)
+                .padding(spacing::XS)
+                .width(Length::Fill)
+                .style(styles::panel),
+        );
+    }
     column![
         dialog_parts::section(
             fl!("ui-profile-local-title"),
             Some(fl!("ui-profile-local-desc"))
         ),
-        column![
-            dialog_parts::label(fl!("ui-profile-local-executable")),
-            combo_box(
-                shells,
-                &fl!("ui-profile-local-default-shell"),
-                Some(&draft.local_program),
-                set
-            )
-            .on_input(set)
-            .input_style(styles::text_input)
-            .menu_style(styles::menu)
-            .padding(INPUT_PADDING)
-            .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
-                INPUT_LINE_HEIGHT
-            )))
-            .width(iced::Length::Fill),
-        ]
-        .spacing(spacing::XS),
+        executable,
         field(ProfileField::LocalArguments),
     ]
     .spacing(spacing::MD)

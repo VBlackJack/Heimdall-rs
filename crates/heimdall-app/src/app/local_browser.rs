@@ -182,6 +182,7 @@ impl App {
             |name| name.to_string_lossy().into_owned(),
         );
         self.open_local(LocalShell {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             name: server_text(&name),
             program: None,
             arguments: LocalArguments::default(),

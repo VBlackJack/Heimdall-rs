@@ -274,6 +274,7 @@ impl App {
             self.terminal_palette(),
             tab_id,
             TabProfile::Local(LocalShell {
+                remote_os: heimdall_core::profile::RemoteOs::default(),
                 name,
                 program: None,
                 arguments: LocalArguments::List(Vec::new()),

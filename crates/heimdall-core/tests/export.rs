@@ -224,6 +224,7 @@ fn local(arguments: LocalArguments) -> LocalProfile {
 
 fn web() -> WebProfile {
     WebProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("console"),
         name: "iLO".to_owned(),
         group: Some("BMC".to_owned()),
@@ -257,6 +258,10 @@ fn tool_entries() -> [heimdall_core::profile::ToolProfile; 2] {
     ]
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one of each protocol, set out in one place"
+)]
 fn store(dir: &std::path::Path) -> ProfileStore {
     let mut store = ProfileStore::open(dir.join("profiles.toml")).expect("store");
     store.merge_gateways(gateways());
@@ -272,6 +277,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
         remote_os: heimdall_core::profile::RemoteOs::Linux,
     }]);
     store.merge_vnc([VncProfile {
+        remote_os: heimdall_core::profile::RemoteOs::Linux,
         id: ProfileId::new("screen"),
         name: "Screen".to_owned(),
         group: None,
@@ -286,6 +292,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
         vault_entry: None,
     }]);
     store.merge_ftp([FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::Windows,
         id: ProfileId::new("ftp"),
         name: "FTP".to_owned(),
         group: None,
@@ -297,6 +304,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
         vault_entry: Some("Ftp/Ops".to_owned()),
     }]);
     store.merge_citrix([CitrixProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("mail"),
         name: "Mail".to_owned(),
         group: Some("Apps".to_owned()),
@@ -314,6 +322,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
     ))]);
     store.merge_winrm([
         WinRmProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: ProfileId::new("ps"),
             name: "PS".to_owned(),
             group: None,
@@ -326,6 +335,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
             local_tunnel_port: None,
         },
         WinRmProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: ProfileId::new("ps-me"),
             name: "PS as me".to_owned(),
             group: None,
@@ -627,4 +637,6 @@ fn the_far_end_os_is_written_by_name_only_when_declared() {
     // RDP and a local shell carry it too, as the C# list is on their General tab.
     assert_eq!(by_id("dc")["remoteOs"], "Linux");
     assert_eq!(by_id("tool")["remoteOs"], "Windows");
+    assert_eq!(by_id("screen")["remoteOs"], "Linux");
+    assert_eq!(by_id("ftp")["remoteOs"], "Windows");
 }

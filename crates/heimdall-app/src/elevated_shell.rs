@@ -209,6 +209,7 @@ mod tests {
 
     fn shell(program: Option<String>, arguments: LocalArguments) -> LocalShell {
         LocalShell {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             name: "Admin".to_owned(),
             program,
             arguments,

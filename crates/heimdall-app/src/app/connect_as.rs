@@ -200,6 +200,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
         ),
         ConnectAs::Vnc => (
             TabProfile::Vnc(VncProfile {
+                remote_os: heimdall_core::profile::RemoteOs::default(),
                 id: transient_id(),
                 name,
                 group: None,

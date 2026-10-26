@@ -185,6 +185,22 @@ fn what_runs_is_the_file_approved_not_whatever_the_name_finds_later() {
 }
 
 #[test]
+fn a_local_tab_carries_the_far_end_os_of_its_profile_into_the_tools_platform() {
+    use heimdall_core::profile::RemoteOs;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut wsl = profile(LocalCommand::default(), None);
+    wsl.remote_os = RemoteOs::Linux;
+    let mut app = app(dir.path(), &[wsl]);
+    let effects = open(&mut app);
+    assert_eq!(
+        started(&effects).expect("a shell").remote_os,
+        RemoteOs::Linux
+    );
+    let tab = app.active_tab().expect("the tab");
+    assert_eq!(tab.profile.platform(), RemoteOs::Linux);
+}
+
+#[test]
 fn dismissing_runs_nothing_and_records_nothing() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path(), &[profile(command("-x"), None)]);

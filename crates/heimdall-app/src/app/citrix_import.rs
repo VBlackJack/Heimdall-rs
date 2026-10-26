@@ -151,6 +151,7 @@ impl App {
             }
         };
         CitrixProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id,
             name: app.name.clone(),
             group: app.group(),
