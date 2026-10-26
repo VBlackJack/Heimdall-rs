@@ -993,7 +993,7 @@ fn quitting_with_live_sessions_asks_then_closes_them_all() {
 // ---- titles, sync, store, import, logs --------------------------------------------------
 
 #[test]
-fn the_server_title_is_shown_made_safe_and_can_be_reset() {
+fn the_terminal_title_never_replaces_the_session_name() {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut app = App::new(config(dir.path()));
     let (tab, attempt, _) = connected(&mut app, "a");
@@ -1003,9 +1003,14 @@ fn the_server_title_is_shown_made_safe_and_can_be_reset() {
         attempt,
         "\x1b]2;prod\u{202E}web\x07".as_bytes(),
     );
-    assert_eq!(app.tab(tab).expect("tab").title, "prodweb");
+    let shown = app.tab(tab).expect("tab");
+    assert_eq!(shown.title, "server a", "the C# tab keeps the session name");
+    assert_eq!(shown.display_title(), "server a");
+    assert_eq!(shown.terminal_title, "prodweb", "kept, made safe");
     output(&mut app, tab, attempt, b"\x1b]2;\x07");
-    assert_eq!(app.tab(tab).expect("tab").title, "server a");
+    let shown = app.tab(tab).expect("tab");
+    assert_eq!(shown.title, "server a");
+    assert_eq!(shown.terminal_title, "");
 }
 
 #[test]

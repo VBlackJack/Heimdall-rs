@@ -526,11 +526,8 @@ fn keyboard_named(named: Named) -> iced::keyboard::Key {
     iced::keyboard::Key::Named(named)
 }
 
-/// Widest a tab's title is drawn, as the C# tab title's `MaxWidth`.
-const TAB_TITLE_MAX_WIDTH: f32 = 160.0;
-
 #[test]
-fn a_long_server_title_is_cut_in_its_tab() {
+fn a_title_set_by_the_shell_does_not_rename_its_tab() {
     let dir = tempfile::tempdir().expect("dir");
     let (shell, tab, attempt) = connected_shell(dir.path());
     let mut core_title = format!("\x1b]2;{}\x07", "w".repeat(100));
@@ -542,11 +539,11 @@ fn a_long_server_title_is_cut_in_its_tab() {
     }));
     let mut ui = simulator(&shell);
     let title = "w".repeat(100);
-    let shown = ui.find(title.as_str()).expect("the tab's title").bounds();
     assert!(
-        shown.width <= TAB_TITLE_MAX_WIDTH,
-        "ended with an ellipsis at the C# MaxWidth: {shown:?}"
+        ui.find(title.as_str()).is_err(),
+        "the shell's title is not shown"
     );
+    assert!(ui.find("server a").is_ok(), "the session name stays");
 }
 
 #[test]
@@ -5043,7 +5040,7 @@ fn only_the_main_window_draws_the_shell_and_is_titled_as_it() {
     let (main, other) = (iced::window::Id::unique(), iced::window::Id::unique());
     shell.set_main_window(main);
     assert_eq!(shell.window_title(main), shell.title());
-    assert!(shell.title().contains("server a"), "{}", shell.title());
+    assert_eq!(shell.title(), "Heimdall-rs", "fixed, not the tab's name");
     assert!(
         !shell.window_title(other).contains("server a"),
         "another window is not titled after the tab shown"
