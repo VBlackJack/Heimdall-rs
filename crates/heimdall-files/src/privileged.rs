@@ -173,7 +173,7 @@ const REPLACE: &str = concat!(
     "if [ -L \"$target\" ]; then exit 73; fi; ",
     "[ \"$(sha256sum < \"$target\" | cut -d \" \" -f 1)\" = \"$expected\" ] || exit 81; ",
     "rm -f -- original; mv -fT -- payload \"$target\"; ",
-    "cd /; rmdir -- \"$work\" 2>/dev/null || :; trap - EXIT HUP INT TERM; sync -f \"$dir\"; ",
+    "entered=; trap - EXIT HUP INT TERM; cd /; rmdir -- \"$work\" 2>/dev/null || :; sync -f \"$dir\"; ",
     "printf \"saved %s\\n\" \"$token\"",
 );
 
@@ -293,7 +293,7 @@ const READ: &str = concat!(
     "exec 3< source; rm -f -- source; ",
     "[ \"$(stat -Lc %s /proc/self/fd/3)\" -le \"$cap\" ] || exit 75; ",
     "base64 <&3; exec 3<&-; ",
-    "cd /; rmdir -- \"$work\" 2>/dev/null || :; trap - EXIT HUP INT TERM; ",
+    "entered=; trap - EXIT HUP INT TERM; cd /; rmdir -- \"$work\" 2>/dev/null || :; ",
     "printf \"read %s\\n\" \"$token\"",
 );
 
@@ -574,6 +574,11 @@ esac"#;
                 script.find("entered=1").expect("set")
                     > script.find("cd -- \"$work\"").expect("cd")
             );
+            // The flag is cleared and the trap removed before the script leaves the folder.
+            let tail = script
+                .rfind("entered=; trap - EXIT HUP INT TERM; cd /;")
+                .expect("tail");
+            assert!(tail > script.find("entered=1").expect("set"));
         }
     }
 }
