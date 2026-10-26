@@ -97,6 +97,15 @@ const BADGE_WIDTH: f32 = 56.0;
 /// Width of a row's favorite star.
 const STAR_SIDE: f32 = 16.0;
 
+/// Height of a section's title in the list: its line of text and its padding.
+const SECTION_HEIGHT: f32 = 30.0;
+
+/// Height of a "show more" button with its padding.
+const SHOW_MORE_HEIGHT: f32 = 40.0;
+
+/// The unit a scroll offset is given in: a thousandth of the scrollable range.
+const OFFSET_SCALE: f32 = 1000.0;
+
 /// The shares of the page's height the list and the details of the command opened take, so
 /// the list never collapses under tall details, whatever the window's height.
 const LIST_PORTION: u16 = 3;
@@ -338,6 +347,8 @@ pub enum Outcome {
         /// Marked dangerous.
         dangerous: bool,
     },
+    /// Scroll the list so the row at this thousandth of its range is in view.
+    Reveal(u16),
     /// Ask for a file of commands and import it.
     Import,
     /// Ask where to write this export of the library.
@@ -351,6 +362,13 @@ impl Outcome {
     /// window `main`.
     pub fn task(self, tab: TabId, main: Option<window::Id>) -> Task<Message> {
         match self {
+            Self::Reveal(permille) => iced::widget::operation::snap_to(
+                list_id(tab),
+                iced::widget::scrollable::RelativeOffset {
+                    x: None,
+                    y: Some(f32::from(permille) / OFFSET_SCALE),
+                },
+            ),
             Self::Import => pick_import(tab, main),
             Self::Export(text) => pick_export(tab, main, text),
             Self::Sync(job) => job.task(tab),
@@ -625,23 +643,57 @@ impl CommandLibraryPane {
         mine.chain(catalogue).collect()
     }
 
+    /// The sizes of the list's sections in rows (the user's first, then the catalogue's), and
+    /// how many "show more" buttons end it.
+    fn layout(&self) -> (Vec<usize>, usize) {
+        let visible_mine = CATALOG_PAGE_SIZE.saturating_mul(self.more_mine_pages.saturating_add(1));
+        let visible = CATALOG_PAGE_SIZE.saturating_mul(self.more_pages.saturating_add(1));
+        let mine = self.shown_user().len();
+        let shown = self.shown();
+        let mut sizes = Vec::new();
+        if mine > 0 {
+            sizes.push(mine.min(visible_mine));
+        }
+        let more = usize::from(mine > visible_mine) + usize::from(shown.len() > visible);
+        sizes.extend(
+            sections(shown, visible)
+                .into_iter()
+                .map(|(_, rows)| rows.len()),
+        );
+        (sizes, more)
+    }
+
     /// Selects the row before or after the one opened; with none opened, the first (or the
-    /// last going up). It stops at the ends.
-    fn move_selection(&mut self, forward: bool) {
-        let rows = self.listed_rows();
+    /// last going up). It stops at the ends, and going down from the last row of a page
+    /// turns to the next one. Gives where to scroll the list to keep the row in view.
+    fn move_selection(&mut self, forward: bool) -> Option<u16> {
+        let mut rows = self.listed_rows();
         let at = self
             .opened
             .as_ref()
             .and_then(|opened| rows.iter().position(|row| row == opened));
+        if forward && at.is_some_and(|at| at + 1 == rows.len()) {
+            let before = rows.len();
+            self.more_pages += 1;
+            rows = self.listed_rows();
+            if rows.len() == before {
+                self.more_pages -= 1;
+            }
+        }
         let next = match (at, forward) {
             (Some(at), true) => (at + 1).min(rows.len().saturating_sub(1)),
             (Some(at), false) => at.saturating_sub(1),
             (None, true) => 0,
             (None, false) => rows.len().saturating_sub(1),
         };
-        if let Some(row) = rows.into_iter().nth(next) {
-            self.opened = Some(row);
+        let row = rows.into_iter().nth(next)?;
+        self.opened = Some(row);
+        // The history and the editor are above the list and move it by a height not known.
+        if self.history_open || self.editor.is_some() {
+            return None;
         }
+        let (sizes, more) = self.layout();
+        Some(row_permille(&sizes, next, more))
     }
 
     fn apply(&mut self, message: CommandLibraryMessage) -> Outcome {
@@ -669,7 +721,9 @@ impl CommandLibraryPane {
             CommandLibraryMessage::Select(command) => self.opened = Some(command),
             CommandLibraryMessage::MoveSelection { forward } => {
                 if self.editor.is_none() && !self.runbooks.is_open() {
-                    self.move_selection(forward);
+                    return self
+                        .move_selection(forward)
+                        .map_or(Outcome::None, Outcome::Reveal);
                 }
             }
             CommandLibraryMessage::CloseDetails => self.opened = None,
@@ -1916,7 +1970,11 @@ impl CommandLibraryPane {
             list = list.push(show_more(remaining, send(CommandLibraryMessage::ShowMore)));
         }
         cards = cards.push(list);
-        let mut page = page.push(styles::scroll(cards).height(Length::FillPortion(LIST_PORTION)));
+        let mut page = page.push(
+            styles::scroll(cards)
+                .id(list_id(tab))
+                .height(Length::FillPortion(LIST_PORTION)),
+        );
         if let Some(details) = self.details(tab, state) {
             page = page.push(details);
         }
@@ -2626,6 +2684,49 @@ impl CommandLibraryPane {
             Some(manage),
         )
     }
+}
+
+/// The scrollable of the list of commands of tab `tab`.
+pub(super) fn list_id(tab: TabId) -> iced::widget::Id {
+    iced::widget::Id::from(format!("cmdlib-list-{}", tab.value()))
+}
+
+/// Where to scroll a list of sections of `sizes` rows, `more` buttons at its end, so that
+/// row `index` (counted over all the sections) is in view, in thousandths of the scrollable
+/// range. The row's top is at that share of the content less one row, which is in the
+/// viewport at the same share of its own height less one row, whatever the viewport.
+fn row_permille(sizes: &[usize], index: usize, more: usize) -> u16 {
+    let rows = |count: usize| count as f32 * ROW_HEIGHT;
+    let mut top = 0.0;
+    let mut left = index;
+    let mut found = false;
+    let mut total = more as f32 * SHOW_MORE_HEIGHT;
+    for &size in sizes {
+        total += SECTION_HEIGHT + rows(size);
+        if !found {
+            if left < size {
+                // The first row of a section brings its title into view too.
+                if left > 0 {
+                    top += SECTION_HEIGHT + rows(left);
+                }
+                found = true;
+            } else {
+                top += SECTION_HEIGHT + rows(size);
+                left -= size;
+            }
+        }
+    }
+    let range = total - ROW_HEIGHT;
+    if range <= 0.0 {
+        return 0;
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped to 0..=OFFSET_SCALE before the cast"
+    )]
+    let permille = (top / range * OFFSET_SCALE).clamp(0.0, OFFSET_SCALE) as u16;
+    permille
 }
 
 /// One entry of a filter drop-down: a value, or `None` for "all", and its label.
@@ -5744,6 +5845,46 @@ mod tests {
             Outcome::Send { .. }
         ));
         assert_eq!(pane.opened, Some(fsmo()));
+    }
+
+    #[test]
+    fn the_offset_of_a_row_counts_the_titles_of_the_sections_before_it() {
+        // One section of 10 rows: the first row is at the start, the last at the end.
+        assert_eq!(row_permille(&[10], 0, 0), 0);
+        // The last row of a section: its title and the rows before it are above.
+        assert_eq!(row_permille(&[10], 9, 0), 1000);
+        // Two sections: the first row of the second shows its own title, under the first section.
+        let top = SECTION_HEIGHT + ROW_HEIGHT * 3.0;
+        let total = SECTION_HEIGHT * 2.0 + ROW_HEIGHT * 8.0;
+        let expected = (top / (total - ROW_HEIGHT) * OFFSET_SCALE) as u16;
+        assert_eq!(row_permille(&[3, 5], 3, 0), expected);
+        // A button at the end lengthens the content: the same row sits earlier.
+        assert!(row_permille(&[3, 5], 3, 1) < row_permille(&[3, 5], 3, 0));
+        // Nothing to scroll.
+        assert_eq!(row_permille(&[1], 0, 0), 0);
+        assert_eq!(row_permille(&[], 0, 0), 0);
+    }
+
+    #[test]
+    fn going_down_from_the_last_row_of_a_page_turns_to_the_next_page() {
+        let mut pane = CommandLibraryPane::default();
+        let all = pane.shown().len();
+        assert!(all > CATALOG_PAGE_SIZE, "a catalogue of several pages");
+        let rows = pane.listed_rows();
+        assert_eq!(rows.len(), CATALOG_PAGE_SIZE);
+        pane.update(CommandLibraryMessage::Select(rows[rows.len() - 1].clone()));
+        let outcome = pane.update(CommandLibraryMessage::MoveSelection { forward: true });
+        assert!(matches!(outcome, Outcome::Reveal(_)));
+        assert_eq!(pane.more_pages, 1);
+        let next = pane.listed_rows();
+        assert_eq!(pane.opened.as_ref(), next.get(CATALOG_PAGE_SIZE));
+        // At the very end the page stays and so does the selection.
+        pane.more_pages = (all / CATALOG_PAGE_SIZE) + 1;
+        let last = pane.listed_rows().pop().expect("rows");
+        pane.update(CommandLibraryMessage::Select(last.clone()));
+        let pages = pane.more_pages;
+        pane.update(CommandLibraryMessage::MoveSelection { forward: true });
+        assert_eq!((pane.more_pages, pane.opened.clone()), (pages, Some(last)));
     }
 
     #[test]
