@@ -869,14 +869,19 @@ impl Hue {
     /// The colour it is in `theme`.
     fn color(self, theme: &Theme) -> Color {
         let colors = crate::themes::colors_of(theme);
-        match self {
-            Self::Green => colors.green,
-            Self::Cyan => colors.cyan,
-            Self::Comment => colors.comment,
-            Self::Orange => colors.orange,
-            Self::Pink => colors.pink,
-            Self::Yellow => colors.yellow,
-        }
+        // A mark on a row of a list, like a protocol's icon: seen on the row under the
+        // pointer and the selected one.
+        crate::themes::row_mark(
+            theme,
+            match self {
+                Self::Green => colors.green,
+                Self::Cyan => colors.cyan,
+                Self::Comment => colors.comment,
+                Self::Orange => colors.orange,
+                Self::Pink => colors.pink,
+                Self::Yellow => colors.yellow,
+            },
+        )
     }
 }
 

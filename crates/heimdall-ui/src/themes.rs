@@ -389,7 +389,8 @@ fn build(theme: AppTheme, accent: Accent) -> Theme {
             MIN_TEXT_CONTRAST,
         );
         extended.secondary.base = Pair::new(readable_comment, on_secondary);
-        // The raw comment colour, for lines: nothing else reads the weakest background.
+        // The raw comment colour, for lines: iced's own subtle button, bordered box and disabled toggler also read the weakest
+        // background, and want a quiet colour like it.
         extended.background.weakest = Pair::new(colors.comment, colors.foreground);
         // Every edge in the text colour, not a shade of black.
         if colors.high_contrast {
