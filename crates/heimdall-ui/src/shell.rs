@@ -136,6 +136,9 @@ const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
 /// Width of the profile list at a first start, in logical pixels: the width the C# window
 /// draws its session tree at; a width the user dragged to is kept from then on.
 const SIDEBAR_WIDTH: f32 = 250.0;
+/// The width every earlier version saved without the sidebar ever being dragged: it is the
+/// old default, so it is read as "never dragged" and the current default takes its place.
+const LEGACY_SIDEBAR_WIDTH: f32 = 260.0;
 /// Narrowest the sidebar is dragged to, as the C# column's minimum.
 const SIDEBAR_MIN_WIDTH: f32 = 243.0;
 /// Widest it is dragged to, as the C# column's maximum.
@@ -912,9 +915,9 @@ pub enum Message {
     CopyRouteReport,
     /// Open a menu of the profile tree at the pointer.
     OpenTreeMenu(TreeMenu),
-    /// A menu opened under its toolbar button, whose bottom-left corner is the point, as the
-    /// C# menus of the filter, Add and More buttons.
-    OpenTreeMenuBelow(TreeMenu, Point),
+    /// A menu opened under its toolbar button, of the bounds given, as the C# menus of the
+    /// filter, Add and More buttons.
+    OpenTreeMenuBelow(TreeMenu, Rectangle),
     /// Close the open menu.
     CloseTreeMenu,
     /// Left in a submenu: back to the menu it was opened from.
@@ -1284,7 +1287,9 @@ impl fmt::Debug for Message {
             Self::TestRouteForm => f.write_str("TestRouteForm"),
             Self::CopyRouteReport => f.write_str("CopyRouteReport"),
             Self::OpenTreeMenu(menu) => write!(f, "OpenTreeMenu({menu:?})"),
-            Self::OpenTreeMenuBelow(menu, at) => write!(f, "OpenTreeMenuBelow({menu:?}, {at:?})"),
+            Self::OpenTreeMenuBelow(menu, button) => {
+                write!(f, "OpenTreeMenuBelow({menu:?}, {button:?})")
+            }
             Self::CloseTreeMenu => f.write_str("CloseTreeMenu"),
             Self::MenuBack => f.write_str("MenuBack"),
             Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
@@ -1757,6 +1762,12 @@ pub struct Shell {
     monitors: Option<Vec<crate::rdp_options::Monitor>>,
     /// The sidebar's width, as dragged.
     sidebar_width: f32,
+    /// The splitter was dragged: only then is the width saved, so a default that changes
+    /// is not frozen by the last version's save.
+    sidebar_dragged: bool,
+    /// The height of the toolbar button the open menu hangs under, so that flipped up it
+    /// clears the button; none for a menu at the pointer.
+    menu_lift: f32,
     /// The handle between the sidebar and the sessions is held.
     sidebar_drag: bool,
     /// The height of the properties panel under the tree, as dragged.
@@ -1921,6 +1932,15 @@ impl Destination {
     }
 }
 
+/// The sidebar width to keep from a saved one: a finite width the user dragged to, clamped;
+/// none for no width, and for the old default, which no drag chose.
+#[must_use]
+pub fn kept_sidebar_width(saved: Option<f32>) -> Option<f32> {
+    saved
+        .filter(|width| width.is_finite() && (*width - LEGACY_SIDEBAR_WIDTH).abs() > f32::EPSILON)
+        .map(|width| width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH))
+}
+
 /// The application's name, at the head of the navigation: a name, not translated.
 const APP_NAME: &str = "Heimdall-rs";
 /// Between the folders listed in a question.
@@ -1994,8 +2014,9 @@ impl Shell {
         let mut shell = Self::with_config(config);
         // The sidebar as the window was left.
         let left = heimdall_core::window_state::load(&memory);
-        if let Some(width) = left.sidebar_width.filter(|width| width.is_finite()) {
-            shell.sidebar_width = width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+        if let Some(width) = kept_sidebar_width(left.sidebar_width) {
+            shell.sidebar_width = width;
+            shell.sidebar_dragged = true;
         }
         shell.sidebar_hidden = left.sidebar_hidden;
         shell.properties_height =
@@ -2106,6 +2127,8 @@ impl Shell {
             window_extent: None,
             monitors: None,
             sidebar_width: SIDEBAR_WIDTH,
+            sidebar_dragged: false,
+            menu_lift: 0.0,
             sidebar_drag: false,
             properties_height: crate::properties_panel::DEFAULT_HEIGHT,
             properties_drag: None,
@@ -4362,6 +4385,9 @@ impl Shell {
             (true, Some((_, at))) => *at,
             _ => cursor,
         };
+        if !menu.is_submenu() {
+            self.menu_lift = 0.0;
+        }
         // What Left goes back to: the menu a submenu came out of.
         self.menu_parent = match &self.menu {
             Some((parent, _)) if menu.is_submenu() => Some(parent.clone()),
@@ -5445,7 +5471,7 @@ impl Shell {
             return iced::exit();
         };
         let leaving = heimdall_core::window_state::WindowState {
-            sidebar_width: Some(self.sidebar_width),
+            sidebar_width: self.sidebar_dragged.then_some(self.sidebar_width),
             sidebar_hidden: self.sidebar_hidden,
             properties_panel_height: Some(self.properties_height),
             folded: self.app.folded_folders(),
@@ -5658,9 +5684,12 @@ impl Shell {
             let token = crate::menu_nav::menu_token(&self.menu.as_ref().map(|(menu, _)| menu));
             let back = self.menu_parent.is_some().then_some(Message::MenuBack);
             layers = layers.push(opaque(
-                mouse_area(menu_at(crate::menu_nav::menu_nav(entries, token, back), at))
-                    .on_press(Message::CloseTreeMenu)
-                    .on_right_press(Message::CloseTreeMenu),
+                mouse_area(
+                    menu_at(crate::menu_nav::menu_nav(entries, token, back), at)
+                        .lifted(self.menu_lift),
+                )
+                .on_press(Message::CloseTreeMenu)
+                .on_right_press(Message::CloseTreeMenu),
             ));
         }
         container(CursorTracker::new(layers, self.cursor.clone()))
@@ -6905,8 +6934,8 @@ impl Shell {
     }
 
     /// The tree's rows, searched and filtered, and what it says when none passes; each with
-    /// whether it keeps to the sidebar's width (a folder's header, its count in view) instead
-    /// of sharing the widest row's.
+    /// whether it keeps to the sidebar's width (a folder's header, its count in view at rest)
+    /// instead of sharing the widest row's.
     fn tree_list(&self) -> Vec<(bool, Element<'_, Message>)> {
         let mut list: Vec<(bool, Element<'_, Message>)> = Vec::new();
         if self.app.profile_summaries().is_empty() {
@@ -7015,7 +7044,10 @@ impl Shell {
     fn tree_menu_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::OpenTreeMenu(menu) => self.open_tree_menu(menu),
-            Message::OpenTreeMenuBelow(menu, at) => self.open_tree_menu_at(menu, at, None),
+            Message::OpenTreeMenuBelow(menu, button) => {
+                self.open_tree_menu_at(menu, crate::menu_anchor::under(button), None);
+                self.menu_lift = button.height;
+            }
             Message::CloseTreeMenu => self.menu = None,
             // The submenu goes, the menu it came from comes back where it was.
             Message::MenuBack => {
@@ -7731,6 +7763,7 @@ impl Shell {
             }
             Message::SidebarDragged(x) if self.sidebar_drag => {
                 self.sidebar_width = x.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+                self.sidebar_dragged = true;
                 Vec::new()
             }
             Message::SidebarDragEnd => {
@@ -14863,6 +14896,19 @@ mod tests {
     use iced::keyboard::{Key, Location, Modifiers};
 
     use super::*;
+
+    #[test]
+    fn a_saved_sidebar_width_is_kept_only_when_a_drag_chose_it() {
+        assert_eq!(kept_sidebar_width(None), None, "never dragged");
+        assert_eq!(
+            kept_sidebar_width(Some(260.0)),
+            None,
+            "the old default, saved by every earlier version, gives way to the new one"
+        );
+        assert_eq!(kept_sidebar_width(Some(300.0)), Some(300.0), "dragged");
+        assert_eq!(kept_sidebar_width(Some(9000.0)), Some(SIDEBAR_MAX_WIDTH));
+        assert_eq!(kept_sidebar_width(Some(f32::NAN)), None);
+    }
 
     fn pressed(key: Named, modifiers: Modifiers) -> iced::Event {
         iced::Event::Keyboard(keyboard::Event::KeyPressed {

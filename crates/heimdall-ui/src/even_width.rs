@@ -60,8 +60,9 @@ impl<'a, M> EvenWidth<'a, M> {
     }
 
     /// The items flagged keep to the minimum width, whatever the widest is: a folder's header
-    /// stays at the sidebar's edge, its count badge in view, as the C# header does, while the
-    /// sessions under it scroll sideways. One flag per item; an item without one is not capped.
+    /// ends at the sidebar's edge, its count badge in view while the tree is not scrolled
+    /// sideways (it scrolls away with the rest when it is). One flag per item; an item
+    /// without one is not capped.
     #[must_use]
     pub fn capped(mut self, flags: Vec<bool>) -> Self {
         self.capped = flags;

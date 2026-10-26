@@ -45,7 +45,7 @@ const LINE: f64 = themes::MIN_BOUNDARY_CONTRAST;
 
 /// The number of pairs one theme with one accent is checked on. Adding a pair to the walk
 /// changes it, on purpose: a walk that quietly checked less would fail the count.
-const PAIRS_PER_COMBINATION: usize = 354;
+const PAIRS_PER_COMBINATION: usize = 355;
 
 /// How far above its requirement a pair is still reported as a narrow pass.
 const NARROW: f64 = 0.15;
@@ -209,10 +209,11 @@ fn walk(walk: &mut Walk<'_>, theme: &Theme) {
     }
 
     // Boxes drawn with their own text.
-    let boxes: [(&str, BoxStyle); 7] = [
+    let boxes: [(&str, BoxStyle); 8] = [
         ("status counter", styles::status_pill_box(theme)),
         ("folder count badge", styles::count_badge(theme)),
         ("tooltip", styles::tooltip(theme)),
+        ("menu card", styles::menu_card(theme)),
         ("panel", styles::panel(theme)),
         ("bar", styles::bar(theme)),
         ("folder chip", styles::folder_chip(theme)),

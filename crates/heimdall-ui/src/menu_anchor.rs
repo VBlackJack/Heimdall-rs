@@ -19,7 +19,7 @@
 //! the button it belongs to.
 //!
 //! [`below`] wraps the button: a left press on it publishes [`Message::OpenTreeMenuBelow`]
-//! with the button's bottom-left corner, which [`crate::menu_fit`] then fits to the window.
+//! with the button's bounds, whose bottom-left corner the menu opens at and which [`crate::menu_fit`] then fits to the window.
 
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree};
@@ -102,7 +102,7 @@ impl Widget<Message, Theme, iced::Renderer> for Below<'_> {
         {
             shell.publish(Message::OpenTreeMenuBelow(
                 self.menu.clone(),
-                under(layout.bounds()),
+                layout.bounds(),
             ));
             shell.capture_event();
             return;

@@ -30,6 +30,7 @@ use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector};
 pub struct MenuFit<'a, Message> {
     menu: Element<'a, Message>,
     anchor: Point,
+    lift: f32,
 }
 
 /// `menu` opened at `anchor`, kept whole and inside the area the widget fills.
@@ -41,6 +42,17 @@ pub fn menu_at<'a, Message>(
     MenuFit {
         menu: menu.into(),
         anchor,
+        lift: 0.0,
+    }
+}
+
+impl<Message> MenuFit<'_, Message> {
+    /// The menu hangs under a button `lift` high: short of room below, it opens above that
+    /// button, not over it.
+    #[must_use]
+    pub fn lifted(mut self, lift: f32) -> Self {
+        self.lift = lift;
+        self
     }
 }
 
@@ -49,19 +61,31 @@ pub fn menu_at<'a, Message>(
 /// of it (its right edge at the pointer) or above it (its foot at the pointer); and when
 /// it fits neither way, shifted to stay inside, its left or top edge never before 0.
 #[must_use]
+#[cfg(test)]
 pub fn fit(anchor: Point, size: Size, bounds: Size) -> Point {
+    fit_lifted(anchor, size, bounds, 0.0)
+}
+
+/// [`fit`] for a menu under a button `lift` high: flipped up, its foot is at the button's top.
+#[must_use]
+pub fn fit_lifted(anchor: Point, size: Size, bounds: Size, lift: f32) -> Point {
     Point::new(
         fit_axis(anchor.x, size.width, bounds.width),
-        fit_axis(anchor.y, size.height, bounds.height),
+        fit_axis_lifted(anchor.y, size.height, bounds.height, lift),
     )
 }
 
 /// [`fit`] along one axis.
 fn fit_axis(anchor: f32, length: f32, bound: f32) -> f32 {
+    fit_axis_lifted(anchor, length, bound, 0.0)
+}
+
+/// [`fit_axis`] with the flip made `lift` above the anchor.
+fn fit_axis_lifted(anchor: f32, length: f32, bound: f32, lift: f32) -> f32 {
     if anchor + length <= bound {
         anchor
-    } else if anchor - length >= 0.0 {
-        anchor - length
+    } else if anchor - lift - length >= 0.0 {
+        anchor - lift - length
     } else {
         (bound - length).max(0.0)
     }
@@ -102,7 +126,7 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for MenuFit<'_, Message> {
             &layout::Limits::new(Size::ZERO, limits.max()),
         );
         let size = limits.resolve(Length::Fill, Length::Fill, node.size());
-        let at = fit(self.anchor, node.size(), size);
+        let at = fit_lifted(self.anchor, node.size(), size, self.lift);
         layout::Node::with_children(size, vec![node.move_to(at)])
     }
 
@@ -211,6 +235,15 @@ mod tests {
             fit(Point::new(100.0, 50.0), MENU, WINDOW),
             Point::new(100.0, 50.0)
         );
+    }
+
+    #[test]
+    fn a_menu_under_a_button_flips_above_the_button_not_over_it() {
+        // The button spans 640 to 672; its menu is under it, at 672.
+        let at = fit_lifted(Point::new(100.0, 672.0), MENU, WINDOW, 32.0);
+        assert!((at.y + MENU.height - 640.0).abs() < f32::EPSILON, "{at:?}");
+        let room = fit_lifted(Point::new(100.0, 100.0), MENU, WINDOW, 32.0);
+        assert!((room.y - 100.0).abs() < f32::EPSILON, "{room:?}");
     }
 
     #[test]
