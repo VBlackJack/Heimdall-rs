@@ -5557,16 +5557,21 @@ ui-tool-cmdlib-issue-parameter-type = el tipo { $kind } no es compatible
 ui-tool-cmdlib-issue-choice-empty = la opción { $name } no ofrece ningún valor
 ui-tool-cmdlib-issue-default-refused = sus valores predeterminados se rechazan por inseguros
 ui-tool-cmdlib-catalogue-unbuildable = Heimdall no puede construir este comando del catálogo de forma segura.
-ui-tool-cmdlib-count =
-    { $count ->
-        [one] { $count } comando
-       *[other] { $count } comandos
-    }
 ui-tool-cmdlib-platform-both = Ambas
+ui-tool-cmdlib-filter-category-all = Todas las categorías
+ui-tool-cmdlib-filter-tag-all = Todas las etiquetas
+ui-tool-cmdlib-filter-level-all = Todos los niveles
+ui-tool-cmdlib-result-count = { $shown }/{ $total }
+ui-tool-cmdlib-badge-info = INFO
+ui-tool-cmdlib-badge-run = EJEC
+ui-tool-cmdlib-badge-danger = PELIGRO
+ui-tool-cmdlib-badge-windows = WIN
+ui-tool-cmdlib-badge-linux = LIN
+ui-tool-cmdlib-badge-both = WIN/LIN
+ui-tool-cmdlib-details-close = Cerrar los detalles
 ui-tool-cmdlib-template-windows = PowerShell
 ui-tool-cmdlib-template-linux = Shell
 ui-tool-cmdlib-section-mine = Mis comandos
-ui-tool-cmdlib-section-catalog = Catálogo
 ui-tool-cmdlib-new = Nuevo comando
 ui-tool-cmdlib-edit = Editar
 ui-tool-cmdlib-delete = Eliminar

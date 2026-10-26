@@ -5568,16 +5568,21 @@ ui-tool-cmdlib-issue-parameter-type = le type { $kind } n'est pas pris en charge
 ui-tool-cmdlib-issue-choice-empty = le choix { $name } ne propose aucune valeur
 ui-tool-cmdlib-issue-default-refused = ses valeurs par défaut sont refusées comme dangereuses
 ui-tool-cmdlib-catalogue-unbuildable = Heimdall ne peut pas construire cette commande du catalogue en toute sécurité.
-ui-tool-cmdlib-count =
-    { $count ->
-        [one] { $count } commande
-       *[other] { $count } commandes
-    }
 ui-tool-cmdlib-platform-both = Les deux
+ui-tool-cmdlib-filter-category-all = Toutes les catégories
+ui-tool-cmdlib-filter-tag-all = Tous les tags
+ui-tool-cmdlib-filter-level-all = Tous les niveaux
+ui-tool-cmdlib-result-count = { $shown }/{ $total }
+ui-tool-cmdlib-badge-info = INFO
+ui-tool-cmdlib-badge-run = EXEC
+ui-tool-cmdlib-badge-danger = DANGER
+ui-tool-cmdlib-badge-windows = WIN
+ui-tool-cmdlib-badge-linux = LIN
+ui-tool-cmdlib-badge-both = WIN/LIN
+ui-tool-cmdlib-details-close = Fermer les détails
 ui-tool-cmdlib-template-windows = PowerShell
 ui-tool-cmdlib-template-linux = Shell
 ui-tool-cmdlib-section-mine = Mes commandes
-ui-tool-cmdlib-section-catalog = Catalogue
 ui-tool-cmdlib-new = Nouvelle commande
 ui-tool-cmdlib-edit = Modifier
 ui-tool-cmdlib-delete = Supprimer

@@ -38,7 +38,7 @@ use heimdall_core::tools::user_commands::{
     TemplatePlatform, UserCommand, UserLibrary, UserParameter, UserPlatform, ValueError,
 };
 use iced::widget::{
-    Column, Row, button, checkbox, column, container, row, scrollable, text, text_input,
+    Column, Row, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
 };
 use iced::{Element, Length, Task, window};
 
@@ -47,6 +47,7 @@ use super::command_library_runbooks::{Delivered, Ready, RunTarget, RunbookMessag
 use super::{CopySlot, ToolMessage, ToolPane};
 use crate::file_dialog::{self, FileDialog};
 use crate::i18n::fl;
+use crate::icons::{self, Icon, Tint};
 use crate::shell::{Message, main_window_task};
 use crate::styles;
 use crate::tokens::{font_size, spacing};
@@ -70,8 +71,41 @@ const NAME_SEPARATOR: &str = ", ";
 const TAG_JOINER: &str = ", ";
 
 /// The commands of the catalogue shown at first, and added by each press of "show more": the
-/// catalogue is hundreds of commands, and a card with its values is not cheap to draw.
-const CATALOG_PAGE_SIZE: usize = 30;
+/// catalogue is hundreds of commands, and even a one-line row is not free to draw.
+const CATALOG_PAGE_SIZE: usize = 100;
+
+/// Height of a command's row, as the C# list row (title, description and command preview).
+const ROW_HEIGHT: f32 = 63.0;
+
+/// Padding of a command's row: above and below, then at each side.
+const ROW_PADDING: [f32; 2] = [4.0, 12.0];
+
+/// Padding of a section's title, as the C# group header's `12,8,12,4`.
+const SECTION_PADDING: iced::Padding = iced::Padding {
+    top: 8.0,
+    right: 12.0,
+    bottom: 4.0,
+    left: 12.0,
+};
+
+/// Padding of the level badge of a row, as the C# `4,1`.
+const BADGE_PADDING: [f32; 2] = [1.0, 4.0];
+
+/// Width of the level badge, so the titles of the rows line up whatever the level.
+const BADGE_WIDTH: f32 = 56.0;
+
+/// Width of a row's favorite star.
+const STAR_SIDE: f32 = 16.0;
+
+/// The tallest the details of the command opened grow before they scroll, as the C# generator
+/// panel's `MaxHeight`.
+const DETAILS_MAX_HEIGHT: f32 = 450.0;
+
+/// Width of the category, tag, platform and level drop-downs, as the C# `MinWidth`s.
+const CATEGORY_FILTER_WIDTH: f32 = 180.0;
+const TAG_FILTER_WIDTH: f32 = 150.0;
+const PLATFORM_FILTER_WIDTH: f32 = 130.0;
+const LEVEL_FILTER_WIDTH: f32 = 120.0;
 
 /// The platforms the filter offers, in order; a command for both is under each.
 const PLATFORM_FILTERS: [UserPlatform; 3] = [
@@ -94,6 +128,17 @@ pub enum CommandRef {
 pub enum CommandLibraryMessage {
     /// The platform shown; `None` for every one.
     Platform(Option<UserPlatform>),
+    /// The category shown, by its stable key; `None` for every one.
+    Category(Option<String>),
+    /// The tag shown; `None` for every one.
+    Tag(Option<String>),
+    /// The level shown; `None` for every one.
+    Level(Option<Criticality>),
+    /// Open the details of the command (its values and its actions), as selecting a row of
+    /// the C# list.
+    Select(CommandRef),
+    /// Close the details.
+    CloseDetails,
     /// The search typed.
     Search(String),
     /// Show more commands of the catalogue.
@@ -416,6 +461,14 @@ enum Failure {
 #[derive(Debug, Default)]
 pub struct CommandLibraryPane {
     platform: Option<UserPlatform>,
+    /// The category key shown; `None` for every one.
+    category: Option<String>,
+    /// The tag shown; `None` for every one.
+    tag: Option<String>,
+    /// The level shown; `None` for every one.
+    level: Option<Criticality>,
+    /// The command whose details are open under the list.
+    opened: Option<CommandRef>,
     search: String,
     /// The pages of the catalogue shown besides the first.
     more_pages: usize,
@@ -538,6 +591,27 @@ impl CommandLibraryPane {
                 self.more_pages = 0;
                 self.more_mine_pages = 0;
             }
+            CommandLibraryMessage::Category(category) => {
+                self.category = category;
+                self.more_pages = 0;
+                self.more_mine_pages = 0;
+            }
+            CommandLibraryMessage::Tag(tag) => {
+                self.tag = tag;
+                self.more_pages = 0;
+                self.more_mine_pages = 0;
+            }
+            CommandLibraryMessage::Level(level) => {
+                self.level = level;
+                self.more_pages = 0;
+                self.more_mine_pages = 0;
+            }
+            CommandLibraryMessage::Select(command) => {
+                self.selected = Some(command.clone());
+                self.prefer_filtered_template(&command);
+                self.opened = Some(command);
+            }
+            CommandLibraryMessage::CloseDetails => self.opened = None,
             CommandLibraryMessage::Search(typed) => {
                 self.search = typed;
                 self.more_pages = 0;
@@ -1047,6 +1121,9 @@ impl CommandLibraryPane {
             CommandLibraryMessage::AskDelete(id) if self.can_edit() => self.deleting = Some(id),
             CommandLibraryMessage::ConfirmDelete(id) if self.can_edit() => {
                 self.deleting = None;
+                if self.opened == Some(CommandRef::User(id.clone())) {
+                    self.opened = None;
+                }
                 let before = self.library.clone();
                 if self.library.delete(&id) {
                     self.keep(&before);
@@ -1529,13 +1606,78 @@ impl CommandLibraryPane {
         Ok(command)
     }
 
-    /// The commands of the catalogue the platform, the favorites and the search keep.
+    /// Whether the category, the tag and the level chosen keep `command`: the category by its
+    /// stable key, the tag without regard to case, as the C# `ShouldShowAction`.
+    fn keeps(&self, command: &UserCommand) -> bool {
+        self.category
+            .as_ref()
+            .is_none_or(|wanted| &command.category == wanted)
+            && self.tag.as_ref().is_none_or(|wanted| {
+                command
+                    .tags
+                    .iter()
+                    .any(|tag| tag.trim().to_lowercase() == wanted.to_lowercase())
+            })
+            && self.level.is_none_or(|wanted| command.level == wanted)
+    }
+
+    /// Opening `command` with a platform shown takes the template of that platform, unless
+    /// the user chose one: the row's preview named it.
+    fn prefer_filtered_template(&mut self, reference: &CommandRef) {
+        let Some(platform) = self.filtered_template() else {
+            return;
+        };
+        let (templates, id, command) = match reference {
+            CommandRef::Catalog(id) => (
+                &mut self.templates,
+                id,
+                catalogue_entry(id).map(|entry| entry.command().clone()),
+            ),
+            CommandRef::User(id) => (&mut self.user_templates, id, self.library.get(id).cloned()),
+        };
+        if !templates.contains_key(id)
+            && command.is_some_and(|each| each.template_platforms().contains(&platform))
+        {
+            templates.insert(id.clone(), platform);
+        }
+    }
+
+    /// The template the platform filter asks for; `None` for every platform or for both.
+    fn filtered_template(&self) -> Option<TemplatePlatform> {
+        match self.platform {
+            Some(UserPlatform::Windows) => Some(TemplatePlatform::Windows),
+            Some(UserPlatform::Linux) => Some(TemplatePlatform::Linux),
+            Some(UserPlatform::Both) | None => None,
+        }
+    }
+
+    /// The template a row previews: the one chosen, else the one the platform filter asks
+    /// for, else this system's, as the C# `ResolveCommandPreview`.
+    fn preview_template(
+        &self,
+        reference: &CommandRef,
+        command: &UserCommand,
+    ) -> Option<TemplatePlatform> {
+        let chosen = match reference {
+            CommandRef::Catalog(id) => self.templates.get(id),
+            CommandRef::User(id) => self.user_templates.get(id),
+        }
+        .copied();
+        chosen
+            .or_else(|| self.filtered_template())
+            .filter(|platform| command.template_platforms().contains(platform))
+            .or_else(|| command.preferred_platform(cfg!(windows)))
+    }
+
+    /// The commands of the catalogue the platform, the category, the tag, the level, the
+    /// favorites and the search keep.
     fn shown(&self) -> Vec<&'static CatalogueEntry> {
         let language = language();
         command_library::shipped()
             .entries()
             .iter()
             .filter(|entry| command_library::on_platform(entry.command().platform, self.platform))
+            .filter(|entry| self.keeps(entry.command()))
             .filter(|entry| {
                 !self.favorites_only
                     || self.is_favorite(&CommandRef::Catalog(entry.command().id.clone()))
@@ -1568,6 +1710,7 @@ impl CommandLibraryPane {
                 !self.favorites_only || self.is_favorite(&CommandRef::User(command.id.clone()))
             })
             .filter(|command| command_library::on_platform(command.platform, self.platform))
+            .filter(|command| self.keeps(command))
             .filter(|command| {
                 command_library::matches_query(command, &command.category, &self.search)
             })
@@ -1578,25 +1721,6 @@ impl CommandLibraryPane {
     /// editor when open, then the user's commands and the catalog.
     pub fn view<'a>(&'a self, tab: TabId, state: &ToolPane) -> Element<'a, Message> {
         let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
-        let platform = |label: String, choice: Option<UserPlatform>| {
-            button(text(label).size(font_size::BODY))
-                .padding(super::COPY_PADDING)
-                .style(if self.platform == choice {
-                    styles::primary
-                } else {
-                    styles::secondary
-                })
-                .on_press(send(CommandLibraryMessage::Platform(choice)))
-                .into()
-        };
-        let platforms = Row::with_children(
-            std::iter::once(platform(fl!("ui-tool-cmdlib-platform-all"), None)).chain(
-                PLATFORM_FILTERS
-                    .into_iter()
-                    .map(|choice| platform(user_platform_name(choice), Some(choice))),
-            ),
-        )
-        .spacing(spacing::SM);
         let search = text_input(&fl!("ui-tool-cmdlib-search-placeholder"), &self.search)
             .size(font_size::BODY)
             .padding(super::INPUT_PADDING)
@@ -1692,16 +1816,9 @@ impl CommandLibraryPane {
         let shown = self.shown();
         let mine = self.shown_user();
         let count = shown.len() + mine.len();
-        let mut page = column![
-            row![platforms, search]
-                .spacing(spacing::MD)
-                .align_y(iced::Alignment::Center),
-            tools,
-            text(fl!("ui-tool-cmdlib-count", count = count))
-                .size(font_size::CAPTION)
-                .style(text::secondary),
-        ]
-        .spacing(spacing::SM);
+        let total = command_library::shipped().entries().len() + self.library.commands().len();
+        let mut page =
+            column![search, tools, self.filter_row(tab, count, total)].spacing(spacing::SM);
         if self.export_choice {
             page = page.push(export_choice_view(tab));
         }
@@ -1742,53 +1859,243 @@ impl CommandLibraryPane {
         if count == 0 && self.editor.is_none() && !self.history_open {
             return super::tool_body(page.push(super::empty_state(fl!("ui-tool-cmdlib-empty"))));
         }
+        let language = language();
+        let mut list: Column<'a, Message> = Column::new();
         if !mine.is_empty() {
-            cards = cards.push(
-                text(fl!("ui-tool-cmdlib-section-mine"))
-                    .size(font_size::BODY_LARGE)
-                    .font(styles::SEMIBOLD),
-            );
+            list = list.push(section_title(fl!("ui-tool-cmdlib-section-mine")));
             let visible_mine =
                 CATALOG_PAGE_SIZE.saturating_mul(self.more_mine_pages.saturating_add(1));
             let remaining_mine = mine.len().saturating_sub(visible_mine);
             for command in mine.into_iter().take(visible_mine) {
-                cards = cards.push(self.user_card(tab, state, command));
+                list =
+                    list.push(self.list_row(tab, &CommandRef::User(command.id.clone()), command));
             }
             if remaining_mine > 0 {
-                cards = cards.push(
-                    button(
-                        text(fl!("ui-tool-cmdlib-show-more", count = remaining_mine))
-                            .size(font_size::BODY),
-                    )
-                    .padding(super::COPY_PADDING)
-                    .style(styles::secondary)
-                    .on_press(send(CommandLibraryMessage::ShowMoreMine)),
-                );
-            }
-            if !shown.is_empty() {
-                cards = cards.push(
-                    text(fl!("ui-tool-cmdlib-section-catalog"))
-                        .size(font_size::BODY_LARGE)
-                        .font(styles::SEMIBOLD),
-                );
+                list = list.push(show_more(
+                    remaining_mine,
+                    send(CommandLibraryMessage::ShowMoreMine),
+                ));
             }
         }
         let visible = CATALOG_PAGE_SIZE.saturating_mul(self.more_pages.saturating_add(1));
         let remaining = shown.len().saturating_sub(visible);
-        for entry in shown.into_iter().take(visible) {
-            cards = cards.push(self.catalogue_card(tab, state, entry));
+        for (category, entries) in sections(shown, visible) {
+            list = list.push(section_title(category_name(&category)));
+            for entry in entries {
+                let command = entry.localized(&language);
+                list = list.push(self.list_row(
+                    tab,
+                    &CommandRef::Catalog(command.id.clone()),
+                    &command,
+                ));
+            }
         }
         if remaining > 0 {
-            cards = cards.push(
-                button(
-                    text(fl!("ui-tool-cmdlib-show-more", count = remaining)).size(font_size::BODY),
-                )
-                .padding(super::COPY_PADDING)
-                .style(styles::secondary)
-                .on_press(send(CommandLibraryMessage::ShowMore)),
-            );
+            list = list.push(show_more(remaining, send(CommandLibraryMessage::ShowMore)));
         }
-        super::tool_body(page.push(scrollable(cards).height(Length::Fill)))
+        cards = cards.push(list);
+        let mut page = page.push(styles::scroll(cards).height(Length::Fill));
+        if let Some(details) = self.details(tab, state) {
+            page = page.push(details);
+        }
+        super::tool_body(page)
+    }
+
+    /// The filters under the search, as the C# wrap panel: how many commands of how many are
+    /// shown, then the category, tag, platform and level drop-downs.
+    fn filter_row<'a>(&'a self, tab: TabId, count: usize, total: usize) -> Element<'a, Message> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
+        let mut categories: Vec<String> = Vec::new();
+        let mut tags: Vec<String> = Vec::new();
+        let mut gather = |command: &UserCommand| {
+            categories.push(command.category.clone());
+            tags.extend(command.tags.iter().map(|tag| tag.trim().to_owned()));
+        };
+        for entry in command_library::shipped().entries() {
+            gather(entry.command());
+        }
+        for command in self.library.commands() {
+            gather(command);
+        }
+        categories.retain(|category| !category.trim().is_empty());
+        categories.sort();
+        categories.dedup();
+        tags.retain(|tag| !tag.is_empty());
+        tags.sort_by_key(|tag| tag.to_lowercase());
+        tags.dedup_by(|a, b| a.to_lowercase() == b.to_lowercase());
+        let category_choices =
+            std::iter::once(Choice::new(None, fl!("ui-tool-cmdlib-filter-category-all")))
+                .chain(categories.into_iter().map(|key| {
+                    let label = category_name(&key);
+                    Choice::new(Some(key), label)
+                }))
+                .collect();
+        let tag_choices = std::iter::once(Choice::new(None, fl!("ui-tool-cmdlib-filter-tag-all")))
+            .chain(
+                tags.into_iter()
+                    .map(|tag| Choice::new(Some(tag.clone()), tag)),
+            )
+            .collect();
+        let platform_choices =
+            std::iter::once(Choice::new(None, fl!("ui-tool-cmdlib-platform-all")))
+                .chain(
+                    PLATFORM_FILTERS
+                        .into_iter()
+                        .map(|each| Choice::new(Some(each), user_platform_name(each))),
+                )
+                .collect();
+        let level_choices =
+            std::iter::once(Choice::new(None, fl!("ui-tool-cmdlib-filter-level-all")))
+                .chain(
+                    Criticality::ALL
+                        .into_iter()
+                        .map(|each| Choice::new(Some(each), level_name(each))),
+                )
+                .collect();
+        row![
+            text(fl!(
+                "ui-tool-cmdlib-result-count",
+                shown = count,
+                total = total
+            ))
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+            filter_list(
+                category_choices,
+                &self.category,
+                CATEGORY_FILTER_WIDTH,
+                move |key| send(CommandLibraryMessage::Category(key)),
+            ),
+            filter_list(tag_choices, &self.tag, TAG_FILTER_WIDTH, move |tag| {
+                send(CommandLibraryMessage::Tag(tag))
+            }),
+            filter_list(
+                platform_choices,
+                &self.platform,
+                PLATFORM_FILTER_WIDTH,
+                move |platform| send(CommandLibraryMessage::Platform(platform)),
+            ),
+            filter_list(
+                level_choices,
+                &self.level,
+                LEVEL_FILTER_WIDTH,
+                move |level| { send(CommandLibraryMessage::Level(level)) }
+            ),
+        ]
+        .spacing(spacing::MD)
+        .align_y(iced::Alignment::Center)
+        .wrap()
+        .vertical_spacing(spacing::SM)
+        .into()
+    }
+
+    /// One command as one compact row, as the C# list row: the level badge, the title with
+    /// its description and the command under it, the platform, and the favorite star. A press
+    /// opens the details.
+    fn list_row<'a>(
+        &'a self,
+        tab: TabId,
+        reference: &CommandRef,
+        command: &UserCommand,
+    ) -> Element<'a, Message> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
+        let opened = self.opened.as_ref() == Some(reference);
+        let favorite = self.is_favorite(reference);
+        let tone = match command.level {
+            Criticality::Info => styles::Tone::Quiet,
+            Criticality::Run => styles::Tone::Warning,
+            Criticality::Dangerous => styles::Tone::Danger,
+        };
+        let badge = container(
+            text(level_badge_name(command.level))
+                .size(font_size::BADGE)
+                .font(styles::BOLD),
+        )
+        .padding(BADGE_PADDING)
+        .center_x(BADGE_WIDTH)
+        .style(styles::level_badge(tone));
+        let one_line =
+            |label: String, size: f32| text(label).size(size).wrapping(text::Wrapping::None);
+        let preview = self
+            .preview_template(reference, command)
+            .and_then(|platform| command.template(platform))
+            .map(|template| command_library::command_preview(&template.command_pattern))
+            .unwrap_or_default();
+        let lines = column![
+            one_line(command.title.clone(), font_size::BODY).font(styles::SEMIBOLD),
+            one_line(command.description.clone(), font_size::CAPTION).style(text::secondary),
+            one_line(preview, font_size::CAPTION)
+                .font(super::BOX_FONT)
+                .style(text::secondary),
+        ];
+        let platform = text(user_platform_badge(command.platform))
+            .size(font_size::SMALL_CAPTION)
+            .style(text::secondary);
+        let main = button(
+            row![
+                badge,
+                container(lines).width(Length::Fill).clip(true),
+                platform
+            ]
+            .spacing(spacing::SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding(ROW_PADDING)
+        .width(Length::Fill)
+        .height(ROW_HEIGHT)
+        .style(styles::palette_row(opened))
+        .on_press(send(CommandLibraryMessage::Select(reference.clone())));
+        let star_label = if favorite {
+            fl!("ui-tool-cmdlib-unfavorite")
+        } else {
+            fl!("ui-tool-cmdlib-favorite")
+        };
+        let star = button(icons::icon(
+            if favorite {
+                Icon::FavoriteStarFill
+            } else {
+                Icon::FavoriteStar
+            },
+            Tint::Warning,
+            STAR_SIDE,
+        ))
+        .padding(spacing::SM)
+        .style(styles::bare)
+        .on_press(send(CommandLibraryMessage::ToggleFavorite(
+            reference.clone(),
+        )));
+        row![
+            main,
+            styles::tip(
+                star,
+                text(star_label).size(font_size::CAPTION),
+                iced::widget::tooltip::Position::Left,
+            ),
+        ]
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
+    /// The details of the command opened, under the list as the C# generator panel: its
+    /// values, its command and its actions, or why it cannot be made; `None` while none is
+    /// open or when the command is gone.
+    fn details<'a>(&'a self, tab: TabId, state: &ToolPane) -> Option<Element<'a, Message>> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
+        let card = match self.opened.as_ref()? {
+            CommandRef::Catalog(id) => self.catalogue_card(tab, state, catalogue_entry(id)?),
+            CommandRef::User(id) => self.user_card(tab, state, self.library.get(id)?),
+        };
+        let close = button(text(fl!("ui-tool-cmdlib-details-close")).size(font_size::BODY))
+            .padding(super::COPY_PADDING)
+            .style(styles::secondary)
+            .on_press(send(CommandLibraryMessage::CloseDetails));
+        Some(
+            container(styles::scroll(
+                column![row![iced::widget::space::horizontal(), close], card].spacing(spacing::SM),
+            ))
+            .max_height(DETAILS_MAX_HEIGHT)
+            .into(),
+        )
     }
 
     /// Where commands are sent: the terminals offered, the one chosen marked; a hint when
@@ -2299,6 +2606,90 @@ impl CommandLibraryPane {
     }
 }
 
+/// One entry of a filter drop-down: a value, or `None` for "all", and its label.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Choice<T> {
+    value: Option<T>,
+    label: String,
+}
+
+impl<T> Choice<T> {
+    fn new(value: Option<T>, label: String) -> Self {
+        Self { value, label }
+    }
+}
+
+impl<T> std::fmt::Display for Choice<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
+/// A filter drop-down of `width`, `current` chosen in `options`.
+fn filter_list<'a, T: Clone + PartialEq + 'a>(
+    options: Vec<Choice<T>>,
+    current: &Option<T>,
+    width: f32,
+    on_choose: impl Fn(Option<T>) -> Message + 'a,
+) -> Element<'a, Message> {
+    let chosen = options.iter().find(|each| &each.value == current).cloned();
+    pick_list(options, chosen, move |choice: Choice<T>| {
+        on_choose(choice.value)
+    })
+    .width(width)
+    .text_size(font_size::BODY)
+    .style(styles::pick_list)
+    .menu_style(styles::menu)
+    .into()
+}
+
+/// The title of a section of the list, as the C# group header.
+fn section_title<'a>(title: String) -> Element<'a, Message> {
+    container(
+        text(title)
+            .size(font_size::BODY_LARGE)
+            .font(styles::SEMIBOLD)
+            .style(styles::accent_text),
+    )
+    .padding(SECTION_PADDING)
+    .into()
+}
+
+/// The button that shows `count` more commands.
+fn show_more<'a>(count: usize, message: Message) -> Element<'a, Message> {
+    container(
+        button(text(fl!("ui-tool-cmdlib-show-more", count = count)).size(font_size::BODY))
+            .padding(super::COPY_PADDING)
+            .style(styles::secondary)
+            .on_press(message),
+    )
+    .padding(SECTION_PADDING)
+    .into()
+}
+
+/// The first `limit` of `entries`, grouped under their category key in the order the keys
+/// first appear, so a section holds all its commands whatever the order of the catalogue.
+fn sections(
+    entries: Vec<&'static CatalogueEntry>,
+    limit: usize,
+) -> Vec<(String, Vec<&'static CatalogueEntry>)> {
+    let mut grouped: Vec<(String, Vec<&'static CatalogueEntry>)> = Vec::new();
+    for entry in entries {
+        let key = &entry.command().category;
+        match grouped.iter_mut().find(|(each, _)| each == key) {
+            Some((_, group)) => group.push(entry),
+            None => grouped.push((key.clone(), vec![entry])),
+        }
+    }
+    let mut left = limit;
+    for (_, group) in &mut grouped {
+        group.truncate(left);
+        left -= group.len();
+    }
+    grouped.retain(|(_, group)| !group.is_empty());
+    grouped
+}
+
 /// The command of the catalogue of this identity.
 fn catalogue_entry(id: &str) -> Option<&'static CatalogueEntry> {
     command_library::shipped().get(id)
@@ -2752,6 +3143,24 @@ fn template_name(platform: TemplatePlatform) -> String {
     match platform {
         TemplatePlatform::Windows => fl!("ui-tool-cmdlib-template-windows"),
         TemplatePlatform::Linux => fl!("ui-tool-cmdlib-template-linux"),
+    }
+}
+
+/// The badge of `level` on a row, as the C# `ResolveRiskBadge`.
+fn level_badge_name(level: Criticality) -> String {
+    match level {
+        Criticality::Info => fl!("ui-tool-cmdlib-badge-info"),
+        Criticality::Run => fl!("ui-tool-cmdlib-badge-run"),
+        Criticality::Dangerous => fl!("ui-tool-cmdlib-badge-danger"),
+    }
+}
+
+/// The platform mark of a row, as the C# `ResolvePlatformLabel`.
+fn user_platform_badge(platform: UserPlatform) -> String {
+    match platform {
+        UserPlatform::Windows => fl!("ui-tool-cmdlib-badge-windows"),
+        UserPlatform::Linux => fl!("ui-tool-cmdlib-badge-linux"),
+        UserPlatform::Both => fl!("ui-tool-cmdlib-badge-both"),
     }
 }
 
@@ -5117,5 +5526,233 @@ mod tests {
         run_message(&mut pane, RunbookMessage::RunStop);
         run_message(&mut pane, RunbookMessage::Run(id));
         assert_eq!(pane.notice, None);
+    }
+
+    /// Every category key of the commands `pane` shows, in the order the list groups them.
+    fn section_keys(pane: &CommandLibraryPane, limit: usize) -> Vec<String> {
+        sections(pane.shown(), limit)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect()
+    }
+
+    #[test]
+    fn the_catalogue_is_grouped_by_category_key_each_section_once() {
+        let pane = CommandLibraryPane::default();
+        let grouped = sections(pane.shown(), usize::MAX);
+        let keys: Vec<&String> = grouped.iter().map(|(key, _)| key).collect();
+        let mut distinct = keys.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(keys.len(), distinct.len(), "a category is one section only");
+        assert!(keys.len() > 1, "{keys:?}");
+        let rows: usize = grouped.iter().map(|(_, group)| group.len()).sum();
+        assert_eq!(rows, command_library::shipped().entries().len());
+        for (key, group) in &grouped {
+            assert!(
+                group.iter().all(|entry| &entry.command().category == key),
+                "{key}"
+            );
+        }
+        // The label is the window's, the key stays the stable one.
+        assert_eq!(
+            category_name("security"),
+            fl!("ui-tool-cmdlib-category-security")
+        );
+    }
+
+    #[test]
+    fn a_page_cuts_the_rows_across_the_sections_and_drops_the_empty_ones() {
+        let pane = CommandLibraryPane::default();
+        let grouped = sections(pane.shown(), 5);
+        let rows: usize = grouped.iter().map(|(_, group)| group.len()).sum();
+        assert_eq!(rows, 5);
+        assert!(grouped.iter().all(|(_, group)| !group.is_empty()));
+        assert!(sections(pane.shown(), 0).is_empty());
+    }
+
+    #[test]
+    fn the_category_filter_keeps_one_section_by_its_stable_key() {
+        let mut pane = CommandLibraryPane::default();
+        let all = pane.shown().len();
+        pane.update(CommandLibraryMessage::Category(Some("security".to_owned())));
+        let shown = pane.shown();
+        assert!(!shown.is_empty() && shown.len() < all);
+        assert!(
+            shown
+                .iter()
+                .all(|entry| entry.command().category == "security")
+        );
+        assert_eq!(section_keys(&pane, usize::MAX), ["security"]);
+        pane.update(CommandLibraryMessage::Category(None));
+        assert_eq!(pane.shown().len(), all);
+    }
+
+    #[test]
+    fn the_tag_filter_ignores_case_and_the_level_filter_keeps_one_level() {
+        let mut pane = CommandLibraryPane::default();
+        let all = pane.shown().len();
+        let tag = command_library::shipped()
+            .entries()
+            .iter()
+            .find_map(|entry| entry.command().tags.first().cloned())
+            .expect("a shipped command has a tag");
+        pane.update(CommandLibraryMessage::Tag(Some(tag.to_uppercase())));
+        let tagged = pane.shown();
+        assert!(!tagged.is_empty() && tagged.len() <= all);
+        assert!(tagged.iter().all(|entry| {
+            entry
+                .command()
+                .tags
+                .iter()
+                .any(|each| each.trim().to_lowercase() == tag.to_lowercase())
+        }));
+        pane.update(CommandLibraryMessage::Tag(None));
+        pane.update(CommandLibraryMessage::Level(Some(Criticality::Dangerous)));
+        let dangerous = pane.shown();
+        assert!(!dangerous.is_empty() && dangerous.len() < all);
+        assert!(
+            dangerous
+                .iter()
+                .all(|entry| entry.command().level == Criticality::Dangerous)
+        );
+        pane.update(CommandLibraryMessage::Level(None));
+        assert_eq!(pane.shown().len(), all);
+    }
+
+    #[test]
+    fn the_filters_combine_and_a_new_one_starts_the_pages_over() {
+        let mut pane = CommandLibraryPane::default();
+        pane.update(CommandLibraryMessage::ShowMore);
+        pane.update(CommandLibraryMessage::Category(Some("security".to_owned())));
+        assert_eq!(pane.more_pages, 0);
+        pane.update(CommandLibraryMessage::ShowMore);
+        pane.update(CommandLibraryMessage::Level(Some(Criticality::Info)));
+        assert_eq!(pane.more_pages, 0);
+        pane.update(CommandLibraryMessage::ShowMore);
+        pane.update(CommandLibraryMessage::Tag(None));
+        assert_eq!(pane.more_pages, 0);
+        assert!(pane.shown().iter().all(|entry| {
+            entry.command().category == "security" && entry.command().level == Criticality::Info
+        }));
+    }
+
+    #[test]
+    fn the_user_commands_obey_the_category_tag_and_level_filters_too() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let id = make_ping(&mut pane);
+        let key = pane
+            .library
+            .get(&id)
+            .expect("the command made")
+            .category
+            .clone();
+        assert_eq!(pane.shown_user().len(), 1);
+        pane.update(CommandLibraryMessage::Category(Some(format!(
+            "{key}-other"
+        ))));
+        assert!(pane.shown_user().is_empty());
+        pane.update(CommandLibraryMessage::Category(Some(key)));
+        assert_eq!(pane.shown_user().len(), 1);
+        pane.update(CommandLibraryMessage::Level(Some(Criticality::Dangerous)));
+        assert!(pane.shown_user().is_empty());
+    }
+
+    #[test]
+    fn selecting_a_row_opens_its_details_and_makes_it_the_command_the_keys_act_on() {
+        let mut pane = CommandLibraryPane::default();
+        assert!(pane.opened.is_none());
+        pane.update(CommandLibraryMessage::Select(fsmo()));
+        assert_eq!(pane.opened, Some(fsmo()));
+        assert_eq!(
+            pane.selected,
+            Some(fsmo()),
+            "Ctrl+D and Shift+Enter act on it"
+        );
+        pane.update(CommandLibraryMessage::Select(fsck()));
+        assert_eq!(pane.opened, Some(fsck()));
+        pane.update(CommandLibraryMessage::CloseDetails);
+        assert_eq!(pane.opened, None);
+        assert_eq!(pane.selected, Some(fsck()));
+    }
+
+    #[test]
+    fn the_actions_of_the_details_run_on_the_command_selected() {
+        let mut pane = CommandLibraryPane::default();
+        pane.update(CommandLibraryMessage::Select(fsmo()));
+        let Outcome::Copy(_, text) = pane.update(CommandLibraryMessage::Copy(fsmo())) else {
+            panic!("a copy of the command opened");
+        };
+        assert!(!text.is_empty());
+        let none = pane.update(CommandLibraryMessage::Send(fsmo()));
+        assert_eq!(none, Outcome::None, "no terminal, nothing is sent");
+    }
+
+    #[test]
+    fn selecting_with_a_platform_shown_opens_on_its_template_unless_one_was_chosen() {
+        let mut pane = CommandLibraryPane::default();
+        let both = command_library::shipped()
+            .entries()
+            .iter()
+            .map(|entry| entry.command())
+            .find(|command| {
+                command.template_platforms().len() == 2 && command.platform == UserPlatform::Both
+            })
+            .expect("a shipped command with two templates");
+        let reference = CommandRef::Catalog(both.id.clone());
+        pane.update(CommandLibraryMessage::Platform(Some(UserPlatform::Windows)));
+        assert_eq!(
+            pane.preview_template(&reference, both),
+            Some(TemplatePlatform::Windows),
+            "the row previews the platform shown"
+        );
+        pane.update(CommandLibraryMessage::Select(reference.clone()));
+        assert_eq!(
+            pane.templates.get(&both.id),
+            Some(&TemplatePlatform::Windows)
+        );
+        pane.update(CommandLibraryMessage::Template(
+            both.id.clone(),
+            TemplatePlatform::Linux,
+        ));
+        pane.update(CommandLibraryMessage::Select(reference.clone()));
+        assert_eq!(
+            pane.templates.get(&both.id),
+            Some(&TemplatePlatform::Linux),
+            "the choice of the user is kept"
+        );
+    }
+
+    #[test]
+    fn a_refused_command_stays_selectable_and_says_why_it_gives_nothing() {
+        let mut pane = CommandLibraryPane::default();
+        let trace = trace(&mut pane, "a; rm -rf x");
+        pane.update(CommandLibraryMessage::Select(trace.clone()));
+        assert_eq!(pane.opened, Some(trace.clone()));
+        let CommandRef::Catalog(id) = &trace else {
+            unreachable!()
+        };
+        let entry = catalogue_entry(id).expect("the tracer");
+        let error = pane
+            .render(&trace, &entry.localized(&language()))
+            .expect_err("shell syntax is refused");
+        assert!(!generate_error(&error).is_empty());
+        assert_eq!(
+            pane.update(CommandLibraryMessage::Copy(trace)),
+            Outcome::None
+        );
+    }
+
+    #[test]
+    fn a_command_deleted_closes_its_details() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let id = make_ping(&mut pane);
+        let mine = CommandRef::User(id.clone());
+        pane.update(CommandLibraryMessage::Select(mine));
+        pane.update(CommandLibraryMessage::AskDelete(id.clone()));
+        pane.update(CommandLibraryMessage::ConfirmDelete(id));
+        assert_eq!(pane.opened, None);
     }
 }
