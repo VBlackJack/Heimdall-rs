@@ -36,8 +36,13 @@
 //!   beside it, then renamed over it in one step. Unlike the C#, its modification time is the
 //!   time of the save, so the change can be seen.
 //!
-//! It needs GNU coreutils, as the C#'s does; elsewhere it stops ([`TOOLING`]) before anything
-//! is written. Success is the line [`SudoScript::done`] and nothing else, which the script as
+//! It needs the coreutils behaviour of GNU, as the C#'s does, but checks the behaviour of the
+//! tools it uses and not the name (the C# tests for the GNU banner): uutils, the default
+//! coreutils of Ubuntu 25.10 and later, passes, and a tool that really lacks an option
+//! (`BusyBox`) stops it ([`TOOLING`]) before anything is written. The delete of
+//! [`crate::privileged_mode`] is not so relaxed: it still requires GNU `rm`.
+//! After the attributes are copied, the `SELinux` context and the ACLs of the payload are
+//! compared with the original's, when the server has them, and a difference is [`METADATA`]. Success is the line [`SudoScript::done`] and nothing else, which the script as
 //! written never holds.
 
 use std::fmt::Write as _;
@@ -84,6 +89,60 @@ pub struct SudoScript {
     pub done: Vec<u8>,
 }
 
+/// Defines the `fail` helper of the scripts below and probes `stat`, which both use, by what
+/// it does and not by what it calls itself. The GNU banner is no test of the tools used by
+/// the read and the replace: uutils (the default coreutils of Ubuntu 25.10 and later) answers
+/// the same on each option probed here and says `uutils` instead. A tool that lacks an option, or reads it differently, fails the probe
+/// ([`TOOLING`]) before anything is written.
+macro_rules! probe_head {
+    () => {
+        concat!(
+            "fail() { echo \"unusable: $1\" >&2; exit 77; }; ",
+            "case \"$(stat -c \"%u:%g %a %s\" -- / 2>/dev/null)\" in ",
+            "[0-9]*:[0-9]*\\ [0-7]*\\ [0-9]*) ;; *) fail \"stat -c\";; esac; ",
+            "[ \"$(stat -Lc %F -- / 2>/dev/null)\" = directory ] || fail \"stat -L\"; ",
+        )
+    };
+}
+
+/// Probes, in the work folder, what only the read needs: hard links and `base64`.
+macro_rules! probe_work_read {
+    () => {
+        concat!(
+            "printf x > probe-a; ",
+            "ln -P -- probe-a probe-c 2>/dev/null || fail \"ln -P\"; ",
+            "[ \"$(printf f | base64 2>/dev/null)\" = \"Zg==\" ] || fail base64; ",
+            "rm -f -- probe-a probe-b probe-c probe-d; ",
+        )
+    };
+}
+
+/// Probes, in the work folder, what the replace needs (and leaves it empty): hard links, the attributes-only copy,
+/// the rename of a file over another, a flush of one file system, and `sha256sum`.
+macro_rules! probe_work_replace {
+    () => {
+        concat!(
+            "printf x > probe-a; chmod 640 probe-a; : > probe-b; printf y > probe-d; ",
+            "ln -P -- probe-a probe-c 2>/dev/null || fail \"ln -P\"; ",
+            "mv -fT -- probe-c probe-d 2>/dev/null || fail \"mv -T\"; ",
+            "sync -f probe-d 2>/dev/null || fail \"sync -f\"; ",
+            "cp --attributes-only --preserve=mode,ownership,xattr -- probe-a probe-b 2>/dev/null ",
+            "&& [ \"$(stat -c %a -- probe-b)\" = 640 ] && [ \"$(stat -c %s -- probe-b)\" = 0 ] ",
+            "|| fail \"cp --attributes-only\"; ",
+            "[ \"$(printf abc | sha256sum | cut -d \" \" -f 1)\" = ",
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad ] || fail sha256sum; ",
+            "rm -f -- probe-a probe-b probe-c probe-d; ",
+        )
+    };
+}
+
+/// The probe of `stat` on its own, for the tests.
+#[cfg(all(test, unix))]
+const PROBE_HEAD: &str = probe_head!();
+/// The probes run in the work folder by the replace, for the tests.
+#[cfg(all(test, unix))]
+const PROBE_WORK_REPLACE: &str = probe_work_replace!();
+
 /// What the root side runs: `$1` the file, `$2` the SHA-256 its content must still have,
 /// `$3` the token to say done with; the new content on its input. Single quotes never appear
 /// in it: it is given whole as one quoted word.
@@ -91,11 +150,12 @@ const REPLACE: &str = concat!(
     "set -eu; umask 077; target=$1; expected=$2; token=$3; ",
     "for t in stat cp sync mv ln mktemp chmod chown rm rmdir sha256sum cut cat; do ",
     "command -v \"$t\" >/dev/null 2>&1 || { echo \"missing: $t\" >&2; exit 77; }; done; ",
-    "case \"$(stat --version 2>/dev/null)\" in *GNU*) ;; *) echo \"GNU coreutils needed\" >&2; exit 77;; esac; ",
+    probe_head!(),
     "case \"$target\" in */*) dir=${target%/*}; [ -n \"$dir\" ] || dir=/ ;; *) dir=. ;; esac; ",
-    "work=$(mktemp -d -- \"$dir/.heimdall-write.XXXXXXXXXX\"); chmod 700 -- \"$work\"; cd -- \"$work\"; ",
-    "cleanup() { rm -f -- original payload; cd /; rmdir -- \"$work\" 2>/dev/null || :; }; ",
-    "trap cleanup EXIT HUP INT TERM; ",
+    "work=$(mktemp -d -- \"$dir/.heimdall-write.XXXXXXXXXX\"); entered=; ",
+    "cleanup() { [ -z \"$entered\" ] || rm -f -- original payload probe-a probe-b probe-c probe-d; cd /; rmdir -- \"$work\" 2>/dev/null || :; }; ",
+    "trap cleanup EXIT HUP INT TERM; chmod 700 -- \"$work\"; cd -- \"$work\"; entered=1; ",
+    probe_work_replace!(),
     "ln -P -- \"$target\" original 2>/dev/null || exit 73; ",
     "if [ -L original ] || [ ! -f original ]; then exit 73; fi; ",
     "[ \"$(sha256sum < original | cut -d \" \" -f 1)\" = \"$expected\" ] || exit 81; ",
@@ -104,11 +164,16 @@ const REPLACE: &str = concat!(
     "chown -- \"$owner\" payload; chmod -- \"$mode\" payload; ",
     "cp --attributes-only --preserve=mode,ownership,xattr -- original payload || exit 76; ",
     "[ \"$(stat -c %s -- payload)\" = \"$size\" ] || exit 76; ",
+    "if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled 2>/dev/null; then ",
+    "label=$(stat -c %C -- original); case \"$label\" in \"\"|\"?\") exit 76;; esac; ",
+    "[ \"$label\" = \"$(stat -c %C -- payload)\" ] || exit 76; fi; ",
+    "if command -v getfacl >/dev/null 2>&1; then ",
+    "[ \"$(getfacl -cp -- original 2>/dev/null)\" = \"$(getfacl -cp -- payload 2>/dev/null)\" ] || exit 76; fi; ",
     "sync -f payload; ",
     "if [ -L \"$target\" ]; then exit 73; fi; ",
     "[ \"$(sha256sum < \"$target\" | cut -d \" \" -f 1)\" = \"$expected\" ] || exit 81; ",
     "rm -f -- original; mv -fT -- payload \"$target\"; ",
-    "cd /; rmdir -- \"$work\" 2>/dev/null || :; trap - EXIT HUP INT TERM; sync -f \"$dir\"; ",
+    "entered=; trap - EXIT HUP INT TERM; cd /; rmdir -- \"$work\" 2>/dev/null || :; sync -f \"$dir\"; ",
     "printf \"saved %s\\n\" \"$token\"",
 );
 
@@ -217,17 +282,18 @@ const READ: &str = concat!(
     "set -eu; umask 077; target=$1; cap=$2; token=$3; ",
     "for t in stat ln mktemp chmod rm rmdir base64; do ",
     "command -v \"$t\" >/dev/null 2>&1 || { echo \"missing: $t\" >&2; exit 77; }; done; ",
-    "case \"$(stat --version 2>/dev/null)\" in *GNU*) ;; *) echo \"GNU coreutils needed\" >&2; exit 77;; esac; ",
+    probe_head!(),
     "case \"$target\" in */*) dir=${target%/*}; [ -n \"$dir\" ] || dir=/ ;; *) dir=. ;; esac; ",
-    "work=$(mktemp -d -- \"$dir/.heimdall-read.XXXXXXXXXX\"); chmod 700 -- \"$work\"; cd -- \"$work\"; ",
-    "cleanup() { rm -f -- source; cd /; rmdir -- \"$work\" 2>/dev/null || :; }; ",
-    "trap cleanup EXIT HUP INT TERM; ",
+    "work=$(mktemp -d -- \"$dir/.heimdall-read.XXXXXXXXXX\"); entered=; ",
+    "cleanup() { [ -z \"$entered\" ] || rm -f -- source probe-a probe-b probe-c probe-d; cd /; rmdir -- \"$work\" 2>/dev/null || :; }; ",
+    "trap cleanup EXIT HUP INT TERM; chmod 700 -- \"$work\"; cd -- \"$work\"; entered=1; ",
+    probe_work_read!(),
     "ln -P -- \"$target\" source 2>/dev/null || exit 73; ",
     "if [ -L source ] || [ ! -f source ]; then exit 73; fi; ",
     "exec 3< source; rm -f -- source; ",
     "[ \"$(stat -Lc %s /proc/self/fd/3)\" -le \"$cap\" ] || exit 75; ",
     "base64 <&3; exec 3<&-; ",
-    "cd /; rmdir -- \"$work\" 2>/dev/null || :; trap - EXIT HUP INT TERM; ",
+    "entered=; trap - EXIT HUP INT TERM; cd /; rmdir -- \"$work\" 2>/dev/null || :; ",
     "printf \"read %s\\n\" \"$token\"",
 );
 
@@ -348,6 +414,8 @@ fn base64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::{PROBE_HEAD, PROBE_WORK_REPLACE, TOOLING};
     use super::{base64, read_output};
 
     #[test]
@@ -379,5 +447,138 @@ mod tests {
         assert_eq!(base64(b"foo"), "Zm9v");
         assert_eq!(base64(b"foobar"), "Zm9vYmFy");
         assert_eq!(base64(&[0xff, 0xfe, 0x00]), "//4A");
+    }
+
+    /// Runs `script` with `sh`, in `dir`, with `stubs` ahead of the system's `PATH`; its exit status.
+    #[cfg(unix)]
+    fn run_probe(script: &str, dir: &std::path::Path, stubs: Option<&std::path::Path>) -> i32 {
+        let path = stubs.map_or_else(
+            || "/usr/bin:/bin".to_owned(),
+            |stubs| format!("{}:/usr/bin:/bin", stubs.display()),
+        );
+        std::process::Command::new("/bin/sh")
+            .args(["-c", &format!("set -eu; {script}")])
+            .current_dir(dir)
+            .env("PATH", path)
+            .status()
+            .expect("sh runs")
+            .code()
+            .expect("sh exits")
+    }
+
+    /// A `stat` that answers the two questions of the probe the way `body` says.
+    #[cfg(unix)]
+    fn stub_stat(dir: &std::path::Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt as _;
+        let path = dir.join("stat");
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh
+{body}
+"
+            ),
+        )
+        .expect("stub written");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+
+    /// The banner is not what decides: a `stat` that behaves as GNU's does passes whatever it
+    /// calls itself, as uutils' does on Ubuntu 25.10 and later.
+    #[cfg(unix)]
+    #[test]
+    fn stat_is_probed_by_what_it_does_not_by_its_banner() {
+        let behaves = r#"
+case "$1" in
+  --version) echo "stat (uutils coreutils) 0.2.2" ;;
+  -c) [ "$2" = "%u:%g %a %s" ] && echo "0:0 755 4096" ;;
+  -Lc) [ "$2" = "%F" ] && echo directory ;;
+esac"#;
+        let gnu = behaves.replace("(uutils coreutils) 0.2.2", "(GNU coreutils) 9.4");
+        for (name, body) in [("uutils", behaves.to_owned()), ("gnu", gnu)] {
+            let stubs = tempfile::tempdir().expect("stub folder");
+            stub_stat(stubs.path(), &body);
+            let work = tempfile::tempdir().expect("work folder");
+            assert_eq!(
+                run_probe(PROBE_HEAD, work.path(), Some(stubs.path())),
+                0,
+                "{name}"
+            );
+        }
+    }
+
+    /// A `stat` that lacks an option, or reads it differently, stops the script with
+    /// [`TOOLING`], even when its banner says GNU.
+    #[cfg(unix)]
+    #[test]
+    fn a_stat_lacking_an_option_stops_the_script_with_tooling() {
+        let lacks = [
+            // No `-c`: prints nothing, as a stat that only knows `--version`.
+            r#"[ "$1" = --version ] && echo "stat (GNU coreutils) 9.4" || exit 1"#,
+            // `-c` reads the format differently (BusyBox-like): wrong fields.
+            r#"case "$1" in -c) echo "File: /" ;; -Lc) echo directory ;; esac"#,
+            // No `-L` support: a directory is not named.
+            r#"case "$1" in -c) echo "0:0 755 4096" ;; *) exit 1 ;; esac"#,
+        ];
+        for body in lacks {
+            let stubs = tempfile::tempdir().expect("stub folder");
+            stub_stat(stubs.path(), body);
+            let work = tempfile::tempdir().expect("work folder");
+            assert_eq!(
+                run_probe(PROBE_HEAD, work.path(), Some(stubs.path())),
+                i32::try_from(TOOLING).expect("fits"),
+                "{body}"
+            );
+        }
+    }
+
+    /// The tools of the server this runs on (GNU, or uutils on a recent Ubuntu) pass the probes
+    /// of the replace, in a work folder as the script makes one.
+    #[cfg(unix)]
+    #[test]
+    fn the_servers_own_coreutils_pass_the_probes_of_the_replace() {
+        let work = tempfile::tempdir().expect("work folder");
+        let script = format!("{PROBE_HEAD}{PROBE_WORK_REPLACE}");
+        assert_eq!(run_probe(&script, work.path(), None), 0);
+    }
+
+    /// The order the safety of the replace rests on: the work folder is covered by the trap
+    /// before it is entered, and the metadata is compared before the rename.
+    #[test]
+    fn the_trap_comes_first_and_the_metadata_is_checked_before_the_rename() {
+        use super::REPLACE;
+        let at = |needle: &str| REPLACE.find(needle).unwrap_or_else(|| panic!("{needle}"));
+        assert!(at("trap cleanup") < at("cd -- "));
+        assert!(at("trap cleanup") < at("chmod 700"));
+        assert!(at("stat -c %C") < at("mv -fT -- payload"));
+        assert!(REPLACE.contains(r#"case "$label" in ""|"?") exit 76;; esac"#));
+        assert!(at("getfacl -cp") < at("mv -fT -- payload"));
+        assert!(REPLACE.contains(r#"%C -- payload)" ] || exit 76"#));
+    }
+
+    /// The cleanup runs as root: it removes by relative name, and only once the work folder
+    /// was entered, never by a path that could be read from elsewhere.
+    #[test]
+    fn the_cleanup_removes_relative_names_only_once_entered() {
+        use super::{READ, REPLACE};
+        for script in [REPLACE, READ] {
+            let start = script.find("cleanup() {").expect("cleanup");
+            let body = &script[start..script[start..].find("}; ").map(|e| start + e).expect("end")];
+            assert!(body.contains(r#"[ -z "$entered" ] || rm -f -- "#), "{body}");
+            assert!(!body.contains("$work/"), "{body}");
+            assert!(
+                !body.contains(r#""$work""#) || body.contains("rmdir -- \"$work\""),
+                "{body}"
+            );
+            assert!(
+                script.find("entered=1").expect("set")
+                    > script.find("cd -- \"$work\"").expect("cd")
+            );
+            // The flag is cleared and the trap removed before the script leaves the folder.
+            let tail = script
+                .rfind("entered=; trap - EXIT HUP INT TERM; cd /;")
+                .expect("tail");
+            assert!(tail > script.find("entered=1").expect("set"));
+        }
     }
 }
