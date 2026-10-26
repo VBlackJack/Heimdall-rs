@@ -436,6 +436,8 @@ pub enum SettingRow {
     FontFamily,
     /// The terminals' colours.
     ColorScheme,
+    /// How much contrast terminal text keeps against its background.
+    TerminalMinimumContrast,
     /// What Ctrl+V does in a terminal.
     CtrlVPaste,
     /// What Ctrl+K does in a terminal.
@@ -548,7 +550,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 79] = [
+    pub const ALL: [Self; 80] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -574,6 +576,7 @@ impl SettingRow {
         Self::FontSize,
         Self::FontFamily,
         Self::ColorScheme,
+        Self::TerminalMinimumContrast,
         Self::CtrlVPaste,
         Self::CtrlKTerminal,
         Self::PowerShellPolicy,
@@ -658,6 +661,7 @@ impl SettingRow {
             Self::FontSize
             | Self::FontFamily
             | Self::ColorScheme
+            | Self::TerminalMinimumContrast
             | Self::CtrlVPaste
             | Self::CtrlKTerminal
             | Self::PowerShellPolicy => SettingsCard::Terminal,
@@ -833,6 +837,9 @@ impl SettingRow {
             Self::FontSize => settings.terminal_font_size != defaults.terminal_font_size,
             Self::FontFamily => settings.terminal_font_family != defaults.terminal_font_family,
             Self::ColorScheme => settings.color_scheme != defaults.color_scheme,
+            Self::TerminalMinimumContrast => {
+                settings.terminal_minimum_contrast != defaults.terminal_minimum_contrast
+            }
             Self::CtrlVPaste => settings.ctrl_v_paste != defaults.ctrl_v_paste,
             Self::CtrlKTerminal => settings.ctrl_k_terminal != defaults.ctrl_k_terminal,
             Self::PowerShellPolicy => {
@@ -884,6 +891,9 @@ impl SettingRow {
             Self::FontSize => SettingsMessage::TerminalFontSize(defaults.terminal_font_size),
             Self::FontFamily => SettingsMessage::TerminalFontFamily(defaults.terminal_font_family),
             Self::ColorScheme => SettingsMessage::ColorScheme(defaults.color_scheme),
+            Self::TerminalMinimumContrast => {
+                SettingsMessage::TerminalMinimumContrast(defaults.terminal_minimum_contrast)
+            }
             Self::CtrlVPaste => SettingsMessage::CtrlVPaste(defaults.ctrl_v_paste),
             Self::CtrlKTerminal => SettingsMessage::CtrlKTerminal(defaults.ctrl_k_terminal),
             Self::PowerShellPolicy => {
@@ -1518,6 +1528,7 @@ mod tests {
             SettingRow::FontSize,
             SettingRow::FontFamily,
             SettingRow::ColorScheme,
+            SettingRow::TerminalMinimumContrast,
             SettingRow::CtrlVPaste,
             SettingRow::CtrlKTerminal,
             SettingRow::RdpAutoReconnectAttempts,

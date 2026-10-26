@@ -22,6 +22,7 @@
 //! [`FeedOutput::working_directory`] carries the working folder a shell reports (OSC 7);
 //! [`local_folder`] reads it as a folder of this computer.
 
+pub mod contrast;
 pub mod keys;
 pub mod local;
 pub mod mode;
@@ -32,6 +33,7 @@ pub mod plain;
 pub mod terminal;
 pub mod working_directory;
 
+pub use contrast::{MinimumContrast, adjust_foreground, contrast_ratio};
 pub use keys::{Key, KeyLocation, KeyPress, Modifiers, NamedKey, encode_key};
 pub use mode::{InputMode, MouseEncoding, MouseTracking};
 pub use mouse::{

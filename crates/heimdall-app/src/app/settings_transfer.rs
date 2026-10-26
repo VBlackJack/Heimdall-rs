@@ -20,7 +20,6 @@
 
 use heimdall_core::settings::{SettingsImport, TransferError};
 
-use super::appearance::palette;
 use super::{App, Dialog, Effect, Notice};
 
 /// A step of carrying the settings.
@@ -108,7 +107,7 @@ impl App {
             self.dialog = Some(Dialog::save_failed(&error));
             return Vec::new();
         }
-        let palette = palette(self.settings.color_scheme);
+        let palette = self.terminal_palette();
         for tab in &mut self.tabs {
             tab.terminal.set_palette(palette);
         }

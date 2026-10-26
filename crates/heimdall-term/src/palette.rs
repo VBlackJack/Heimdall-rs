@@ -19,6 +19,8 @@
 
 pub use alacritty_terminal::vte::ansi::Rgb;
 
+use crate::contrast::MinimumContrast;
+
 /// Number of ANSI theme colours: 8 normal, 8 bright.
 pub const ANSI_COLORS: usize = 16;
 
@@ -60,6 +62,10 @@ pub struct Palette {
     /// Background of selected cells: the C# scheme's selection colour, laid over the
     /// background as xterm.js lays it.
     pub selection: Rgb,
+    /// The contrast ratio text must reach against the cell it is drawn on, the colour moved
+    /// lighter or darker when it does not; `None` draws the scheme's colours as they are.
+    /// Applied when the screen is read, so it holds for the terminals already open.
+    pub minimum_contrast: Option<MinimumContrast>,
     /// Colours 0 to 15: black, red, green, yellow, blue, magenta, cyan, white, then bright.
     pub ansi: [Rgb; ANSI_COLORS],
 }
@@ -73,6 +79,7 @@ impl Palette {
             background: rgb(0x0028_2A36),
             cursor: rgb(0x00F8_F8F2),
             selection: rgb(0x0045_4E6D),
+            minimum_contrast: None,
             ansi: [
                 rgb(0x0021_222C),
                 rgb(0x00FF_5555),
@@ -103,6 +110,7 @@ impl Palette {
             background: rgb(0x0000_0000),
             cursor: rgb(0x00FF_FFFF),
             selection: rgb(0x004D_4D4D),
+            minimum_contrast: None,
             ansi: [
                 rgb(0x002E_3436),
                 rgb(0x00CC_0000),
@@ -132,6 +140,7 @@ impl Palette {
             background: rgb(0x0000_2B36),
             cursor: rgb(0x0093_A1A1),
             selection: rgb(0x000B_4865),
+            minimum_contrast: None,
             ansi: [
                 rgb(0x0007_3642),
                 rgb(0x00DC_322F),
@@ -161,6 +170,7 @@ impl Palette {
             background: rgb(0x0027_2822),
             cursor: rgb(0x00F8_F8F0),
             selection: rgb(0x003F_3E36),
+            minimum_contrast: None,
             ansi: [
                 rgb(0x0027_2822),
                 rgb(0x00F9_2672),
@@ -190,6 +200,7 @@ impl Palette {
             background: rgb(0x002E_3440),
             cursor: rgb(0x00D8_DEE9),
             selection: rgb(0x003D_4555),
+            minimum_contrast: None,
             ansi: [
                 rgb(0x003B_4252),
                 rgb(0x00BF_616A),
@@ -209,6 +220,16 @@ impl Palette {
                 rgb(0x00EC_EFF4),
             ],
         }
+    }
+
+    /// The same colours, drawn with `minimum_contrast` as the least contrast text may have.
+    #[must_use]
+    pub const fn with_minimum_contrast(
+        mut self,
+        minimum_contrast: Option<MinimumContrast>,
+    ) -> Self {
+        self.minimum_contrast = minimum_contrast;
+        self
     }
 
     /// Colour of entry `index` of the 256-colour table: the theme for 0 to 15, the xterm

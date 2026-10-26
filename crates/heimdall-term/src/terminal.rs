@@ -34,6 +34,7 @@ use alacritty_terminal::vte::ansi::{
     Color, CursorShape, CursorStyle as AnsiCursorStyle, NamedColor, Processor, StdSyncHandler,
 };
 
+use crate::contrast::ContrastMemo;
 use crate::mode::InputMode;
 use crate::palette::{Palette, Rgb, dim};
 use crate::working_directory::WorkingDirectoryScanner;
@@ -463,12 +464,25 @@ impl EventListener for Listener {
     }
 }
 
+/// Private-use powerline symbols, first and last.
+const POWERLINE_RANGE: std::ops::RangeInclusive<char> = '\u{E0A0}'..='\u{E0D4}';
+
+/// Box drawing, block elements: first and last.
+const BOX_BLOCK_RANGE: std::ops::RangeInclusive<char> = '\u{2500}'..='\u{259F}';
+
+/// Whether a glyph keeps its colour whatever the minimum contrast, as xterm.js leaves them.
+fn is_excluded_from_contrast(ch: char) -> bool {
+    POWERLINE_RANGE.contains(&ch) || BOX_BLOCK_RANGE.contains(&ch)
+}
+
 /// A terminal emulator.
 pub struct Terminal {
     term: Term<Listener>,
     parser: Processor<StdSyncHandler>,
     events: Listener,
     palette: Palette,
+    /// Contrast adjustments already worked out; behind a lock as drawing only borrows.
+    contrast: Mutex<ContrastMemo>,
     cell_pixels: Option<CellPixels>,
     /// The working folder reports, which the emulator ignores, read beside it.
     directory: WorkingDirectoryScanner,
@@ -500,6 +514,7 @@ impl Terminal {
             parser: Processor::new(),
             events,
             palette: config.palette,
+            contrast: Mutex::new(ContrastMemo::default()),
             cell_pixels: None,
             directory: WorkingDirectoryScanner::new(),
         }
@@ -850,6 +865,10 @@ impl Terminal {
         screen
             .cells
             .resize(cols * rows, ScreenCell::blank(&self.palette));
+        let mut memo = self
+            .contrast
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let cursor = content.cursor;
         for indexed in content.display_iter {
@@ -865,7 +884,7 @@ impl Terminal {
             let selected = content
                 .selection
                 .is_some_and(|range| range.contains_cell(&indexed, cursor.point, cursor.shape));
-            *slot = self.render_cell(indexed.cell, selected);
+            *slot = self.render_cell(indexed.cell, selected, &mut memo);
         }
 
         screen.cursor = self.render_cursor(cursor.shape, cursor.point, offset);
@@ -931,15 +950,32 @@ impl Terminal {
         }
     }
 
-    fn render_cell(&self, cell: &Cell, selected: bool) -> ScreenCell {
+    fn render_cell(&self, cell: &Cell, selected: bool, memo: &mut ContrastMemo) -> ScreenCell {
         let flags = cell.flags;
         let mut fg = self.resolve(cell.fg, flags, true);
         let mut bg = self.resolve(cell.bg, flags, false);
         if flags.contains(Flags::INVERSE) {
             std::mem::swap(&mut fg, &mut bg);
         }
-        if flags.contains(Flags::HIDDEN) {
+        let hidden = flags.contains(Flags::HIDDEN);
+        if hidden {
             fg = bg;
+        }
+        // Selected cells keep their colours, hidden text stays hidden, and only the text
+        // moves: the background, inverse video's included, is what it is measured against.
+        // Powerline and box or block glyphs are drawn to meet their neighbours' colours, as
+        // xterm.js's `excludeFromContrastRatioDemands`; faint text asks half the ratio.
+        let minimum = self
+            .palette
+            .minimum_contrast
+            .filter(|_| !selected && !hidden && !is_excluded_from_contrast(cell.c));
+        if let Some(minimum) = minimum {
+            let minimum = if flags.contains(Flags::DIM) {
+                minimum.halved()
+            } else {
+                minimum
+            };
+            fg = memo.adjust(fg, bg, minimum);
         }
         let width = if flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
             CellWidth::Spacer
