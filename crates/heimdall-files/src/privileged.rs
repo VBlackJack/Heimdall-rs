@@ -36,10 +36,13 @@
 //!   beside it, then renamed over it in one step. Unlike the C#, its modification time is the
 //!   time of the save, so the change can be seen.
 //!
-//! It needs the coreutils behaviour of GNU, as the C#'s does, but checks the behaviour and not
-//! the name (the C# tests for the GNU banner): uutils, the default coreutils of Ubuntu 25.10 and
-//! later, passes, and a tool that really lacks an option (`BusyBox`) stops it ([`TOOLING`]) before
-//! anything is written. Success is the line [`SudoScript::done`] and nothing else, which the script as
+//! It needs the coreutils behaviour of GNU, as the C#'s does, but checks the behaviour of the
+//! tools it uses and not the name (the C# tests for the GNU banner): uutils, the default
+//! coreutils of Ubuntu 25.10 and later, passes, and a tool that really lacks an option
+//! (`BusyBox`) stops it ([`TOOLING`]) before anything is written. The delete of
+//! [`crate::privileged_mode`] is not so relaxed: it still requires GNU `rm`.
+//! After the attributes are copied, the `SELinux` context and the ACLs of the payload are
+//! compared with the original's, when the server has them, and a difference is [`METADATA`]. Success is the line [`SudoScript::done`] and nothing else, which the script as
 //! written never holds.
 
 use std::fmt::Write as _;
@@ -87,9 +90,9 @@ pub struct SudoScript {
 }
 
 /// Defines the `fail` helper of the scripts below and probes `stat`, which both use, by what
-/// it does and not by what it calls itself. The GNU banner is no test: uutils (the default
-/// coreutils of Ubuntu 25.10 and later) behaves the same on every option used here and says
-/// `uutils` instead. A tool that lacks an option, or reads it differently, fails the probe
+/// it does and not by what it calls itself. The GNU banner is no test of the tools used by
+/// the read and the replace: uutils (the default coreutils of Ubuntu 25.10 and later) answers
+/// the same on each option probed here and says `uutils` instead. A tool that lacks an option, or reads it differently, fails the probe
 /// ([`TOOLING`]) before anything is written.
 macro_rules! probe_head {
     () => {
@@ -119,7 +122,7 @@ macro_rules! probe_work_read {
 macro_rules! probe_work_replace {
     () => {
         concat!(
-            "printf x > probe-a; chmod 640 probe-a; : > probe-b; ",
+            "printf x > probe-a; chmod 640 probe-a; : > probe-b; printf y > probe-d; ",
             "ln -P -- probe-a probe-c 2>/dev/null || fail \"ln -P\"; ",
             "mv -fT -- probe-c probe-d 2>/dev/null || fail \"mv -T\"; ",
             "sync -f probe-d 2>/dev/null || fail \"sync -f\"; ",
@@ -149,9 +152,9 @@ const REPLACE: &str = concat!(
     "command -v \"$t\" >/dev/null 2>&1 || { echo \"missing: $t\" >&2; exit 77; }; done; ",
     probe_head!(),
     "case \"$target\" in */*) dir=${target%/*}; [ -n \"$dir\" ] || dir=/ ;; *) dir=. ;; esac; ",
-    "work=$(mktemp -d -- \"$dir/.heimdall-write.XXXXXXXXXX\"); chmod 700 -- \"$work\"; cd -- \"$work\"; ",
-    "cleanup() { rm -f -- original payload probe-a probe-b probe-c probe-d; cd /; rmdir -- \"$work\" 2>/dev/null || :; }; ",
-    "trap cleanup EXIT HUP INT TERM; ",
+    "work=$(mktemp -d -- \"$dir/.heimdall-write.XXXXXXXXXX\"); ",
+    "cleanup() { cd /; rm -f -- \"$work/original\" \"$work/payload\" \"$work/probe-a\" \"$work/probe-b\" \"$work/probe-c\" \"$work/probe-d\"; rmdir -- \"$work\" 2>/dev/null || :; }; ",
+    "trap cleanup EXIT HUP INT TERM; chmod 700 -- \"$work\"; cd -- \"$work\"; ",
     probe_work_replace!(),
     "ln -P -- \"$target\" original 2>/dev/null || exit 73; ",
     "if [ -L original ] || [ ! -f original ]; then exit 73; fi; ",
@@ -161,6 +164,10 @@ const REPLACE: &str = concat!(
     "chown -- \"$owner\" payload; chmod -- \"$mode\" payload; ",
     "cp --attributes-only --preserve=mode,ownership,xattr -- original payload || exit 76; ",
     "[ \"$(stat -c %s -- payload)\" = \"$size\" ] || exit 76; ",
+    "if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled 2>/dev/null; then ",
+    "[ \"$(stat -c %C -- original)\" = \"$(stat -c %C -- payload)\" ] || exit 76; fi; ",
+    "if command -v getfacl >/dev/null 2>&1; then ",
+    "[ \"$(getfacl -cp -- original 2>/dev/null)\" = \"$(getfacl -cp -- payload 2>/dev/null)\" ] || exit 76; fi; ",
     "sync -f payload; ",
     "if [ -L \"$target\" ]; then exit 73; fi; ",
     "[ \"$(sha256sum < \"$target\" | cut -d \" \" -f 1)\" = \"$expected\" ] || exit 81; ",
@@ -276,9 +283,9 @@ const READ: &str = concat!(
     "command -v \"$t\" >/dev/null 2>&1 || { echo \"missing: $t\" >&2; exit 77; }; done; ",
     probe_head!(),
     "case \"$target\" in */*) dir=${target%/*}; [ -n \"$dir\" ] || dir=/ ;; *) dir=. ;; esac; ",
-    "work=$(mktemp -d -- \"$dir/.heimdall-read.XXXXXXXXXX\"); chmod 700 -- \"$work\"; cd -- \"$work\"; ",
-    "cleanup() { rm -f -- source probe-a probe-b probe-c probe-d; cd /; rmdir -- \"$work\" 2>/dev/null || :; }; ",
-    "trap cleanup EXIT HUP INT TERM; ",
+    "work=$(mktemp -d -- \"$dir/.heimdall-read.XXXXXXXXXX\"); ",
+    "cleanup() { cd /; rm -f -- \"$work/source\" \"$work/probe-a\" \"$work/probe-b\" \"$work/probe-c\" \"$work/probe-d\"; rmdir -- \"$work\" 2>/dev/null || :; }; ",
+    "trap cleanup EXIT HUP INT TERM; chmod 700 -- \"$work\"; cd -- \"$work\"; ",
     probe_work_read!(),
     "ln -P -- \"$target\" source 2>/dev/null || exit 73; ",
     "if [ -L source ] || [ ! -f source ]; then exit 73; fi; ",
@@ -532,5 +539,18 @@ esac"#;
         let work = tempfile::tempdir().expect("work folder");
         let script = format!("{PROBE_HEAD}{PROBE_WORK_REPLACE}");
         assert_eq!(run_probe(&script, work.path(), None), 0);
+    }
+
+    /// The order the safety of the replace rests on: the work folder is covered by the trap
+    /// before it is entered, and the metadata is compared before the rename.
+    #[test]
+    fn the_trap_comes_first_and_the_metadata_is_checked_before_the_rename() {
+        use super::REPLACE;
+        let at = |needle: &str| REPLACE.find(needle).unwrap_or_else(|| panic!("{needle}"));
+        assert!(at("trap cleanup") < at("cd -- "));
+        assert!(at("trap cleanup") < at("chmod 700"));
+        assert!(at("stat -c %C") < at("mv -fT -- payload"));
+        assert!(at("getfacl -cp") < at("mv -fT -- payload"));
+        assert!(REPLACE.contains(r#"%C -- payload)" ] || exit 76"#));
     }
 }
