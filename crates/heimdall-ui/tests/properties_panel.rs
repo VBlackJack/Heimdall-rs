@@ -214,10 +214,9 @@ fn a_folder_and_a_selection_are_summed_up() {
     )));
     let mut ui = simulator(&shell, WINDOW);
     ui.find("Sessions:").expect("the selection's count");
-    assert!(
-        ui.find("Authentication:").is_err(),
-        "a summary, not one session"
-    );
+    // The detail pane still shows the session selected last, with its own card; the panel
+    // beside the tree is the summary: its "Connected:" line is no session's.
+    ui.find("Connected:").expect("a summary, not one session");
 }
 
 #[test]

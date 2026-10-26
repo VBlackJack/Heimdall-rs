@@ -6030,8 +6030,11 @@ fn the_tree_menus_say_their_keys_and_why_copy_username_is_greyed() {
     moved(&mut ui, copy);
     assert!(!frame(&mut ui), "the reason shown under the pointer");
     drop(ui);
+    // The Add menu names no key, as the C# one.
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Add));
-    simulator(&shell).find("Ctrl+N").expect("Add Session's key");
+    let mut ui = simulator(&shell);
+    ui.find("Add Session").expect("the entry");
+    assert!(ui.find("Ctrl+N").is_err(), "no key beside Add Session");
 }
 
 #[test]
