@@ -1,8 +1,7 @@
 # Copyright 2026 Julien Bombled
 # Licensed under the Apache License, Version 2.0. See LICENSE.
 
-ui-window-title = Heimdall
-ui-window-title-tab = { $tab } - Heimdall
+ui-window-title = Heimdall-rs
 ui-window-title-detached = { $tab } - Separada
 # A test build's title, its test data folder after it.
 ui-window-title-test-data = { $title } [datos de prueba: { $folder }]

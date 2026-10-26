@@ -204,7 +204,7 @@ fn the_page_is_one_centred_column_as_wide_as_the_csharps_with_every_card_in_it()
     // author and licence, labels in one column and values beside them.
     let version = format!("Version {}", heimdall_app::update_check::display_version());
     let mut above = column.y;
-    for label in ["Heimdall", version.as_str()] {
+    for label in ["Heimdall-rs", version.as_str()] {
         let bounds = text_in(&mut ui, label, column);
         assert!(
             near(bounds.center_x(), column.center_x()),

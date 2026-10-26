@@ -2208,13 +2208,11 @@ impl Shell {
         self.drafts.contains_key(&question)
     }
 
-    /// Window title.
+    /// Window title: the application's name, fixed whatever tab is active, as the C#
+    /// window's static title.
     #[must_use]
     pub fn title(&self) -> String {
-        match self.app.active_tab() {
-            Some(tab) => fl!("ui-window-title-tab", tab = tab.display_title()),
-            None => fl!("ui-window-title"),
-        }
+        fl!("ui-window-title")
     }
 
     /// The title of the window `window`: a tab's own window's as the C# names it, the main

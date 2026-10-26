@@ -2278,6 +2278,9 @@ pub struct Tab {
     pub profile: TabProfile,
     /// Title: the profile name, or the one the server set, made safe.
     pub title: String,
+    /// The title the program in the terminal asked for (OSC 0/2), stripped of control and
+    /// invisible characters and cut to a safe length; empty when none. Never the tab's name.
+    pub terminal_title: String,
     /// The name the user gave the tab, shown instead of its title until reset.
     pub custom_title: Option<String>,
     /// Why the server ended the session, when it said.
@@ -2537,6 +2540,7 @@ impl Tab {
         Self {
             id,
             title: profile.name().to_owned(),
+            terminal_title: String::new(),
             custom_title: None,
             end_reason: None,
             rdp_step: None,
@@ -5713,14 +5717,12 @@ fn handle_feed(tab: &mut Tab, output: FeedOutput, active: bool) -> Vec<Effect> {
     tab.write(output.replies);
     match output.title {
         Some(TitleChange::Set(title)) => {
-            let title = server_text(&title);
-            tab.title = if title.is_empty() {
-                tab.profile.name().to_owned()
-            } else {
-                title
-            };
+            // The tab keeps the session's name, as the C# ("Local PowerShell" stays so
+            // when the shell sets its own title): the title the program asked for is
+            // only kept, made safe, as secondary information.
+            tab.terminal_title = server_text(&title);
         }
-        Some(TitleChange::Reset) => tab.title = tab.profile.name().to_owned(),
+        Some(TitleChange::Reset) => tab.terminal_title.clear(),
         None => {}
     }
     if output.bell && !active {
