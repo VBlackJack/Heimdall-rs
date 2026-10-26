@@ -97,9 +97,10 @@ const BADGE_WIDTH: f32 = 56.0;
 /// Width of a row's favorite star.
 const STAR_SIDE: f32 = 16.0;
 
-/// The tallest the details of the command opened grow before they scroll, as the C# generator
-/// panel's `MaxHeight`.
-const DETAILS_MAX_HEIGHT: f32 = 450.0;
+/// The shares of the page's height the list and the details of the command opened take, so
+/// the list never collapses under tall details, whatever the window's height.
+const LIST_PORTION: u16 = 3;
+const DETAILS_PORTION: u16 = 2;
 
 /// Width of the category, tag, platform and level drop-downs, as the C# `MinWidth`s.
 const CATEGORY_FILTER_WIDTH: f32 = 180.0;
@@ -139,6 +140,12 @@ pub enum CommandLibraryMessage {
     Select(CommandRef),
     /// Close the details.
     CloseDetails,
+    /// Move the selection to the previous or the next visible row, as the arrow keys of the
+    /// C# list box.
+    MoveSelection {
+        /// Down when set, up otherwise.
+        forward: bool,
+    },
     /// The search typed.
     Search(String),
     /// Show more commands of the catalogue.
@@ -494,8 +501,6 @@ pub struct CommandLibraryPane {
     favorites_only: bool,
     history_open: bool,
     clearing_history: bool,
-    /// The command last used, which Ctrl+D copies.
-    selected: Option<CommandRef>,
     /// The terminals ticked for a broadcast.
     broadcast: Vec<TabId>,
     awaited: Vec<Awaited>,
@@ -583,8 +588,63 @@ impl CommandLibraryPane {
             .or_else(|| self.targets.first())
     }
 
-    /// Applies `message`.
+    /// Applies `message`. The details close once their command is no longer in the list, as
+    /// the C# drops `SelectedEntry` when a filter hides it.
     pub fn update(&mut self, message: CommandLibraryMessage) -> Outcome {
+        let outcome = self.apply(message);
+        if let Some(opened) = &self.opened
+            && !self.is_listed(opened)
+        {
+            self.opened = None;
+        }
+        outcome
+    }
+
+    /// Whether `command` is among the rows the filters and the search keep.
+    fn is_listed(&self, command: &CommandRef) -> bool {
+        match command {
+            CommandRef::Catalog(id) => self.shown().iter().any(|entry| &entry.command().id == id),
+            CommandRef::User(id) => self.shown_user().iter().any(|each| &each.id == id),
+        }
+    }
+
+    /// The rows of the list in the order they are drawn: the user's commands, then the
+    /// catalogue by section; paging applies as in the view.
+    fn listed_rows(&self) -> Vec<CommandRef> {
+        let visible_mine = CATALOG_PAGE_SIZE.saturating_mul(self.more_mine_pages.saturating_add(1));
+        let visible = CATALOG_PAGE_SIZE.saturating_mul(self.more_pages.saturating_add(1));
+        let mine = self
+            .shown_user()
+            .into_iter()
+            .take(visible_mine)
+            .map(|command| CommandRef::User(command.id.clone()));
+        let catalogue = sections(self.shown(), visible)
+            .into_iter()
+            .flat_map(|(_, entries)| entries)
+            .map(|entry| CommandRef::Catalog(entry.command().id.clone()));
+        mine.chain(catalogue).collect()
+    }
+
+    /// Selects the row before or after the one opened; with none opened, the first (or the
+    /// last going up). It stops at the ends.
+    fn move_selection(&mut self, forward: bool) {
+        let rows = self.listed_rows();
+        let at = self
+            .opened
+            .as_ref()
+            .and_then(|opened| rows.iter().position(|row| row == opened));
+        let next = match (at, forward) {
+            (Some(at), true) => (at + 1).min(rows.len().saturating_sub(1)),
+            (Some(at), false) => at.saturating_sub(1),
+            (None, true) => 0,
+            (None, false) => rows.len().saturating_sub(1),
+        };
+        if let Some(row) = rows.into_iter().nth(next) {
+            self.opened = Some(row);
+        }
+    }
+
+    fn apply(&mut self, message: CommandLibraryMessage) -> Outcome {
         match message {
             CommandLibraryMessage::Platform(platform) => {
                 self.platform = platform;
@@ -606,10 +666,11 @@ impl CommandLibraryPane {
                 self.more_pages = 0;
                 self.more_mine_pages = 0;
             }
-            CommandLibraryMessage::Select(command) => {
-                self.selected = Some(command.clone());
-                self.prefer_filtered_template(&command);
-                self.opened = Some(command);
+            CommandLibraryMessage::Select(command) => self.opened = Some(command),
+            CommandLibraryMessage::MoveSelection { forward } => {
+                if self.editor.is_none() && !self.runbooks.is_open() {
+                    self.move_selection(forward);
+                }
             }
             CommandLibraryMessage::CloseDetails => self.opened = None,
             CommandLibraryMessage::Search(typed) => {
@@ -632,7 +693,7 @@ impl CommandLibraryPane {
                 self.user_templates.insert(id, platform);
             }
             CommandLibraryMessage::Copy(command) => {
-                self.selected = Some(command.clone());
+                self.opened = Some(command.clone());
                 return match self.command_text(&command) {
                     Some(text) => {
                         self.record_copy(&command);
@@ -642,18 +703,18 @@ impl CommandLibraryPane {
                 };
             }
             CommandLibraryMessage::Send(command) => {
-                self.selected = Some(command.clone());
+                self.opened = Some(command.clone());
                 return self.send(&command);
             }
             CommandLibraryMessage::Insert(command) => {
-                self.selected = Some(command.clone());
+                self.opened = Some(command.clone());
                 return self.insert(&command);
             }
             // The key is the library's own only while no editor has the keyboard.
             CommandLibraryMessage::InsertSelected => {
                 if self.editor.is_none()
                     && !self.runbooks.is_open()
-                    && let Some(command) = self.selected.clone()
+                    && let Some(command) = self.opened.clone()
                 {
                     return self.insert(&command);
                 }
@@ -666,7 +727,7 @@ impl CommandLibraryPane {
             } => self.open_for_session(host, user, platform, tab),
             CommandLibraryMessage::HistoryThisHostOnly(on) => self.history_this_host_only = on,
             CommandLibraryMessage::Broadcast(command) => {
-                self.selected = Some(command.clone());
+                self.opened = Some(command.clone());
                 return self.broadcast_outcome(&command);
             }
             CommandLibraryMessage::Target(tab) => {
@@ -696,7 +757,6 @@ impl CommandLibraryPane {
     fn activity_message(&mut self, message: CommandLibraryMessage) {
         match message {
             CommandLibraryMessage::ToggleFavorite(command) => {
-                self.selected = Some(command.clone());
                 let key = self.key_of(&command);
                 self.activity.toggle_favorite(&key);
                 self.keep_activity();
@@ -708,7 +768,7 @@ impl CommandLibraryPane {
             }
             CommandLibraryMessage::Duplicate(command) => self.duplicate(&command),
             CommandLibraryMessage::DuplicateSelected => {
-                if let Some(command) = self.selected.clone() {
+                if let Some(command) = self.opened.clone() {
                     self.duplicate(&command);
                 }
             }
@@ -1514,7 +1574,6 @@ impl CommandLibraryPane {
             self.notice = Some(Notice::ReplayGone);
             return Outcome::None;
         };
-        self.selected = Some(command.clone());
         match &command {
             CommandRef::User(id) => {
                 if let Some(found) = self.library.get(id)
@@ -1539,8 +1598,9 @@ impl CommandLibraryPane {
         outcome
     }
 
-    /// The template of `command`, written `shown`, that is shown: the one chosen, else this
-    /// system's.
+    /// The template of `command`, written `shown`, that is shown: the one chosen, else the one
+    /// the platform filter asks for, else this system's, as the C# `ResolveCommandPreview`.
+    /// The row's preview and the details read the same.
     fn template_shown(
         &self,
         reference: &CommandRef,
@@ -1551,6 +1611,7 @@ impl CommandLibraryPane {
             CommandRef::User(id) => self.user_templates.get(id),
         }
         .copied()
+        .or_else(|| self.filtered_template())
         .filter(|platform| shown.template_platforms().contains(platform));
         chosen.or_else(|| shown.preferred_platform(cfg!(windows)))
     }
@@ -1621,27 +1682,6 @@ impl CommandLibraryPane {
             && self.level.is_none_or(|wanted| command.level == wanted)
     }
 
-    /// Opening `command` with a platform shown takes the template of that platform, unless
-    /// the user chose one: the row's preview named it.
-    fn prefer_filtered_template(&mut self, reference: &CommandRef) {
-        let Some(platform) = self.filtered_template() else {
-            return;
-        };
-        let (templates, id, command) = match reference {
-            CommandRef::Catalog(id) => (
-                &mut self.templates,
-                id,
-                catalogue_entry(id).map(|entry| entry.command().clone()),
-            ),
-            CommandRef::User(id) => (&mut self.user_templates, id, self.library.get(id).cloned()),
-        };
-        if !templates.contains_key(id)
-            && command.is_some_and(|each| each.template_platforms().contains(&platform))
-        {
-            templates.insert(id.clone(), platform);
-        }
-    }
-
     /// The template the platform filter asks for; `None` for every platform or for both.
     fn filtered_template(&self) -> Option<TemplatePlatform> {
         match self.platform {
@@ -1649,24 +1689,6 @@ impl CommandLibraryPane {
             Some(UserPlatform::Linux) => Some(TemplatePlatform::Linux),
             Some(UserPlatform::Both) | None => None,
         }
-    }
-
-    /// The template a row previews: the one chosen, else the one the platform filter asks
-    /// for, else this system's, as the C# `ResolveCommandPreview`.
-    fn preview_template(
-        &self,
-        reference: &CommandRef,
-        command: &UserCommand,
-    ) -> Option<TemplatePlatform> {
-        let chosen = match reference {
-            CommandRef::Catalog(id) => self.templates.get(id),
-            CommandRef::User(id) => self.user_templates.get(id),
-        }
-        .copied();
-        chosen
-            .or_else(|| self.filtered_template())
-            .filter(|platform| command.template_platforms().contains(platform))
-            .or_else(|| command.preferred_platform(cfg!(windows)))
     }
 
     /// The commands of the catalogue the platform, the category, the tag, the level, the
@@ -1894,7 +1916,7 @@ impl CommandLibraryPane {
             list = list.push(show_more(remaining, send(CommandLibraryMessage::ShowMore)));
         }
         cards = cards.push(list);
-        let mut page = page.push(styles::scroll(cards).height(Length::Fill));
+        let mut page = page.push(styles::scroll(cards).height(Length::FillPortion(LIST_PORTION)));
         if let Some(details) = self.details(tab, state) {
             page = page.push(details);
         }
@@ -2017,7 +2039,7 @@ impl CommandLibraryPane {
         let one_line =
             |label: String, size: f32| text(label).size(size).wrapping(text::Wrapping::None);
         let preview = self
-            .preview_template(reference, command)
+            .template_shown(reference, command)
             .and_then(|platform| command.template(platform))
             .map(|template| command_library::command_preview(&template.command_pattern))
             .unwrap_or_default();
@@ -2093,7 +2115,7 @@ impl CommandLibraryPane {
             container(styles::scroll(
                 column![row![iced::widget::space::horizontal(), close], card].spacing(spacing::SM),
             ))
-            .max_height(DETAILS_MAX_HEIGHT)
+            .height(Length::FillPortion(DETAILS_PORTION))
             .into(),
         )
     }
@@ -5665,16 +5687,109 @@ mod tests {
         assert!(pane.opened.is_none());
         pane.update(CommandLibraryMessage::Select(fsmo()));
         assert_eq!(pane.opened, Some(fsmo()));
-        assert_eq!(
-            pane.selected,
-            Some(fsmo()),
-            "Ctrl+D and Shift+Enter act on it"
-        );
         pane.update(CommandLibraryMessage::Select(fsck()));
         assert_eq!(pane.opened, Some(fsck()));
         pane.update(CommandLibraryMessage::CloseDetails);
         assert_eq!(pane.opened, None);
-        assert_eq!(pane.selected, Some(fsck()));
+    }
+
+    #[test]
+    fn a_favorite_toggled_elsewhere_leaves_the_keyboard_on_the_row_selected() {
+        let mut plain = CommandLibraryPane::default();
+        plain.update(CommandLibraryMessage::Select(fsmo()));
+        plain.update(CommandLibraryMessage::ToggleFavorite(fsck()));
+        assert_eq!(plain.opened, Some(fsmo()));
+        assert!(plain.is_favorite(&fsck()));
+        // Ctrl+D targets the row selected: the editor opens on a copy of it, not of the
+        // favorite.
+        let folder = tempfile::tempdir().expect("folder");
+        let mut saved = pane(folder.path());
+        saved.update(CommandLibraryMessage::Select(fsmo()));
+        saved.update(CommandLibraryMessage::ToggleFavorite(fsck()));
+        saved.update(CommandLibraryMessage::DuplicateSelected);
+        let editor = saved.editor.as_ref().expect("a copy is opened");
+        let expected = catalogue_entry("ad-check-fsmo-roles")
+            .expect("the command")
+            .localized(&language())
+            .title
+            .clone();
+        assert!(
+            editor.draft.title.contains(&expected),
+            "{}",
+            editor.draft.title
+        );
+    }
+
+    #[test]
+    fn a_replay_leaves_the_keyboard_on_the_row_selected() {
+        let folder = tempfile::tempdir().expect("folder");
+        let mut pane = pane(folder.path());
+        let id = make_ping(&mut pane);
+        let [first, ..] = tab_ids();
+        pane.set_targets(vec![target(first, "web-1")]);
+        pane.update(CommandLibraryMessage::UserParam(
+            id.clone(),
+            "host".to_owned(),
+            "web.lab".to_owned(),
+        ));
+        let Outcome::Send { command, .. } =
+            pane.update(CommandLibraryMessage::Send(CommandRef::User(id)))
+        else {
+            panic!("asked");
+        };
+        pane.record_sent(&[receipt(first, "web-1", &command)]);
+        pane.update(CommandLibraryMessage::Select(fsmo()));
+        assert!(matches!(
+            pane.update(CommandLibraryMessage::Replay(0)),
+            Outcome::Send { .. }
+        ));
+        assert_eq!(pane.opened, Some(fsmo()));
+    }
+
+    #[test]
+    fn the_arrow_keys_move_the_selection_over_the_visible_rows_and_stop_at_the_ends() {
+        let mut pane = CommandLibraryPane::default();
+        let rows = pane.listed_rows();
+        assert!(rows.len() > 3);
+        pane.update(CommandLibraryMessage::MoveSelection { forward: true });
+        assert_eq!(pane.opened.as_ref(), rows.first());
+        pane.update(CommandLibraryMessage::MoveSelection { forward: true });
+        assert_eq!(pane.opened.as_ref(), rows.get(1));
+        pane.update(CommandLibraryMessage::MoveSelection { forward: false });
+        pane.update(CommandLibraryMessage::MoveSelection { forward: false });
+        assert_eq!(
+            pane.opened.as_ref(),
+            rows.first(),
+            "the first row is the end"
+        );
+        pane.update(CommandLibraryMessage::CloseDetails);
+        pane.update(CommandLibraryMessage::MoveSelection { forward: false });
+        assert_eq!(
+            pane.opened.as_ref(),
+            rows.last(),
+            "up from nothing starts at the end"
+        );
+    }
+
+    #[test]
+    fn the_details_close_when_a_filter_or_the_search_hides_their_command() {
+        let mut pane = CommandLibraryPane::default();
+        pane.update(CommandLibraryMessage::Select(fsmo()));
+        pane.update(CommandLibraryMessage::Category(Some("security".to_owned())));
+        assert_eq!(
+            pane.opened, None,
+            "an Active Directory command under Security"
+        );
+        pane.update(CommandLibraryMessage::Category(None));
+        pane.update(CommandLibraryMessage::Select(fsmo()));
+        pane.update(CommandLibraryMessage::Search(
+            "zzzz no such command".to_owned(),
+        ));
+        assert_eq!(pane.opened, None);
+        pane.update(CommandLibraryMessage::Search(String::new()));
+        pane.update(CommandLibraryMessage::Select(fsmo()));
+        pane.update(CommandLibraryMessage::Level(Some(Criticality::Dangerous)));
+        assert_eq!(pane.opened, None);
     }
 
     #[test]
@@ -5690,7 +5805,7 @@ mod tests {
     }
 
     #[test]
-    fn selecting_with_a_platform_shown_opens_on_its_template_unless_one_was_chosen() {
+    fn the_details_and_the_row_preview_read_the_template_of_the_platform_shown() {
         let mut pane = CommandLibraryPane::default();
         let both = command_library::shipped()
             .entries()
@@ -5703,24 +5818,23 @@ mod tests {
         let reference = CommandRef::Catalog(both.id.clone());
         pane.update(CommandLibraryMessage::Platform(Some(UserPlatform::Windows)));
         assert_eq!(
-            pane.preview_template(&reference, both),
-            Some(TemplatePlatform::Windows),
-            "the row previews the platform shown"
+            pane.template_shown(&reference, both),
+            Some(TemplatePlatform::Windows)
         );
-        pane.update(CommandLibraryMessage::Select(reference.clone()));
+        pane.update(CommandLibraryMessage::Platform(Some(UserPlatform::Linux)));
         assert_eq!(
-            pane.templates.get(&both.id),
-            Some(&TemplatePlatform::Windows)
+            pane.template_shown(&reference, both),
+            Some(TemplatePlatform::Linux),
+            "a new filter changes it at once"
         );
         pane.update(CommandLibraryMessage::Template(
             both.id.clone(),
-            TemplatePlatform::Linux,
+            TemplatePlatform::Windows,
         ));
-        pane.update(CommandLibraryMessage::Select(reference.clone()));
         assert_eq!(
-            pane.templates.get(&both.id),
-            Some(&TemplatePlatform::Linux),
-            "the choice of the user is kept"
+            pane.template_shown(&reference, both),
+            Some(TemplatePlatform::Windows),
+            "the choice of the user wins"
         );
     }
 

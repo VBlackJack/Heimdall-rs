@@ -2944,6 +2944,21 @@ impl Shell {
                 ),
             ));
         }
+        // Up and Down no field took move the selection of the command library shown, as the
+        // arrow keys of the C# list box; a Files tab, the tree and Quick Connect keep theirs
+        // (the library tab is only found with none of them having the keyboard).
+        if let Message::FilesKey(key @ (FilesKey::Previous | FilesKey::Next)) = &message
+            && let Some(tab) = self.cmdlib_key_tab()
+        {
+            return self.update(Message::Tool(
+                tab,
+                crate::tools::ToolMessage::CmdLib(
+                    crate::tools::CommandLibraryMessage::MoveSelection {
+                        forward: *key == FilesKey::Next,
+                    },
+                ),
+            ));
+        }
         // Shift+Enter no field took types the command last used at the prompt, from the same
         // library tab, with the same conditions: nothing is written for a command that cannot
         // be made, and nothing is run.
