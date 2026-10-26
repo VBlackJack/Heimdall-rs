@@ -869,14 +869,19 @@ impl Hue {
     /// The colour it is in `theme`.
     fn color(self, theme: &Theme) -> Color {
         let colors = crate::themes::colors_of(theme);
-        match self {
-            Self::Green => colors.green,
-            Self::Cyan => colors.cyan,
-            Self::Comment => colors.comment,
-            Self::Orange => colors.orange,
-            Self::Pink => colors.pink,
-            Self::Yellow => colors.yellow,
-        }
+        // A mark on a row of a list, like a protocol's icon: seen on the row under the
+        // pointer and the selected one.
+        crate::themes::row_mark(
+            theme,
+            match self {
+                Self::Green => colors.green,
+                Self::Cyan => colors.cyan,
+                Self::Comment => colors.comment,
+                Self::Orange => colors.orange,
+                Self::Pink => colors.pink,
+                Self::Yellow => colors.yellow,
+            },
+        )
     }
 }
 
@@ -904,16 +909,19 @@ impl Tint {
 #[must_use]
 pub fn protocol_color(theme: &Theme, kind: ProfileKind) -> Color {
     let colors = crate::themes::colors_of(theme);
-    match kind {
+    let hue = match kind {
         ProfileKind::Rdp | ProfileKind::Ftp => colors.blue,
         ProfileKind::Ssh => colors.green,
         ProfileKind::WinRm | ProfileKind::Citrix => colors.purple,
         ProfileKind::Sftp => colors.orange,
         ProfileKind::Vnc | ProfileKind::Tool => colors.cyan,
-        ProfileKind::Telnet => colors.comment,
+        // The comment colour, a mark lifted where it is not seen on a row.
+        ProfileKind::Telnet => crate::themes::comment_of(theme),
         ProfileKind::Web => colors.pink,
         ProfileKind::Local => theme.palette().primary,
-    }
+    };
+    // A mark on a row of the tree: seen on the row under the pointer and the selected one.
+    crate::themes::row_mark(theme, hue)
 }
 
 /// The colour of tool `category` in `theme`, as the C# `HeimdallThemeBridge.xaml` gives each
@@ -1748,7 +1756,7 @@ mod tests {
             (ProfileKind::Citrix, colors.purple),
             (ProfileKind::Sftp, colors.orange),
             (ProfileKind::Vnc, colors.cyan),
-            (ProfileKind::Telnet, colors.comment),
+            (ProfileKind::Telnet, crate::themes::comment_of(&theme)),
             (ProfileKind::Web, colors.pink),
             (ProfileKind::Local, colors.blue),
         ] {

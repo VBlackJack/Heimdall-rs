@@ -30,6 +30,7 @@ use iced::theme::palette::{Extended, Pair, Palette};
 use iced::{Color, Theme};
 
 use crate::i18n::fl;
+use crate::tokens::SELECTED_ROW_ALPHA;
 
 /// The colours of a theme, by the slots `ThemeForge` names them.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -374,7 +375,23 @@ fn build(theme: AppTheme, accent: Accent) -> Theme {
         } else {
             colors.foreground
         };
-        extended.secondary.base = Pair::new(colors.comment, on_secondary);
+        // The comment, lifted where it does not read on a surface text is drawn on: the
+        // window, a card, a row under the pointer and the selected row. A line in this
+        // colour only gains from it.
+        let readable_comment = derive_on(
+            colors.comment,
+            &text_grounds(
+                colors.background,
+                colors.current_line,
+                colors.selection,
+                colors.accent(accent),
+            ),
+            MIN_TEXT_CONTRAST,
+        );
+        extended.secondary.base = Pair::new(readable_comment, on_secondary);
+        // The raw comment colour, for lines: iced's own subtle button, bordered box and disabled toggler also read the weakest
+        // background, and want a quiet colour like it.
+        extended.background.weakest = Pair::new(colors.comment, colors.foreground);
         // Every edge in the text colour, not a shade of black.
         if colors.high_contrast {
             extended.background.strong = Pair::new(colors.foreground, colors.background);
@@ -523,11 +540,20 @@ pub enum Derived {
     /// Muted text (the C# `TextTertiaryBrush`), from the theme's comment colour: a group's
     /// name on the Settings rail.
     Muted,
+    /// The accent as a line or a fill that carries meaning (the focus ring, a progress bar,
+    /// a ticked box), from the accent chosen: 3:1 where [`Self::Accent`] is 4.5:1.
+    AccentLine,
+    /// The comment colour as a line (a field outline, a scroll thumb, a toggle's edge), from
+    /// the theme's own: 3:1 where [`Self::Muted`] is 4.5:1.
+    CommentLine,
+    /// The comment colour as the placeholder of a field: 4.5:1 on the window, a card and a
+    /// row under the pointer, whatever the accent.
+    Placeholder,
 }
 
 impl Derived {
     /// Every derived colour.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 10] = [
         Self::Error,
         Self::Warning,
         Self::Success,
@@ -535,31 +561,70 @@ impl Derived {
         Self::Accent,
         Self::BorderStrong,
         Self::Muted,
+        Self::AccentLine,
+        Self::CommentLine,
+        Self::Placeholder,
     ];
 
-    /// The contrast the colour must reach on the window background and on a card: 4.5 for
-    /// text, 3 for a boundary line, as the C# `ThemeTextColours.Pairs`.
+    /// The contrast the colour must reach on the surfaces it is drawn on: 4.5 for text, 3
+    /// for a line, as the C# `ThemeTextColours.Pairs`.
     #[must_use]
     pub const fn target(self) -> f64 {
         match self {
-            Self::BorderStrong => MIN_BOUNDARY_CONTRAST,
+            Self::BorderStrong | Self::AccentLine | Self::CommentLine => MIN_BOUNDARY_CONTRAST,
             _ => MIN_TEXT_CONTRAST,
         }
     }
 }
 
-/// What a derivation was asked: the colour, both grounds (as 8-bit RGBA) and the contrast.
-type Question = ([u8; 4], [u8; 4], [u8; 4], u64);
+/// How many surfaces a colour is derived on.
+pub const GROUNDS: usize = 5;
+
+/// What a derivation was asked: the colour, the surfaces (as 8-bit RGBA) and the contrast.
+type Question = ([u8; 4], [[u8; 4]; GROUNDS], u64);
 
 /// Every answer given so far. A window draws with a handful of themes, so the table holds a
 /// few dozen entries; a style call is a lookup, not a lightness walk.
 static ANSWERS: LazyLock<Mutex<HashMap<Question, Color>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// The surfaces text is drawn on in a theme whose window is `window`, card `card`, row under
+/// the pointer `hover` and accent `accent`: those three, the selected row (the accent at
+/// [`SELECTED_ROW_ALPHA`] over the window) and the selected row under the pointer (over the
+/// hovered one). The sidebar, the menus, the tooltips and the status bar are the window's
+/// colour; a field is a card.
+#[must_use]
+pub fn text_grounds(window: Color, card: Color, hover: Color, accent: Color) -> [Color; GROUNDS] {
+    let tint = accent.scale_alpha(SELECTED_ROW_ALPHA);
+    [window, card, hover, over(tint, window), over(tint, hover)]
+}
+
+/// The surfaces `role` is drawn on in `theme`: a line that marks out a region sits on the
+/// window and on a card; the rest on every surface text is drawn on.
+#[must_use]
+pub fn grounds_of(theme: &Theme, role: Derived) -> [Color; GROUNDS] {
+    let (window, card) = (
+        theme.palette().background,
+        theme.extended_palette().background.weak.color,
+    );
+    match role {
+        Derived::BorderStrong | Derived::CommentLine => [window, card, window, card, window],
+        Derived::Placeholder => [window, card, selection_of(theme), window, card],
+        _ => text_grounds(window, card, selection_of(theme), theme.palette().primary),
+    }
+}
+
+/// The theme's own comment colour, [`build`] keeps in the weakest background for lines and
+/// for [`derived`] to start from: no lookup by name.
+#[must_use]
+pub fn comment_of(theme: &Theme) -> Color {
+    theme.extended_palette().background.weakest.color
+}
+
 /// The colour `role` takes in `theme`: the theme's own where it already reaches the
-/// contrast the role asks of the window background and of a card, the nearest one that does
-/// otherwise. No allocation on the way, but for the information colour, which is looked up
-/// by the theme's name.
+/// contrast the role asks of every surface it is drawn on (the window, a card, a row under
+/// the pointer, the selected row), the nearest one that does otherwise. No allocation on the
+/// way, but for the information colour, which is looked up by the theme's name.
 #[must_use]
 pub fn derived(theme: &Theme, role: Derived) -> Color {
     let extended = theme.extended_palette();
@@ -568,8 +633,8 @@ pub fn derived(theme: &Theme, role: Derived) -> Color {
         Derived::Warning => extended.warning.base.color,
         Derived::Success => extended.success.base.color,
         Derived::Info => colors_of(theme).cyan,
-        Derived::Accent => theme.palette().primary,
-        Derived::Muted => colors_of(theme).comment,
+        Derived::Accent | Derived::AccentLine => theme.palette().primary,
+        Derived::Muted | Derived::CommentLine | Derived::Placeholder => comment_of(theme),
         // The C# `BorderColor`: the current line, the text in high contrast, where the
         // current line is black ([`build`] puts the text in the strong shade there).
         Derived::BorderStrong
@@ -579,23 +644,54 @@ pub fn derived(theme: &Theme, role: Derived) -> Color {
         }
         Derived::BorderStrong => extended.background.weak.color,
     };
-    let (background, card) = (theme.palette().background, extended.background.weak.color);
+    legible(source, grounds_of(theme, role), role.target())
+}
+
+/// [`derive_on`] with the answers kept: the same question is asked every frame.
+fn legible(colour: Color, grounds: [Color; GROUNDS], target: f64) -> Color {
     let question = (
-        source.into_rgba8(),
-        background.into_rgba8(),
-        card.into_rgba8(),
-        role.target().to_bits(),
+        colour.into_rgba8(),
+        grounds.map(Color::into_rgba8),
+        target.to_bits(),
     );
     if let Ok(answers) = ANSWERS.lock()
         && let Some(answer) = answers.get(&question)
     {
         return *answer;
     }
-    let answer = derive(source, background, card, role.target());
+    let answer = derive_on(colour, &grounds, target);
     if let Ok(mut answers) = ANSWERS.lock() {
         answers.insert(question, answer);
     }
     answer
+}
+
+/// `colour` as a mark on a row of the session tree (a protocol's icon, a state dot): the
+/// colour itself where it is seen at 3:1 on the sidebar, a row under the pointer and the
+/// selected row, the nearest one that is otherwise.
+#[must_use]
+pub fn row_mark(theme: &Theme, colour: Color) -> Color {
+    legible_on(
+        colour,
+        &grounds_of(theme, Derived::AccentLine),
+        MIN_BOUNDARY_CONTRAST,
+    )
+}
+
+/// The colour closest to `colour` that reaches `target` on every one of up to [`GROUNDS`]
+/// `grounds`, the first of which is the window's or a tint of it: `colour` itself where it
+/// already does. For text on a fill the caller names, a badge on a tinted background. The
+/// answers are kept.
+#[must_use]
+pub fn legible_on(colour: Color, grounds: &[Color], target: f64) -> Color {
+    let Some(first) = grounds.first() else {
+        return colour;
+    };
+    let mut padded = [*first; GROUNDS];
+    for (slot, ground) in padded.iter_mut().zip(grounds) {
+        *slot = *ground;
+    }
+    legible(colour, padded, target)
 }
 
 /// The colour closest to `colour`, same hue and saturation, that reaches `target` against
@@ -603,12 +699,24 @@ pub fn derived(theme: &Theme, role: Derived) -> Color {
 /// time, away from the grounds, as the C# `ThemeTextColours.Derive`.
 #[must_use]
 pub fn derive(colour: Color, background: Color, card: Color, target: f64) -> Color {
-    let readable =
-        |c: Color| contrast_ratio(c, background) >= target && contrast_ratio(c, card) >= target;
+    derive_on(colour, &[background, card], target)
+}
+
+/// [`derive`] on any number of grounds, the first of which tells which way to move: lighter
+/// on a dark one, darker on a light one.
+#[must_use]
+pub fn derive_on(colour: Color, grounds: &[Color], target: f64) -> Color {
+    let readable = |c: Color| {
+        grounds
+            .iter()
+            .all(|ground| contrast_ratio(c, *ground) >= target)
+    };
     if readable(colour) {
         return colour;
     }
-    let lighten = perceived_luminance(background) < DARK_THRESHOLD;
+    let lighten = grounds
+        .first()
+        .is_some_and(|ground| perceived_luminance(*ground) < DARK_THRESHOLD);
     let [r, g, b, _] = colour.into_rgba8();
     let (hue, saturation, lightness) = to_hsl(r, g, b);
     let mut candidate = colour;
@@ -631,6 +739,21 @@ pub fn derive(colour: Color, background: Color, card: Color, target: f64) -> Col
     candidate
 }
 
+/// `top` laid over the opaque `ground`, as the renderer blends it: the colour that shows.
+#[must_use]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // Clamped to 0..=255.
+pub fn over(top: Color, ground: Color) -> Color {
+    // Half to even on 8 bits, as [`from_hsl`] and .NET's `Math.Round`: what the screen shows.
+    let blend = |above: f32, below: f32| {
+        ((above * top.a + below * (1.0 - top.a)).clamp(0.0, 1.0) * 255.0).round_ties_even() as u8
+    };
+    Color::from_rgb8(
+        blend(top.r, ground.r),
+        blend(top.g, ground.g),
+        blend(top.b, ground.b),
+    )
+}
+
 /// Black or white, whichever reads better on `fill`: the text of a badge on a raw status
 /// colour. At least 4.5:1 on any fill, the worst case being a mid-bright one.
 #[must_use]
@@ -639,6 +762,18 @@ pub fn text_on(fill: Color) -> Color {
         Color::BLACK
     } else {
         Color::WHITE
+    }
+}
+
+/// The label to draw on `fill`: `preferred` where it reads at 4.5:1, black or white otherwise.
+/// A button's label is the window's background on the accent, which a fill the theme did not
+/// choose (the accent hovered or pressed, a protocol's colour) can leave short.
+#[must_use]
+pub fn label_on(preferred: Color, fill: Color) -> Color {
+    if contrast_ratio(preferred, fill) >= MIN_TEXT_CONTRAST {
+        preferred
+    } else {
+        text_on(fill)
     }
 }
 
@@ -861,10 +996,15 @@ mod tests {
                 colors(each).current_line,
                 "{each:?}"
             );
+            let c = colors(each);
             assert_eq!(
                 extended.secondary.base.color,
-                colors(each).comment,
-                "{each:?}: the secondary text"
+                derive_on(
+                    c.comment,
+                    &text_grounds(c.background, c.current_line, c.selection, c.accent),
+                    MIN_TEXT_CONTRAST
+                ),
+                "{each:?}: the secondary text, lifted where it does not read"
             );
         }
     }
@@ -1063,30 +1203,32 @@ mod tests {
     }
 
     #[test]
-    fn every_derived_colour_reaches_its_contrast_on_the_window_and_on_a_card_in_every_theme() {
+    fn every_derived_colour_reaches_its_contrast_on_every_surface_it_is_drawn_on_in_every_theme() {
         let mut checked = 0;
         for each in AppTheme::ALL {
             for accent in Accent::ALL {
                 let built = theme(each, accent);
-                let background = built.palette().background;
-                let card = built.extended_palette().background.weak.color;
                 for role in Derived::ALL {
                     let color = derived(&built, role);
-                    for (ground, name) in [(background, "window"), (card, "card")] {
+                    for (index, ground) in grounds_of(&built, role).into_iter().enumerate() {
                         let ratio = contrast_ratio(color, ground);
                         assert!(
                             ratio >= role.target(),
-                            "{each:?}/{accent:?}: {role:?} is {ratio:.2}:1 on the {name}"
+                            "{each:?}/{accent:?}: {role:?} is {ratio:.2}:1 on surface {index}"
                         );
+                        checked += 1;
                     }
-                    checked += 1;
                 }
             }
         }
         // The loop cannot pass by being empty: 17 themes and high contrast, nine accents,
-        // seven colours.
+        // ten colours, five surfaces each.
         assert_eq!(AppTheme::ALL.len(), 18);
-        assert_eq!(checked, 18 * Accent::ALL.len() * Derived::ALL.len());
+        assert_eq!(Derived::ALL.len(), 10);
+        assert_eq!(
+            checked,
+            18 * Accent::ALL.len() * Derived::ALL.len() * GROUNDS
+        );
     }
 
     #[test]
@@ -1098,10 +1240,9 @@ mod tests {
         for each in AppTheme::ALL {
             let built = theme(each, Accent::Default);
             let source = built.extended_palette().danger.base.color;
-            let ground = built.palette().background;
-            let card = built.extended_palette().background.weak.color;
-            if contrast_ratio(source, ground) >= MIN_TEXT_CONTRAST
-                && contrast_ratio(source, card) >= MIN_TEXT_CONTRAST
+            if grounds_of(&built, Derived::Error)
+                .into_iter()
+                .all(|ground| contrast_ratio(source, ground) >= MIN_TEXT_CONTRAST)
             {
                 assert_eq!(derived(&built, Derived::Error), source, "{each:?}");
             }
@@ -1109,12 +1250,18 @@ mod tests {
     }
 
     #[test]
-    fn drakul_error_text_is_lifted_as_the_csharp_derives_it() {
-        // `92ccb004`: the red #FF5555 is 2.91:1 on the card #44475A and becomes #FF9C9C.
+    fn drakul_error_text_is_lifted_at_least_as_the_csharp_derives_it() {
+        // `92ccb004`: the red #FF5555 is 2.91:1 on the card #44475A and becomes #FF9C9C on
+        // the window and the card; here the rows under the pointer and the selected row are
+        // read on too, which can lift it further, never less.
         let built = theme(AppTheme::Drakul, Accent::Default);
+        let csharp = Color::from_rgb8(0xFF, 0x9C, 0x9C);
+        let lifted = derived(&built, Derived::Error);
+        assert!(perceived_luminance(lifted) >= perceived_luminance(csharp));
         assert_eq!(
-            derived(&built, Derived::Error),
-            Color::from_rgb8(0xFF, 0x9C, 0x9C)
+            lifted.into_rgba8()[0],
+            csharp.into_rgba8()[0],
+            "the same red"
         );
     }
 
@@ -1128,25 +1275,29 @@ mod tests {
     }
 
     #[test]
-    fn the_secondary_text_that_hints_are_drawn_in_reads_at_4_5_to_1_in_every_theme_but_dracula() {
-        // Dracula keeps the canonical comment colour of the Dracula Theme palette
-        // (#6272A4), 3.03:1 on its window; Drakul is the same theme with the comment lifted
-        // to read, and the C# keeps both as they are. Every other theme reads.
-        let mut short = Vec::new();
+    fn the_secondary_text_that_hints_are_drawn_in_reads_at_4_5_to_1_in_every_theme() {
+        // Dracula's canonical comment colour (#6272A4) is 3.03:1 on its window and 1.94:1 on
+        // its card; the secondary text is the comment lifted, where it needs to be, until
+        // it reads on the window, a card, a row under the pointer and the selected row.
+        let mut lifted = Vec::new();
         let mut checked = 0;
         for each in AppTheme::ALL {
-            let built = theme(each, Accent::Default);
-            let text = built.extended_palette().secondary.base.color;
-            let card = built.extended_palette().background.weak.color;
-            if [built.palette().background, card]
-                .into_iter()
-                .any(|ground| contrast_ratio(text, ground) < MIN_TEXT_CONTRAST)
-            {
-                short.push(each);
+            for accent in Accent::ALL {
+                let built = theme(each, accent);
+                let text = built.extended_palette().secondary.base.color;
+                for ground in grounds_of(&built, Derived::Muted) {
+                    assert!(
+                        contrast_ratio(text, ground) >= MIN_TEXT_CONTRAST,
+                        "{each:?}/{accent:?}"
+                    );
+                    checked += 1;
+                }
+                if accent == Accent::Default && text != colors(each).comment {
+                    lifted.push(each);
+                }
             }
-            checked += 1;
         }
-        assert_eq!(checked, AppTheme::ALL.len());
-        assert_eq!(short, [AppTheme::Dracula]);
+        assert_eq!(checked, 18 * Accent::ALL.len() * GROUNDS);
+        assert!(lifted.contains(&AppTheme::Dracula), "Dracula's is lifted");
     }
 }

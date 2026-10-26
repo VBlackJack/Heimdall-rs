@@ -326,7 +326,6 @@ impl BannerPane {
         state: &'a ToolPane,
         theme: &Theme,
     ) -> Element<'a, Message> {
-        let colors = crate::themes::colors_of(theme);
         let no_value = fl!("ui-tool-net-no-value");
 
         let host_input = column![
@@ -428,7 +427,7 @@ impl BannerPane {
             body_col = body_col.push(
                 text(Self::problem_text(problem))
                     .size(font_size::BODY)
-                    .color(colors.red),
+                    .color(crate::styles::error_text_color(theme)),
             );
         }
 
@@ -441,7 +440,7 @@ impl BannerPane {
                 ))
                 .size(font_size::CAPTION)
                 .font(styles::SEMIBOLD)
-                .color(colors.blue)
+                .color(crate::styles::accent_text_color(theme))
                 .width(Length::Fill),
                 super::copy_button(
                     fl!("ui-tool-banner-btn-copy"),
@@ -489,9 +488,9 @@ impl BannerPane {
             for r in &self.results {
                 let banner_str = r.banner.clone().unwrap_or_else(|| no_value.clone());
                 let banner_color = if r.banner.is_some() {
-                    colors.green
+                    crate::styles::success_text_color(theme)
                 } else {
-                    colors.comment
+                    theme.extended_palette().secondary.base.color
                 };
                 let time = r.response_ms.map_or_else(|| no_value.clone(), millis_text);
 
