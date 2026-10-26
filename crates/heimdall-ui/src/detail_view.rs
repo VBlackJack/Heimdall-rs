@@ -15,19 +15,17 @@
  */
 
 //! The session selected, in place of a session when none is open, as the C# detail panel:
-//! at the top left, its name, its protocol in the protocol's colour and its state; where it
-//! connects, as "host : port", and its folder; a card of what is known of its account, a
-//! favourite marked with the star; Connect, then Edit and Delete, and their keys.
+//! at the top left, its name, then the same card the properties panel shows (the C# panel
+//! hosts the same control twice): its protocol in the protocol's colour and its state, where
+//! it connects as "host:port", and what is known of it, authentication first; Connect, then
+//! Edit and Delete, and their keys.
 
-use heimdall_app::{
-    GatewayBadge, Message as AppMessage, ProfileKind, ProfileSummary, SavedCredentials,
-    SessionState, server_text,
-};
-use iced::widget::{Column, button, column, container, row, space, text};
+use heimdall_app::{Message as AppMessage, ProfileKind, SessionState, server_text};
+use iced::widget::{button, column, container, row, space, text};
 use iced::{Alignment, Element, Font, Length, Theme, font};
 
 use crate::i18n::fl;
-use crate::icons::{self, Icon, Tint};
+use crate::properties_panel::{self, Facts};
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{BORDER_WIDTH, font_size, radius, spacing};
@@ -39,15 +37,12 @@ const CONNECT_WIDTH: f32 = 120.0;
 /// Space the C# panel leaves of 6 pixels: after the state's dot, above and below Edit's and
 /// Delete's labels, and on each side of the protocol's name.
 pub(crate) const SMALL_GAP: f32 = 6.0;
+/// Space above the card of the session's properties, as the C# card's top margin.
+const CARD_GAP: f32 = 10.0;
 /// Space above and below the protocol's name, as the C# pill's padding.
 const PILL_PADDING_Y: f32 = 2.0;
 /// Space on each side of Connect's label, as the C# primary button's padding.
 const CONNECT_PADDING_X: f32 = 16.0;
-/// Side of the favourite's star, as the C# glyph at `FontSizeBody`.
-const FAVORITE_SIDE: f32 = font_size::BODY;
-/// Height of a line of text for its size, as iced lays a line out by default: the star is
-/// centred on a line of the card.
-const LINE_HEIGHT: f32 = 1.3;
 
 /// The window's font, bold, as the C# panel's title.
 pub(crate) const BOLD: Font = Font {
@@ -64,21 +59,6 @@ const SEMIBOLD: Font = Font {
 /// Space of `height` between two parts of the panel, as the C# margins.
 fn gap<'a>(height: f32) -> Element<'a, Message> {
     space().height(height).into()
-}
-
-/// The credentials kept, as the C# line lists them.
-fn credentials(saved: &SavedCredentials) -> String {
-    let mut kept = Vec::new();
-    if saved.password {
-        kept.push(fl!("ui-detail-saved-password"));
-    }
-    if let Some(key) = &saved.key_file {
-        kept.push(fl!("ui-detail-saved-key", name = server_text(key)));
-    }
-    if saved.passphrase {
-        kept.push(fl!("ui-detail-saved-passphrase"));
-    }
-    kept.join(", ")
 }
 
 /// The text and the fill of the pill of protocol `kind` in `theme`.
@@ -124,108 +104,6 @@ pub(crate) fn status<'a>(state: Option<SessionState>) -> Element<'a, Message> {
     .into()
 }
 
-/// A line under the address: its label, then what it says, in the secondary colour.
-fn line<'a>(label: String, value: String) -> Element<'a, Message> {
-    row![
-        text(label).size(font_size::BODY).style(text::secondary),
-        text(value).size(font_size::BODY).style(text::secondary),
-    ]
-    .spacing(spacing::XS)
-    .into()
-}
-
-/// What a line of the card says: a text, in the warning colour when `warning`, or the
-/// favourite's star.
-enum Value {
-    /// A text.
-    Text { said: String, warning: bool },
-    /// The C# `FavoriteStarFill` glyph, in the warning colour.
-    Star,
-}
-
-impl Value {
-    /// A text in the window's colour.
-    fn plain(said: String) -> Self {
-        Self::Text {
-            said,
-            warning: false,
-        }
-    }
-
-    /// It drawn, as the C# card's second column.
-    fn view<'a>(self) -> Element<'a, Message> {
-        match self {
-            Self::Text { said, warning } => text(said)
-                .size(font_size::CAPTION)
-                .style(if warning {
-                    styles::warning_text
-                } else {
-                    text::default
-                })
-                .into(),
-            // As the C# `FontSizeBody` glyph in `WarningTextBrush`, centred on its line.
-            Self::Star => container(icons::icon(
-                Icon::FavoriteStarFill,
-                Tint::Warning,
-                FAVORITE_SIDE,
-            ))
-            .center_y(font_size::CAPTION * LINE_HEIGHT)
-            .into(),
-        }
-    }
-}
-
-/// What is known of the account, labelled, as the C# card: username, gateway, credentials
-/// kept, tags, and the favourite's star. `None` when nothing is.
-fn card<'a>(
-    profile: &ProfileSummary,
-    saved: Option<&SavedCredentials>,
-) -> Option<Element<'a, Message>> {
-    let mut fields: Vec<(String, Value)> = Vec::new();
-    if let Some(user) = profile.username.as_deref().filter(|user| !user.is_empty()) {
-        fields.push((fl!("ui-detail-username"), Value::plain(server_text(user))));
-    }
-    if let Some(gateway) = &profile.gateway {
-        let (said, warning) = match gateway {
-            GatewayBadge::Via(name) => (server_text(name), false),
-            GatewayBadge::Missing => (fl!("ui-tree-gateway-missing"), true),
-        };
-        fields.push((fl!("ui-detail-gateway"), Value::Text { said, warning }));
-    }
-    if let Some(saved) = saved.filter(|saved| !saved.is_empty()) {
-        fields.push((
-            fl!("ui-detail-credentials"),
-            Value::plain(credentials(saved)),
-        ));
-    }
-    if !profile.metadata.tags.is_empty() {
-        fields.push((
-            fl!("ui-detail-tags"),
-            Value::plain(server_text(&profile.metadata.tags)),
-        ));
-    }
-    if profile.favorite {
-        fields.push((fl!("ui-detail-favorite"), Value::Star));
-    }
-    if fields.is_empty() {
-        return None;
-    }
-    // Two columns, as the C# grid: the labels as wide as the widest.
-    let mut labels = Column::new().spacing(spacing::XS);
-    let mut values = Column::new().spacing(spacing::XS).width(Length::Fill);
-    for (label, value) in fields {
-        labels = labels.push(text(label).size(font_size::CAPTION).style(text::secondary));
-        values = values.push(value.view());
-    }
-    Some(
-        container(row![labels, values].spacing(spacing::MD))
-            .padding([spacing::SM, spacing::MD])
-            .width(Length::Fill)
-            .style(card_style)
-            .into(),
-    )
-}
-
 /// The card's look, as the C# `CardBrush` in `BorderStrongBrush`, rounded as `CornerRadiusSm`:
 /// the detail panel's and the properties panel's.
 pub(crate) fn card_style(theme: &Theme) -> container::Style {
@@ -241,14 +119,14 @@ pub(crate) fn card_style(theme: &Theme) -> container::Style {
     }
 }
 
-/// The panel of `profile`; `saved`, the credentials kept for it once read; `editable`, it
-/// can be edited; `state`, the state of its session's tab, when one is open.
+/// The panel of the session `facts` describe; `state`, the state of its session's tab, when
+/// one is open; `editable`, it can be edited.
 pub fn view<'a>(
-    profile: &ProfileSummary,
-    saved: Option<&SavedCredentials>,
-    editable: bool,
+    facts: Facts<'_>,
     state: Option<SessionState>,
+    editable: bool,
 ) -> Element<'a, Message> {
+    let profile = facts.profile;
     let id = profile.id.clone();
     let mut panel = column![
         text(server_text(&profile.name))
@@ -259,30 +137,16 @@ pub fn view<'a>(
             .spacing(spacing::SM)
             .align_y(Alignment::Center),
     ];
-    if let Some((host, port)) = &profile.endpoint {
-        panel = panel.push(gap(spacing::MD)).push(
-            text(fl!(
-                "ui-detail-host-port",
-                host = server_text(host),
-                port = port.to_string()
-            ))
-            .size(font_size::BODY_LARGE)
-            .style(text::secondary),
-        );
-    }
-    if let Some(group) = &profile.group {
+    if let Some(endpoint) = properties_panel::endpoint(profile) {
         panel = panel
-            .push(gap(spacing::XS))
-            .push(line(fl!("ui-detail-folder"), server_text(group)));
+            .push(gap(spacing::SM))
+            .push(properties_panel::address(endpoint));
     }
-    if let Some(environment) = profile.metadata.environment {
-        panel = panel.push(gap(spacing::XS)).push(line(
-            fl!("ui-detail-environment"),
-            crate::texts::environment_name(Some(environment)),
-        ));
-    }
-    if let Some(card) = card(profile, saved) {
-        panel = panel.push(gap(spacing::MD)).push(card);
+    let lines = properties_panel::lines(facts);
+    if !lines.is_empty() {
+        panel = panel
+            .push(gap(CARD_GAP))
+            .push(properties_panel::card(&lines));
     }
     panel = panel
         .push(gap(spacing::LG))

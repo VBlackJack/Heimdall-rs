@@ -133,8 +133,9 @@ use heimdall_app::split::{Axis, Layout as SplitLayout, MAX_PANES, Placement, Spl
 /// Grid of a tab before its first layout.
 const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
 
-/// Width of the profile list, in logical pixels, as the C# `SessionTreeColumn`'s.
-const SIDEBAR_WIDTH: f32 = 260.0;
+/// Width of the profile list at a first start, in logical pixels: the width the C# window
+/// draws its session tree at; a width the user dragged to is kept from then on.
+const SIDEBAR_WIDTH: f32 = 250.0;
 /// Narrowest the sidebar is dragged to, as the C# column's minimum.
 const SIDEBAR_MIN_WIDTH: f32 = 243.0;
 /// Widest it is dragged to, as the C# column's maximum.
@@ -911,6 +912,9 @@ pub enum Message {
     CopyRouteReport,
     /// Open a menu of the profile tree at the pointer.
     OpenTreeMenu(TreeMenu),
+    /// A menu opened under its toolbar button, whose bottom-left corner is the point, as the
+    /// C# menus of the filter, Add and More buttons.
+    OpenTreeMenuBelow(TreeMenu, Point),
     /// Close the open menu.
     CloseTreeMenu,
     /// Left in a submenu: back to the menu it was opened from.
@@ -1280,6 +1284,7 @@ impl fmt::Debug for Message {
             Self::TestRouteForm => f.write_str("TestRouteForm"),
             Self::CopyRouteReport => f.write_str("CopyRouteReport"),
             Self::OpenTreeMenu(menu) => write!(f, "OpenTreeMenu({menu:?})"),
+            Self::OpenTreeMenuBelow(menu, at) => write!(f, "OpenTreeMenuBelow({menu:?}, {at:?})"),
             Self::CloseTreeMenu => f.write_str("CloseTreeMenu"),
             Self::MenuBack => f.write_str("MenuBack"),
             Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
@@ -1917,7 +1922,7 @@ impl Destination {
 }
 
 /// The application's name, at the head of the navigation: a name, not translated.
-const APP_NAME: &str = "Heimdall";
+const APP_NAME: &str = "Heimdall-rs";
 /// Between the folders listed in a question.
 const FOLDER_LIST_SEPARATOR: &str = ", ";
 
@@ -3149,6 +3154,7 @@ impl Shell {
             Message::SaveGatewayForm => self.save_gateway_form(),
             Message::TestRouteForm => self.test_route_form(),
             message @ (Message::OpenTreeMenu(_)
+            | Message::OpenTreeMenuBelow(..)
             | Message::CloseTreeMenu
             | Message::MenuBack
             | Message::ResetTreeFilters) => return self.tree_menu_message(message),
@@ -5932,6 +5938,8 @@ impl Shell {
                 self.app.shows_gateway_badge(),
                 self.app.shows_properties_panel(),
             )
+        } else if let TreeMenu::FilterProtocols = menu {
+            tree_view::filter_protocol_entries(self.app.tree_filter())
         } else if let TreeMenu::Selection = menu {
             let selected = self.app.selected_profiles();
             let connectable = selected
@@ -6002,6 +6010,7 @@ impl Shell {
                 TreeMenu::Add
                 | TreeMenu::More
                 | TreeMenu::Filter
+                | TreeMenu::FilterProtocols
                 | TreeMenu::Tab(_)
                 | TreeMenu::Pane(_)
                 | TreeMenu::ConnectWith(_)
@@ -6059,10 +6068,15 @@ impl Shell {
                 .and_then(|id| self.app.profile_summary(id));
             return match selected {
                 Some(profile) => crate::detail_view::view(
-                    &profile,
-                    self.app.selected_credentials(),
-                    self.app.can_edit(&profile.id),
+                    crate::properties_panel::Facts {
+                        profile: &profile,
+                        saved: self.app.selected_credentials(),
+                        provider: self.app.provider_consulted(&profile.id),
+                        reachability: self.app.reachability(&profile.id),
+                        gateway_badge: self.app.shows_gateway_badge(),
+                    },
                     self.app.profile_state(&profile.id),
+                    self.app.can_edit(&profile.id),
                 ),
                 None => crate::launchpad::select(
                     fl!("ui-home-select"),
@@ -6874,12 +6888,11 @@ impl Shell {
     /// an intentional divergence from the C# tree, which turned its horizontal bar off in
     /// 0f5cd2f1. Every row is as wide as the widest or `viewport`, so the selection spans it.
     fn tree_scroll(&self, viewport: f32) -> Element<'_, Message> {
-        styles::scroll(EvenWidth::new(
-            tree_view::ROW_GAP,
-            viewport,
-            styles::SCROLLBAR_WIDTH,
-            self.tree_list(),
-        ))
+        let (capped, rows): (Vec<bool>, Vec<_>) = self.tree_list().into_iter().unzip();
+        styles::scroll(
+            EvenWidth::new(tree_view::ROW_GAP, viewport, styles::SCROLLBAR_WIDTH, rows)
+                .capped(capped),
+        )
         .id(tree_scroll_id())
         .width(Length::Fill)
         // The whole area, so the sideways bar sits at its foot, not under the last row.
@@ -6891,11 +6904,13 @@ impl Shell {
         .into()
     }
 
-    /// The tree's rows, searched and filtered, and what it says when none passes.
-    fn tree_list(&self) -> Vec<Element<'_, Message>> {
-        let mut list: Vec<Element<'_, Message>> = Vec::new();
+    /// The tree's rows, searched and filtered, and what it says when none passes; each with
+    /// whether it keeps to the sidebar's width (a folder's header, its count in view) instead
+    /// of sharing the widest row's.
+    fn tree_list(&self) -> Vec<(bool, Element<'_, Message>)> {
+        let mut list: Vec<(bool, Element<'_, Message>)> = Vec::new();
         if self.app.profile_summaries().is_empty() {
-            list.push(text(fl!("ui-sidebar-empty")).into());
+            list.push((false, text(fl!("ui-sidebar-empty")).into()));
         }
         let rows = self.app.tree_rows(&self.search);
         let filter = self.app.tree_filter();
@@ -6915,14 +6930,15 @@ impl Shell {
                     Message::Search(String::new()),
                 )
             };
-            list.push(text(said).size(font_size::CAPTION).into());
-            list.push(
+            list.push((false, text(said).size(font_size::CAPTION).into()));
+            list.push((
+                false,
                 button(text(way_back).size(font_size::CAPTION))
                     .padding(crate::tokens::BUTTON_COMPACT_PADDING)
                     .style(styles::secondary)
                     .on_press(message)
                     .into(),
-            );
+            ));
         }
         let badge = self.app.shows_gateway_badge();
         // As the C# tree: folders nested and folded, sub-folders first, "(No Folder)" last.
@@ -6936,29 +6952,32 @@ impl Shell {
                 total,
             } => {
                 if let Some(editor) = self.inline_editor(&TreeCursor::Folder(path.clone()), depth) {
-                    return editor;
+                    return (false, editor);
                 }
                 let color = self.app.folder_color(&path);
                 let target = heimdall_app::DropTarget::Folder(path.clone());
                 let selected = self.app.selected_folder.as_deref() == Some(path.as_str());
-                crate::tree_drag::drop_zone(
-                    tree_view::folder_row(
-                        path,
-                        name,
-                        (depth, open),
-                        (count, total),
-                        color,
-                        selected,
+                (
+                    true,
+                    crate::tree_drag::drop_zone(
+                        tree_view::folder_row(
+                            path,
+                            name,
+                            (depth, open),
+                            (count, total),
+                            color,
+                            selected,
+                        ),
+                        target,
+                        self.tree_drag.as_ref(),
                     ),
-                    target,
-                    self.tree_drag.as_ref(),
                 )
             }
             TreeRow::Profile { mut profile, depth } => {
                 if let Some(editor) =
                     self.inline_editor(&TreeCursor::Profile(profile.id.clone()), depth)
                 {
-                    return editor;
+                    return (false, editor);
                 }
                 if !badge {
                     profile.gateway = None;
@@ -6975,17 +6994,18 @@ impl Shell {
                     depth,
                 );
                 // Sessions dragged go before or after a session; a folder, into its folder.
-                match self.tree_drag.as_ref().filter(|drag| {
+                let row = match self.tree_drag.as_ref().filter(|drag| {
                     drag.active && matches!(drag.source, crate::tree_drag::DragSource::Profiles(_))
                 }) {
                     Some(drag) => crate::tree_drag::positioned_zone(row, &profile.id, drag),
                     None => crate::tree_drag::drop_zone(row, target, self.tree_drag.as_ref()),
-                }
+                };
+                (false, row)
             }
         }));
         // The shared files' sessions, read-only, under the saved ones.
         if let Some(shared) = crate::shared_view::section(&self.app) {
-            list.push(shared);
+            list.push((false, shared));
         }
         list
     }
@@ -6995,6 +7015,7 @@ impl Shell {
     fn tree_menu_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::OpenTreeMenu(menu) => self.open_tree_menu(menu),
+            Message::OpenTreeMenuBelow(menu, at) => self.open_tree_menu_at(menu, at, None),
             Message::CloseTreeMenu => self.menu = None,
             // The submenu goes, the menu it came from comes back where it was.
             Message::MenuBack => {
@@ -7063,12 +7084,16 @@ impl Shell {
         });
         let tool = |glyph: Element<'static, Message>, tip: String, menu: TreeMenu| {
             styles::tip(
-                button(glyph)
-                    .width(icons::BUTTON_SIDE)
-                    .height(icons::BUTTON_SIDE)
-                    .padding(0.0)
-                    .style(styles::subtle)
-                    .on_press(Message::OpenTreeMenu(menu)),
+                // The menu opens under the button, as the C# toolbar menus do.
+                crate::menu_anchor::below(
+                    button(glyph)
+                        .width(icons::BUTTON_SIDE)
+                        .height(icons::BUTTON_SIDE)
+                        .padding(0.0)
+                        .style(styles::subtle)
+                        .on_press(Message::OpenTreeMenu(menu.clone())),
+                    menu,
+                ),
                 text(tip).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
@@ -7316,6 +7341,7 @@ impl Shell {
             ) => {}
             Message::App(AppMessage::ToggleFolder(_))
             | Message::OpenTreeMenu(_)
+            | Message::OpenTreeMenuBelow(..)
             | Message::TreeClick(_)
             // The desktop takes no more keys: the tree has them, as after a click in it.
             | Message::ContentRelease => self.tree_focused = true,

@@ -604,7 +604,12 @@ fn the_navigation_shows_the_sessions_the_tunnels_the_tools_the_settings_and_abou
     {
         let mut ui = simulator(&shell);
         for label in [
-            "Heimdall", "Sessions", "Tunnels", "Tools", "Settings", "About",
+            "Heimdall-rs",
+            "Sessions",
+            "Tunnels",
+            "Tools",
+            "Settings",
+            "About",
         ] {
             ui.find(label).expect(label);
         }
@@ -660,7 +665,7 @@ fn the_toolbar_ends_with_the_share_icon_then_quick_connect_and_the_title_has_no_
         .expect("the share icon")
         .bounds();
     let quick = ui.find("Quick connect").expect("Quick connect").bounds();
-    let title = ui.find("Heimdall").expect("the title").bounds();
+    let title = ui.find("Heimdall-rs").expect("the title").bounds();
     assert_eq!(
         (share.width, share.height),
         (TOOLBAR_ICON_SIDE, TOOLBAR_ICON_SIDE),
@@ -1388,9 +1393,17 @@ fn the_session_selected_is_shown_in_detail_until_one_is_open() {
     let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
     snapshot(&shell, "detail.png");
     let mut ui = simulator(&shell);
-    for label in ["a.lab : 22", "Folder:", "Username:", "admin"] {
+    // The address without spaces, the card of the properties panel and the C# short hint.
+    for label in [
+        "a.lab:22",
+        "Folder:",
+        "Username:",
+        "admin",
+        "Ctrl+E edit \u{b7} Del delete \u{b7} F1 all shortcuts",
+    ] {
         ui.find(label).expect(label);
     }
+    assert!(ui.find("a.lab : 22").is_err(), "no spaces around the colon");
     assert!(ui.find("Favorite:").is_err(), "not a favourite");
     ui.click("Connect").expect("Connect");
     assert!(ui.into_messages().any(|message| matches!(
@@ -3057,15 +3070,23 @@ fn the_filter_menu_ticks_a_protocol_and_stays_open_as_the_csharp_one() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Filter));
-    let mut ui = simulator(&shell);
-    for label in [
-        "Protocols",
-        "Connected",
-        "Via gateway",
-        "Show gateway badge",
-    ] {
-        ui.find(label).expect(label);
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Protocols",
+            "Connected",
+            "Via gateway",
+            "Show gateway badge",
+        ] {
+            ui.find(label).expect(label);
+        }
+        assert!(
+            ui.find("RDP").is_err(),
+            "the protocols are in a submenu, not ten boxes in the menu"
+        );
     }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::FilterProtocols));
+    let mut ui = simulator(&shell);
     ui.click("RDP").expect("the protocol");
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(

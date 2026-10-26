@@ -696,18 +696,26 @@ fn session<'a>(
             .align_y(Alignment::Center),
         );
     if let Some(endpoint) = endpoint(profile) {
-        panel = panel.push(space().height(ENDPOINT_GAP)).push(copy_value(
-            text_value(endpoint.clone(), true)
-                .size(font_size::BODY_LARGE)
-                .style(text::secondary),
-            endpoint,
-        ));
+        panel = panel
+            .push(space().height(ENDPOINT_GAP))
+            .push(address(endpoint));
     }
     let lines = lines(facts);
     if !lines.is_empty() {
         panel = panel.push(space().height(CARD_GAP)).push(card(&lines));
     }
     panel.width(Length::Fill).into()
+}
+
+/// The address a session connects to, a value that copies itself at a click, as the C#
+/// `Spv_EndpointCopy`: the panel's and the detail page's.
+pub(crate) fn address<'a>(endpoint: String) -> Element<'a, Message> {
+    copy_value(
+        text_value(endpoint.clone(), true)
+            .size(font_size::BODY_LARGE)
+            .style(text::secondary),
+        endpoint,
+    )
 }
 
 /// What a value says, cut on one line when `one_line`, else wrapped.
@@ -789,7 +797,7 @@ fn copy_style(theme: &Theme, status: button::Status) -> button::Style {
 
 /// The card of `lines`: labels in a column as wide as the widest, each value beside its
 /// own, as the C# grid's rows: a value wrapped over two lines pushes the next line down.
-fn card<'a>(lines: &[Line]) -> Element<'a, Message> {
+pub(crate) fn card<'a>(lines: &[Line]) -> Element<'a, Message> {
     let labels = table::column(space(), |line: Line| {
         container(
             text(line.field.label())

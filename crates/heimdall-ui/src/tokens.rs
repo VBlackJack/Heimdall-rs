@@ -98,6 +98,15 @@ pub const DIALOG_SHADOW_DEPTH: f32 = 8.0;
 /// Opacity of a dialog's black shadow, as the C#'s.
 pub const DIALOG_SHADOW_ALPHA: f32 = 0.4;
 
+/// Blur of a context menu's drop shadow: the soft one of the C# `ContextMenu.HasDropShadow`.
+pub const MENU_SHADOW_BLUR: f32 = 8.0;
+
+/// How far a context menu's shadow falls, straight down.
+pub const MENU_SHADOW_DEPTH: f32 = 2.0;
+
+/// Opacity of a context menu's black shadow.
+pub const MENU_SHADOW_ALPHA: f32 = 0.3;
+
 /// Room inside the count badge of a tree folder, as the C# `Padding="5,0"`
 /// (`MainWindow.xaml:887`): none above and below, 5 at each side.
 pub const COUNT_BADGE_PADDING: [f32; 2] = [0.0, 5.0];
