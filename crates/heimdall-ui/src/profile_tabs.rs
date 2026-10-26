@@ -103,6 +103,48 @@ impl ProfileTab {
     }
 }
 
+/// The place after (`forward`) or before `at`, a tab with its pill sub-tab, among `tabs`,
+/// the cycle of Ctrl+Tab and Ctrl+Shift+Tab: the pills of the Options tab are visited in
+/// turn while `pills` are enabled, then the next tab, wrapping round at the ends.
+#[must_use]
+pub fn step(
+    tabs: &[ProfileTab],
+    at: (ProfileTab, RdpSubTab),
+    pills: bool,
+    forward: bool,
+) -> (ProfileTab, RdpSubTab) {
+    let (tab, sub) = at;
+    if pills && tab == ProfileTab::Options {
+        let place = RdpSubTab::ALL.iter().position(|known| *known == sub);
+        if let Some(place) = place {
+            if forward && place + 1 < RdpSubTab::ALL.len() {
+                return (tab, RdpSubTab::ALL[place + 1]);
+            }
+            if !forward && place > 0 {
+                return (tab, RdpSubTab::ALL[place - 1]);
+            }
+        }
+    }
+    let Some(index) = tabs.iter().position(|known| *known == tab) else {
+        return at;
+    };
+    let count = tabs.len();
+    let next = tabs[if forward {
+        (index + 1) % count
+    } else {
+        (index + count - 1) % count
+    }];
+    // Entering the options from the left lands on their first pill, from the right on the last.
+    let sub = if next == ProfileTab::Options && !forward {
+        RdpSubTab::ALL[RdpSubTab::ALL.len() - 1]
+    } else if next == ProfileTab::Options {
+        RdpSubTab::ALL[0]
+    } else {
+        sub
+    };
+    (next, sub)
+}
+
 /// A pill sub-tab of the RDP options, as the C# `SegmentedTabControlStyle` of the Options
 /// tab: Display & Audio, Devices, Performance, Behavior.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -142,6 +184,30 @@ impl RdpSubTab {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ctrl_tab_visits_the_pills_of_the_options_then_the_next_tab_and_wraps() {
+        use ProfileTab::{General, Info, Network, Options};
+        let tabs = [General, Options, Network, Info];
+        let first = RdpSubTab::DisplayAudio;
+        let last = RdpSubTab::Behavior;
+        assert_eq!(step(&tabs, (General, first), true, true), (Options, first));
+        assert_eq!(
+            step(&tabs, (Options, first), true, true),
+            (Options, RdpSubTab::Devices)
+        );
+        assert_eq!(step(&tabs, (Options, last), true, true), (Network, last));
+        assert_eq!(step(&tabs, (Network, last), true, false), (Options, last));
+        assert_eq!(
+            step(&tabs, (Options, last), true, false),
+            (Options, RdpSubTab::Performance)
+        );
+        assert_eq!(step(&tabs, (Options, first), true, false), (General, first));
+        // Pills disabled: the options are one stop.
+        assert_eq!(step(&tabs, (Options, first), false, true), (Network, first));
+        assert_eq!(step(&tabs, (Info, first), false, true).0, General);
+        assert_eq!(step(&tabs, (General, first), false, false).0, Info);
+    }
 
     #[test]
     fn the_rdp_sub_tabs_are_the_csharp_four_in_order_each_with_a_name() {

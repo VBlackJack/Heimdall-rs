@@ -2976,6 +2976,23 @@ impl Shell {
         {
             return Task::none();
         }
+        // Escape closes the list of common shells of the local shell form before the dialog.
+        if self.presets_open
+            && matches!(
+                message,
+                Message::EscapeUntaken | Message::DialogKey { confirm: false }
+            )
+        {
+            self.presets_open = false;
+            return Task::none();
+        }
+        // Ctrl+Tab and Ctrl+Shift+Tab go through the session form's tabs while it is open.
+        if let Message::Shortcut(step @ (WindowShortcut::NextTab | WindowShortcut::PreviousTab)) =
+            &message
+            && let Some(task) = self.cycle_profile_tabs(*step == WindowShortcut::NextTab)
+        {
+            return task;
+        }
         // Enter and Escape are the welcome tour's while it is shown and nothing over it.
         if let Some(tour) = self.tour_key(&message) {
             return self.update(Message::Tour(tour));
@@ -3399,6 +3416,14 @@ impl Shell {
         }
         self.forget_finished();
         self.keep_monitors();
+        // The list of common shells is the local shell form's: gone with it or its protocol.
+        if !matches!(
+            &self.app.dialog,
+            Some(Dialog::EditProfile { draft, .. })
+                if draft.protocol == DraftProtocol::Local && draft.protocol_chosen
+        ) {
+            self.presets_open = false;
+        }
         // The form closed, or back to its protocols: it opens again on General. A gateway
         // edited from it keeps its tab for its return.
         if !self.profile_form_open() {
@@ -4771,6 +4796,34 @@ impl Shell {
                 y: Some(share),
             },
         )
+    }
+
+    /// Ctrl+Tab (`forward`) or Ctrl+Shift+Tab with the session form open: the next or
+    /// previous place among its tabs, the RDP pill sub-tabs included while they are
+    /// enabled; `None` when no form is open, the key being the window's.
+    fn cycle_profile_tabs(&mut self, forward: bool) -> Option<Task<Message>> {
+        let Some(Dialog::EditProfile { draft, .. }) = &self.app.dialog else {
+            return None;
+        };
+        if !draft.protocol_chosen {
+            return None;
+        }
+        let tabs = ProfileTab::of(draft.protocol);
+        let shown = if tabs.contains(&self.profile_tab) {
+            self.profile_tab
+        } else {
+            ProfileTab::General
+        };
+        let pills =
+            draft.protocol == DraftProtocol::Rdp && !draft.is_on(ProfileToggle::FollowDefaults);
+        let (tab, sub) =
+            crate::profile_tabs::step(&tabs, (shown, self.rdp_sub_tab), pills, forward);
+        self.rdp_sub_tab = sub;
+        Some(if tab == shown {
+            Task::none()
+        } else {
+            self.update(Message::ProfileTab(tab))
+        })
     }
 
     /// Drops the tasks of closed tabs and the drafts of questions no longer asked.
@@ -12676,15 +12729,11 @@ fn info_tab(draft: &ProfileDraft) -> Column<'_, Message> {
         .align_y(iced::Alignment::End);
     if draft.shows_toggle(ProfileToggle::Favorite) {
         environment = environment.push(
-            column![
-                dialog_parts::label(fl!("ui-profile-field-favorite")),
-                toggle_box(
-                    draft,
-                    ProfileToggle::Favorite,
-                    toggle_label(ProfileToggle::Favorite),
-                ),
-            ]
-            .spacing(spacing::XS)
+            container(toggle_box(
+                draft,
+                ProfileToggle::Favorite,
+                toggle_label(ProfileToggle::Favorite),
+            ))
             .width(Length::Fill),
         );
     }

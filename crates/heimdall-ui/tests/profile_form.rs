@@ -1748,7 +1748,7 @@ fn the_info_tab_names_the_favorite_mark_beside_the_environment_and_the_badge_say
     show(&mut shell, ProfileTab::Info);
     snapshot(&shell, "profile-info.png");
     let mut ui = tall_simulator(&shell);
-    for label in ["Environment", "Favorite", "Mark as favorite"] {
+    for label in ["Environment", "Mark as favorite"] {
         ui.find(label).expect(label);
     }
 }
@@ -1779,4 +1779,54 @@ fn the_executable_box_saves_on_enter_and_takes_a_listed_shell_by_a_click_only() 
     let mut ui = tall_simulator(&shell);
     ui.find("Executable").expect("its label");
     assert!(ui.find(second).is_err(), "the list closed on the pick");
+}
+
+#[test]
+fn escape_closes_the_shell_list_before_the_dialog_and_ctrl_tab_goes_through_the_tabs() {
+    use heimdall_ui::terminal_view::keys::WindowShortcut;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Local)));
+    let first = SHELL_PRESETS[0];
+    let _ = shell.update(Message::ToggleShellList);
+    assert!(
+        tall_simulator(&shell).find(first).is_ok(),
+        "the list is open"
+    );
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    assert!(
+        tall_simulator(&shell).find(first).is_err(),
+        "closed by Escape"
+    );
+    assert!(
+        tall_simulator(&shell).find("Local shell").is_ok(),
+        "the form stays open"
+    );
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    assert!(
+        tall_simulator(&shell).find("Local shell").is_err(),
+        "the second Escape closes the dialog"
+    );
+
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::FollowDefaults,
+        on: false,
+    }));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::NextTab));
+    assert!(tall_simulator(&shell).find("RDP session options").is_ok());
+    let _ = shell.update(Message::Shortcut(WindowShortcut::NextTab));
+    assert!(
+        tall_simulator(&shell).find("Redirect clipboard").is_ok(),
+        "the next pill"
+    );
+    let _ = shell.update(Message::Shortcut(WindowShortcut::PreviousTab));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::PreviousTab));
+    assert!(
+        tall_simulator(&shell).find("Remote RDP port").is_ok(),
+        "back on General"
+    );
 }
