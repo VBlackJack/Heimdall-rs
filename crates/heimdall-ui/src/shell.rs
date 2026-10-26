@@ -805,6 +805,8 @@ pub enum Message {
     WindowOpened(window::Id),
     /// A window of any kind opened: its title bar is set to the theme's colours.
     TitleBarWindowOpened(window::Id),
+    /// A window of any kind closed: its title bar is no longer kept.
+    TitleBarWindowClosed(window::Id),
     /// The main window closed: the application ends, as it did with its only window.
     MainWindowClosed,
     /// A later launch asked this instance to come forward, as the C# activation event: the
@@ -1234,6 +1236,7 @@ impl fmt::Debug for Message {
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
             Self::WindowOpened(_) => f.write_str("WindowOpened"),
             Self::TitleBarWindowOpened(_) => f.write_str("TitleBarWindowOpened"),
+            Self::TitleBarWindowClosed(_) => f.write_str("TitleBarWindowClosed"),
             Self::MainWindowClosed => f.write_str("MainWindowClosed"),
             Self::BringForward => f.write_str("BringForward"),
             Self::Rescaled(scale) => write!(f, "Rescaled({scale})"),
@@ -2498,6 +2501,7 @@ impl Shell {
             ),
             // Every window, the tabs' own included: its title bar takes the theme's colours.
             window::open_events().map(Message::TitleBarWindowOpened),
+            window::close_events().map(Message::TitleBarWindowClosed),
             // A daemon outlives its windows: the main window closed, the application ends.
             in_main_window(
                 window::close_events().map(|id| (id, Message::MainWindowClosed)),
@@ -3083,6 +3087,10 @@ impl Shell {
             Message::TitleBarWindowOpened(id) => {
                 self.open_windows.insert(id);
                 return crate::title_bar::apply(id, crate::title_bar::style_of(self.theme_shown()));
+            }
+            Message::TitleBarWindowClosed(id) => {
+                self.open_windows.remove(&id);
+                return Task::none();
             }
             Message::MainWindowClosed => {
                 // Said, so that a log ending without it or another end of its own tells of a
@@ -15677,6 +15685,20 @@ mod tests {
             Some(Message::ToggleFullscreen)
         ));
     }
+
+    #[test]
+    fn a_window_closed_is_no_longer_kept_for_title_bars() {
+        let dir = tempfile::tempdir().expect("a folder");
+        let mut shell = fullscreen_shell(dir.path());
+        let (first, second) = (window::Id::unique(), window::Id::unique());
+        let _ = shell.update(Message::TitleBarWindowOpened(first));
+        let _ = shell.update(Message::TitleBarWindowOpened(second));
+        assert_eq!(shell.open_windows.len(), 2);
+        let _ = shell.update(Message::TitleBarWindowClosed(first));
+        assert!(!shell.open_windows.contains(&first));
+        assert!(shell.open_windows.contains(&second));
+    }
+
     fn fullscreen_shell(dir: &std::path::Path) -> Shell {
         Shell::with_app(App::new(AppConfig {
             profiles_file: dir.join("profiles.toml"),

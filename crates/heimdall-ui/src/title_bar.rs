@@ -66,6 +66,15 @@ mod tests {
     }
 
     #[test]
+    fn a_light_theme_s_bar_is_not_dark() {
+        // Folio: background #F1F2F4, text #17191C, as 0x00BBGGRR.
+        let style = style_of(AppTheme::Folio);
+        assert!(!style.dark);
+        assert_eq!(style.caption, 0x00F4_F2F1);
+        assert_eq!(style.text, 0x001C_1917);
+    }
+
+    #[test]
     fn the_dark_flag_follows_each_theme_s_background() {
         for theme in AppTheme::ALL {
             let colors = crate::themes::colors(theme);
