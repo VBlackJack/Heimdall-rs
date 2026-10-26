@@ -139,8 +139,9 @@ const FIELDS: usize = 8;
 /// with.
 const REMOVE: &str = concat!(
     "set -eu; LC_ALL=C; export LC_ALL; target=$1; kind=$2; inode=$3; token=$4; ",
-    "for t in find rm; do command -v \"$t\" >/dev/null 2>&1 || { echo \"missing: $t\" >&2; exit 77; }; ",
-    "case \"$(\"$t\" --version 2>/dev/null)\" in *GNU*) ;; *) echo \"GNU $t needed\" >&2; exit 77;; esac; done; ",
+    "for t in find rm; do command -v \"$t\" >/dev/null 2>&1 || { echo \"missing: $t\" >&2; exit 77; }; done; ",
+    "case \"$(find --version 2>/dev/null)\" in *GNU*) ;; *) echo \"GNU findutils needed\" >&2; exit 77;; esac; ",
+    "case \"$(rm --help 2>&1)\" in *--one-file-system*) ;; *) echo \"rm --one-file-system needed\" >&2; exit 77;; esac; ",
     "found=$(find -P \"$target\" -maxdepth 0 -printf \"%y %i\" 2>/dev/null) || exit 81; ",
     "case \"$found\" in b\\ *|c\\ *) found=\"D ${found#? }\";; esac; ",
     "[ \"$found\" = \"$kind $inode\" ] || exit 81; ",
