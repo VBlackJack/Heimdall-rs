@@ -803,6 +803,10 @@ pub enum Message {
     ToggleFullscreen,
     /// The window opened: its screen's density is asked for.
     WindowOpened(window::Id),
+    /// A window of any kind opened: its title bar is set to the theme's colours.
+    TitleBarWindowOpened(window::Id),
+    /// A window of any kind closed: its title bar is no longer kept.
+    TitleBarWindowClosed(window::Id),
     /// The main window closed: the application ends, as it did with its only window.
     MainWindowClosed,
     /// A later launch asked this instance to come forward, as the C# activation event: the
@@ -1231,6 +1235,8 @@ impl fmt::Debug for Message {
             Self::LanguageChosen(language) => write!(f, "LanguageChosen({language:?})"),
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
             Self::WindowOpened(_) => f.write_str("WindowOpened"),
+            Self::TitleBarWindowOpened(_) => f.write_str("TitleBarWindowOpened"),
+            Self::TitleBarWindowClosed(_) => f.write_str("TitleBarWindowClosed"),
             Self::MainWindowClosed => f.write_str("MainWindowClosed"),
             Self::BringForward => f.write_str("BringForward"),
             Self::Rescaled(scale) => write!(f, "Rescaled({scale})"),
@@ -1726,6 +1732,10 @@ pub struct Shell {
     window_memory: Option<(PathBuf, heimdall_core::window_state::WindowState)>,
     /// The main window, named once it is asked to open; none in tests, which open none.
     main_window: Option<window::Id>,
+    /// Every window that has opened, main or tab's own, whose title bar follows the theme.
+    open_windows: std::collections::BTreeSet<window::Id>,
+    /// The title bar style last given to the open windows; none before the first.
+    title_bar: Option<heimdall_titlebar::Style>,
     /// The configuration folder this instance owns, where a later launch asks it to come
     /// forward; none in tests, and when started unguarded.
     instance_dir: Option<PathBuf>,
@@ -2083,6 +2093,8 @@ impl Shell {
             reduced_motion: false,
             window_memory: None,
             main_window: None,
+            open_windows: std::collections::BTreeSet::new(),
+            title_bar: None,
             instance_dir: None,
             floating: std::collections::BTreeMap::new(),
             window_size: None,
@@ -2487,6 +2499,9 @@ impl Shell {
                 window::open_events().map(|id| (id, Message::WindowOpened(id))),
                 main,
             ),
+            // Every window, the tabs' own included: its title bar takes the theme's colours.
+            window::open_events().map(Message::TitleBarWindowOpened),
+            window::close_events().map(Message::TitleBarWindowClosed),
             // A daemon outlives its windows: the main window closed, the application ends.
             in_main_window(
                 window::close_events().map(|id| (id, Message::MainWindowClosed)),
@@ -2576,7 +2591,7 @@ impl Shell {
     /// the C# `SleepPrevention` does when the setting is on.
     pub fn step(&mut self, message: Message) -> Task<Message> {
         let task = self.update(message);
-        let task = Task::batch([task, self.sync_floating()]);
+        let task = Task::batch([task, self.sync_floating(), self.sync_title_bars()]);
         let awake = self.app.settings().prevent_sleep
             && self
                 .app
@@ -2591,6 +2606,22 @@ impl Shell {
     #[must_use]
     pub fn keeps_awake(&self) -> bool {
         self.sleep_guard.held()
+    }
+
+    /// The title bars of the open windows, set again when the theme drawn changed, as the C#
+    /// `WindowThemeHelper` gives each window the colours of the theme it is shown in. A window
+    /// opening takes the current style on its own.
+    fn sync_title_bars(&mut self) -> Task<Message> {
+        let style = crate::title_bar::style_of(self.theme_shown());
+        if self.title_bar == Some(style) {
+            return Task::none();
+        }
+        self.title_bar = Some(style);
+        Task::batch(
+            self.open_windows
+                .iter()
+                .map(|id| crate::title_bar::apply(*id, style)),
+        )
     }
 
     /// The tabs' own windows as the core has them: a window whose tab went back or is gone
@@ -3052,6 +3083,14 @@ impl Shell {
             Message::RefreshMonitors => {
                 self.relist_monitors();
                 Vec::new()
+            }
+            Message::TitleBarWindowOpened(id) => {
+                self.open_windows.insert(id);
+                return crate::title_bar::apply(id, crate::title_bar::style_of(self.theme_shown()));
+            }
+            Message::TitleBarWindowClosed(id) => {
+                self.open_windows.remove(&id);
+                return Task::none();
             }
             Message::MainWindowClosed => {
                 // Said, so that a log ending without it or another end of its own tells of a
@@ -15646,6 +15685,20 @@ mod tests {
             Some(Message::ToggleFullscreen)
         ));
     }
+
+    #[test]
+    fn a_window_closed_is_no_longer_kept_for_title_bars() {
+        let dir = tempfile::tempdir().expect("a folder");
+        let mut shell = fullscreen_shell(dir.path());
+        let (first, second) = (window::Id::unique(), window::Id::unique());
+        let _ = shell.update(Message::TitleBarWindowOpened(first));
+        let _ = shell.update(Message::TitleBarWindowOpened(second));
+        assert_eq!(shell.open_windows.len(), 2);
+        let _ = shell.update(Message::TitleBarWindowClosed(first));
+        assert!(!shell.open_windows.contains(&first));
+        assert!(shell.open_windows.contains(&second));
+    }
+
     fn fullscreen_shell(dir: &std::path::Path) -> Shell {
         Shell::with_app(App::new(AppConfig {
             profiles_file: dir.join("profiles.toml"),

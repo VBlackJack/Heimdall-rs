@@ -50,7 +50,8 @@ Alléger un poste Windows personnel ? Voir [Pack de nettoyage d'un poste Windows
 | `heimdall-twinshell` | Bibliothèque de commandes |
 | `heimdall-remote` | VNC, Telnet, série |
 | `heimdall-tls` | Vérification du certificat serveur de FTPS et de VNC sur TLS |
-| `heimdall-dragout` | Fichiers locaux glissés vers l'Explorateur, seul code unsafe (appels au shell Windows) |
+| `heimdall-dragout` | Fichiers locaux glissés vers l'Explorateur ; code unsafe, exception approuvée (appels au shell Windows) |
+| `heimdall-titlebar` | Barres de titre aux couleurs du thème ; code unsafe, exception approuvée (un seul appel à `DwmSetWindowAttribute`, comme le `WindowThemeHelper` C#) |
 | `heimdall-ui` | L'application de bureau |
 | `xtask` | Outillage de développement |
 
