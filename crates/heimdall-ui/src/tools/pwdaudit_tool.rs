@@ -265,7 +265,7 @@ impl PwdAuditPane {
             policy.into(),
         ]));
         let body: Element<'a, Message> = match &self.analysis {
-            None => crypto_parts::empty_state(fl!("ui-tool-pwdaudit-empty")),
+            None => crypto_parts::plain_empty_state(fl!("ui-tool-pwdaudit-empty")),
             Some(analysis) => Self::analysis_view(analysis),
         };
         super::content_column(column![head, body].spacing(spacing::MD))

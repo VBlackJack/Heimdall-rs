@@ -41,15 +41,16 @@ const PALETTE_WIDTH: f32 = 550.0;
 /// 2026-10-25: the field, the list and the hints together.
 const PALETTE_HEIGHT: f32 = 520.0;
 
-/// Room the field takes at the top, padding and line included.
-const FIELD_AREA_HEIGHT: f32 = 46.0;
+/// About how tall a result line is (two lines of text and the padding), used only to let a
+/// short list shrink the palette; a wrong guess leaves a gap or a scroll, never a clipped
+/// footer.
+const ROW_HEIGHT_ESTIMATE: f32 = 48.0;
 
-/// Room the hints take at the foot, padding and line included, as the C# `Padding="14,6"`
-/// around a caption.
-const HINTS_AREA_HEIGHT: f32 = 32.0;
+/// About how tall a section header is, as above.
+const HEADER_HEIGHT_ESTIMATE: f32 = 28.0;
 
-/// Tallest the list grows before it scrolls: what the field and the hints leave.
-const LIST_HEIGHT: f32 = PALETTE_HEIGHT - FIELD_AREA_HEIGHT - HINTS_AREA_HEIGHT;
+/// About how tall the field, the hints and their lines are together, as above.
+const CHROME_HEIGHT_ESTIMATE: f32 = 90.0;
 
 /// Room around the hints, as the C# `Padding="14,6"`.
 const HINTS_PADDING: [f32; 2] = [6.0, 14.0];
@@ -409,12 +410,15 @@ pub fn view<'a>(palette: &Palette, rows: &[QuickRow], theme: &Theme) -> Element<
         fl!("ui-palette-placeholder")
     };
     let mut list = column![];
+    let mut wanted = CHROME_HEIGHT_ESTIMATE;
     let mut section: Option<&QuickGroup> = None;
     for (index, row) in rows.iter().enumerate() {
         if section != Some(&row.group) {
             list = list.push(header(&row.group));
+            wanted += HEADER_HEIGHT_ESTIMATE;
             section = Some(&row.group);
         }
+        wanted += ROW_HEIGHT_ESTIMATE;
         list = list.push(result_line(
             row,
             index,
@@ -451,14 +455,22 @@ pub fn view<'a>(palette: &Palette, rows: &[QuickRow], theme: &Theme) -> Element<
     let body: Element<'a, Message> = if rows.is_empty() {
         container(text(fl!("ui-palette-nothing")).size(font_size::CAPTION))
             .padding(spacing::SM)
+            .height(Length::Fill)
             .into()
     } else {
-        container(styles::scroll(list).height(Length::Shrink))
-            .max_height(LIST_HEIGHT)
+        container(styles::scroll(list).height(Length::Fill))
+            .height(Length::Fill)
             .padding([0.0, LIST_SIDE_MARGIN])
             .into()
     };
-    // The hints stay under the list, whatever its length: the list scrolls, they do not.
+    // A column of a set height, the list taking what the field (and the split label) and the
+    // hints leave: the list scrolls and shrinks, they keep their own size.
+    let split_label = if palette.split.is_some() {
+        HEADER_HEIGHT_ESTIMATE
+    } else {
+        0.0
+    };
+    let height = (wanted + split_label).min(PALETTE_HEIGHT);
     container(
         column![
             container(head).padding(spacing::SM),
@@ -472,10 +484,12 @@ pub fn view<'a>(palette: &Palette, rows: &[QuickRow], theme: &Theme) -> Element<
             )
             .padding(HINTS_PADDING),
         ]
-        .width(Length::Fill),
+        .width(Length::Fill)
+        .height(Length::Fill),
     )
-    .width(PALETTE_WIDTH)
-    .max_height(PALETTE_HEIGHT)
+    .width(Length::Fill)
+    .max_width(PALETTE_WIDTH)
+    .height(height)
     .style(styles::panel)
     .into()
 }

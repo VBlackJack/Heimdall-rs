@@ -43,9 +43,12 @@ const CARD_GAP: f32 = 8.0;
 /// Padding inside a card, as the C# card's presenter (10 across, 8 down).
 const CARD_PADDING: [f32; 2] = [8.0, 10.0];
 
+/// Width of the two lines of a card's border, one above and one below.
+const CARD_BORDER_LINES: f32 = 2.0;
+
 /// Height of a card: its icon square, the padding above and below it, and the border's two
 /// lines, as the C# card measures (50 px in the audit of 2026-10-25).
-pub const CARD_HEIGHT: f32 = CARD_ICON_BOX + 2.0 * CARD_PADDING[0] + 2.0;
+pub const CARD_HEIGHT: f32 = CARD_ICON_BOX + 2.0 * CARD_PADDING[0] + CARD_BORDER_LINES;
 
 /// Room kept at a card's right for its pin, as the C# content's margin.
 const CARD_PIN_ROOM: f32 = 24.0;
@@ -81,9 +84,9 @@ const PIN_UNSET_OPACITY: f32 = 0.4;
 /// Widest the Tools page's search is, as the C#'s `MaxWidth`.
 const SEARCH_MAX_WIDTH: f32 = 400.0;
 
-/// How wide the Tools page's search is while nothing is typed: the C# box is as wide as its
-/// watermark (`HorizontalAlignment="Left"` in a `DockPanel`), about 100 px.
-const SEARCH_EMPTY_WIDTH: f32 = 100.0;
+/// Room the Tools page's search keeps around its text: its padding on both sides and its
+/// border.
+const SEARCH_CHROME_WIDTH: f32 = 24.0;
 
 /// How much wider the search grows for each character typed, as a WPF `TextBox` of natural
 /// width grows with its text (`FontSizeBody`, about 7 px a character).
@@ -477,7 +480,7 @@ fn page_header<'a>(app: &App, search: &str, count: usize) -> Element<'a, Message
                     .style(styles::text_input)
                     .size(font_size::BODY)
                     .padding(super::INPUT_PADDING)
-                    .width(search_width(search))
+                    .width(search_width(search, &fl!("ui-tools-search-placeholder")))
                     .on_input(Message::ToolsSearch),
                 iced::widget::space::horizontal(),
                 text(fl!("ui-tools-count", count = count))
@@ -514,10 +517,12 @@ fn page_header<'a>(app: &App, search: &str, count: usize) -> Element<'a, Message
     .into()
 }
 
-/// How wide the Tools page's search is with `typed` in it: as wide as its watermark when
-/// empty, growing with what is typed up to [`SEARCH_MAX_WIDTH`], as the C# box.
-fn search_width(typed: &str) -> f32 {
-    (SEARCH_EMPTY_WIDTH + SEARCH_CHAR_WIDTH * typed.chars().count() as f32).min(SEARCH_MAX_WIDTH)
+/// How wide the Tools page's search is with `typed` in it: as wide as its watermark
+/// (`placeholder`) when empty, growing with what is typed up to [`SEARCH_MAX_WIDTH`], as the
+/// C# box.
+fn search_width(typed: &str, placeholder: &str) -> f32 {
+    let chars = typed.chars().count().max(placeholder.chars().count());
+    (SEARCH_CHROME_WIDTH + SEARCH_CHAR_WIDTH * chars as f32).min(SEARCH_MAX_WIDTH)
 }
 
 /// The identifier of the Tools page's search.
