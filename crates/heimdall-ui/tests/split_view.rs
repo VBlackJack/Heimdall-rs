@@ -1090,7 +1090,7 @@ fn the_pane_shortcuts_move_the_keyboard_and_terminals_leave_them_to_the_window()
 }
 
 /// Quick Connect's hints, as the C# palette's foot.
-const PALETTE_HINTS: &str = "Enter = open · Ctrl+Enter = split · tools = all tools · Esc = close";
+const PALETTE_HINTS: &str = "Enter = open · Ctrl+Enter = split · tools = all tools · ping 1.1.1.1 = launch a tool · Esc = close";
 
 #[test]
 fn split_mode_says_so_and_lists_the_sessions_open_to_merge_without_reconnecting() {
@@ -1113,6 +1113,10 @@ fn split_mode_says_so_and_lists_the_sessions_open_to_merge_without_reconnecting(
             ui.find(line).expect(line);
         }
         assert!(ui.find("↔ left pane").is_err(), "not the tab split");
+        // The hints stay inside the palette's 520 px, below the list.
+        let top = ui.find("Split Mode").expect("label").bounds();
+        let hints = ui.find(PALETTE_HINTS).expect("hints").bounds();
+        assert!(hints.y + hints.height - top.y <= 520.0, "{top:?} {hints:?}");
     }
     let _ = shell.update(Message::PaletteChoose(0));
     let layout = layout_of(&shell, left).expect("split");

@@ -18,9 +18,10 @@
 //! state of a page that scrolls, a line said in a colour, a box of a colour of its own.
 
 use iced::widget::text_editor::{self, Content};
-use iced::widget::{container, text};
-use iced::{Background, Border, Color, Element, Length, Theme};
+use iced::widget::{column, container, text};
+use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
+use crate::icons::{self, Icon, Tint};
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, radius};
@@ -39,18 +40,48 @@ pub enum Tone {
     Error,
 }
 
-/// What a tool shows before it has a result, as the C# `ToolEmptyStateStyle`: its hint,
-/// centred across. These tools' pages scroll, which [`super::empty_state`], filling the
-/// height left, cannot be part of.
+/// Side of the key above an empty state's hint, as the C# `IconSizeEmptyState`.
+const EMPTY_ICON_SIDE: f32 = 32.0;
+
+/// How strongly the key shows, as the C# `TextDisabledBrush` it is drawn in.
+const EMPTY_ICON_OPACITY: f32 = 0.5;
+
+/// Room under the key, as the C# `ToolEmptyStateIconStyle`'s margin.
+const EMPTY_ICON_GAP: f32 = 8.0;
+
+/// What a tool shows before it has a result, as the C# `ToolEmptyStateStyle`: a key over its
+/// hint, centred across (the C# hash, HMAC and JWT pages' `E8D7` glyph). These tools' pages
+/// scroll, which [`super::empty_state`], filling the height left, cannot be part of.
 pub fn empty_state<'a>(hint: String) -> Element<'a, Message> {
-    container(
-        text(hint)
-            .size(font_size::BODY_LARGE)
-            .style(text::secondary),
-    )
-    .padding(super::EMPTY_STATE_PADDING)
-    .center_x(Length::Fill)
-    .into()
+    framed(Some(hint), true)
+}
+
+/// [`empty_state`] without the key, as the C# password audit page, which has none.
+pub fn plain_empty_state<'a>(hint: String) -> Element<'a, Message> {
+    framed(Some(hint), false)
+}
+
+fn framed<'a>(hint: Option<String>, key: bool) -> Element<'a, Message> {
+    let mut lines = column![].spacing(EMPTY_ICON_GAP).align_x(Alignment::Center);
+    if key {
+        lines = lines.push(icons::faded(
+            Icon::ToolSshKeyGenerator,
+            Tint::Secondary,
+            EMPTY_ICON_SIDE,
+            EMPTY_ICON_OPACITY,
+        ));
+    }
+    if let Some(hint) = hint {
+        lines = lines.push(
+            text(hint)
+                .size(font_size::BODY_LARGE)
+                .style(text::secondary),
+        );
+    }
+    container(lines)
+        .padding(super::EMPTY_STATE_PADDING)
+        .center_x(Length::Fill)
+        .into()
 }
 
 /// `said` in its tone, at `size`, semibold when `strong`, as the C# result lines.

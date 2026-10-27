@@ -1738,7 +1738,7 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
     use heimdall_ui::tree_view::TreeMenu;
 
     const FIELD: &str = "Search host, IP, or tool... (Ctrl+K)";
-    const HINTS: &str = "Enter = open · Ctrl+Enter = split · tools = all tools · Esc = close";
+    const HINTS: &str = "Enter = open · Ctrl+Enter = split · tools = all tools · ping 1.1.1.1 = launch a tool · Esc = close";
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     assert!(simulator(&shell).find(FIELD).is_err(), "closed at first");

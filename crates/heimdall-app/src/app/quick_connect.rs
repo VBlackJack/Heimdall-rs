@@ -523,11 +523,14 @@ impl App {
                 .collect();
             rows.extend(partners.into_iter().chain(others).map(QuickRow::profile));
         } else {
-            rows.extend(
-                self.first_profiles(Some(FIRST_SESSIONS))
-                    .into_iter()
-                    .map(QuickRow::profile),
-            );
+            // A session in no folder after those in one, as the tree lists "(No Folder)"
+            // last, so the first section is a folder's, not a loose entry (a saved tool).
+            let (loose, in_folder): (Vec<_>, Vec<_>) = self
+                .first_profiles(Some(FIRST_SESSIONS))
+                .into_iter()
+                .map(QuickRow::profile)
+                .partition(|row| row.group == QuickGroup::Servers);
+            rows.extend(in_folder.into_iter().chain(loose));
         }
         rows.extend(
             self.recent_tools()

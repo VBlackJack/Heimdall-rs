@@ -114,6 +114,13 @@ impl<'a> Ellipsis<'a> {
         self
     }
 
+    /// The text's line height.
+    #[must_use]
+    pub fn line_height(mut self, line_height: impl Into<LineHeight>) -> Self {
+        self.line_height = line_height.into();
+        self
+    }
+
     /// The text's width: as wide as the text, at most its room ([`Length::Shrink`], the
     /// default), or the whole of its room, as a column's cell.
     #[must_use]

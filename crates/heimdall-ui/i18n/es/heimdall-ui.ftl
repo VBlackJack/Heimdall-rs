@@ -1357,7 +1357,7 @@ ui-palette-rdp-to = [RDP] Conectar a { $target }
 ui-palette-quick-connect = Conexión rápida
 ui-palette-nothing = No se encontraron resultados. Prueba con un host, ssh usuario@host o tools.
 ui-palette-mode-split = Modo dividido
-ui-palette-hints = Intro = abrir · Ctrl+Intro = dividir · tools = todas las herramientas · Esc = cerrar
+ui-palette-hints = Intro = abrir · Ctrl+Intro = dividir · tools = todas las herramientas · ping 1.1.1.1 = iniciar una herramienta · Esc = cerrar
 ui-palette-servers = Servidores
 ui-palette-active-sessions = Sesiones activas
 ui-palette-recent-tools = Herramientas recientes
@@ -4080,7 +4080,7 @@ ui-profile-path-session-citrix = Sesión Citrix
 ui-profile-path-session-local = Shell local
 
 ui-tool-sshaudit-name = Auditor de claves SSH
-ui-tool-sshaudit-description = Analiza la seguridad de las claves SSH y ofrece recomendaciones
+ui-tool-sshaudit-description = Auditor de claves SSH con calificación de fortaleza del algoritmo
 ui-tool-sshaudit-title = Auditor de claves SSH
 ui-tool-sshaudit-input = Pega la clave SSH (pública o privada, formato OpenSSH o PEM)
 ui-tool-sshaudit-browse = Examinar...
@@ -4137,7 +4137,7 @@ ui-tool-sshaudit-help =
     - Seguridad del formato (cifrado PEM antiguo vs OpenSSH moderno)
 
 ui-tool-tlsaudit-name = Auditor TLS
-ui-tool-tlsaudit-description = Audita los protocolos TLS, conjuntos de cifrado y certificados
+ui-tool-tlsaudit-description = Auditor de configuración TLS/SSL con análisis de conjuntos de cifrado
 ui-tool-tlsaudit-title = Auditor SSL/TLS
 ui-tool-tlsaudit-host = Host
 ui-tool-tlsaudit-port = Puerto
@@ -4194,8 +4194,8 @@ ui-tool-tlsaudit-help =
     - Inspección del certificado del servidor (sujeto, emisor, validez, longitud de clave)
     - Cálculo de calificación de seguridad (de A+ a F) y recomendaciones
 
-ui-tool-dnssec-name = Verificador de seguridad DNS
-ui-tool-dnssec-description = Comprueba los registros SPF, DKIM, DMARC, CAA, DNSSEC y MX
+ui-tool-dnssec-name = Comprobador de seguridad DNS
+ui-tool-dnssec-description = Comprobador de seguridad DNS para registros SPF, DKIM y DMARC
 ui-tool-dnssec-title = Verificador de seguridad DNS
 ui-tool-dnssec-domain = Dominio
 ui-tool-dnssec-domain-watermark = ejemplo.es
@@ -4296,7 +4296,7 @@ ui-tool-cve-help =
 ## La herramienta de credenciales predeterminadas, para el catálogo de
 ## DefaultCredentialView en C#, nunca para los intentos de inicio de sesión que
 ## realiza: solo lista, decisión del propietario (2026-10-17, punto 10).
-ui-tool-defaultcreds-name = Credenciales predeterminadas
+ui-tool-defaultcreds-name = Escáner de credenciales predeterminadas
 ui-tool-defaultcreds-description = Lista las credenciales predeterminadas conocidas de los proveedores para un producto o servicio
 ui-tool-defaultcreds-title = Credenciales predeterminadas
 ui-tool-defaultcreds-note = Esta herramienta lista las credenciales predeterminadas conocidas de los proveedores. Nunca intenta iniciar sesión con ellas, para evitar bloqueos de cuentas e intentos de inicio de sesión no autorizados.
@@ -4329,7 +4329,7 @@ ui-tool-defaultcreds-help =
     original, solo lista el catálogo, para evitar bloqueos de cuentas e intentos de
     inicio de sesión no autorizados.
 ui-tool-secnumcloud-name = Auditoría SecNumCloud
-ui-tool-secnumcloud-description = Auditoría de cumplimiento SecNumCloud v3.2 en red, criptografía, accesos y operaciones
+ui-tool-secnumcloud-description = Auditoría de cumplimiento SecNumCloud v3.2 en red, criptografía, acceso y operaciones
 ui-tool-secnumcloud-title = Auditoría de cumplimiento SecNumCloud v3.2
 ui-tool-secnumcloud-scope-label = Ámbito de la auditoría
 ui-tool-secnumcloud-scope-placeholder = Un host o dirección IP por línea
@@ -4504,7 +4504,7 @@ ui-tool-secnumcloud-html-generated-by = Generado por Heimdall
     - SMBv1 detectado (vulnerabilidad EternalBlue)
 
 ui-tool-http-name = Códigos de estado HTTP
-ui-tool-http-description = Guía de referencia de códigos de estado HTTP con filtrado
+ui-tool-http-description = Referencia de códigos de estado HTTP con descripciones y categorías
 ui-tool-http-filter-placeholder = Buscar por código o descripción...
 ui-tool-http-copy-hint = Clic para copiar
 ui-tool-http-no-results = No hay códigos coincidentes
@@ -4538,7 +4538,7 @@ ui-tool-net-no-value = -
 ui-tool-net-millis = { $ms } ms
 
 ui-tool-tcpping-name = Ping TCP
-ui-tool-tcpping-description = Medición de la latencia de conexión TCP a un host y puerto
+ui-tool-tcpping-description = Mide la latencia del intercambio TCP a un host:puerto con estadísticas
 ui-tool-tcpping-host-label = Host
 ui-tool-tcpping-host-placeholder = example.com o 192.168.1.1
 ui-tool-tcpping-port-label = Puerto
@@ -4569,7 +4569,7 @@ ui-tool-tcpping-help =
     de intervalo, y cada uno dispone de cinco segundos para obtener respuesta.
 
 ui-tool-wol-name = Wake-on-LAN
-ui-tool-wol-description = Envío de paquetes mágicos para encender dispositivos en la red
+ui-tool-wol-description = Envía un paquete mágico para activar una máquina remota desde suspensión o espera
 ui-tool-wol-mac-label = Dirección MAC
 ui-tool-wol-mac-placeholder = AA:BB:CC:DD:EE:FF
 ui-tool-wol-broadcast-label = Dirección de difusión
@@ -4597,7 +4597,7 @@ ui-tool-wol-help =
     4. Haga clic en Enviar Wake-on-LAN.
 
 ui-tool-whois-name = Consulta WHOIS
-ui-tool-whois-description = Consulta de servidores WHOIS para datos de registro de dominios e IP
+ui-tool-whois-description = Consulta de registro de dominio e IP WHOIS
 ui-tool-whois-domain-placeholder = example.com o 1.1.1.1
 ui-tool-whois-btn-lookup = Consultar
 ui-tool-whois-btn-copy = Copiar informe
@@ -4625,7 +4625,7 @@ ui-tool-whois-help =
     - La consulta completa dispone de 10 segundos, y se conservan como máximo 64 KiB de la respuesta.
 
 ui-tool-banner-name = Captura de banners
-ui-tool-banner-description = Sondeo de puertos de red para capturar banners y versiones de software
+ui-tool-banner-description = Captura de banners TCP para identificación de servicios
 ui-tool-banner-host-label = Host de destino
 ui-tool-banner-host-placeholder = example.com o 192.168.1.1
 ui-tool-banner-ports-label = Puertos
@@ -4657,8 +4657,8 @@ ui-tool-banner-help =
     - Detección automática de huellas (OpenSSH, Apache, nginx, MySQL, Redis, etc.)
     - Exportación de resultados a CSV o texto formateado
 
-ui-tool-ping-name = Monitor Ping
-ui-tool-ping-description = Monitor de ping ICMP continuo con estadísticas de latencia en vivo
+ui-tool-ping-name = Monitor de ping
+ui-tool-ping-description = Monitor de ping continuo con gráfico de latencia y estadísticas
 ui-tool-ping-host = Host de destino
 ui-tool-ping-host-watermark = example.com o 192.168.1.1
 ui-tool-ping-timeout = Tiempo de espera (ms)
@@ -4693,7 +4693,7 @@ ui-tool-ping-help =
     - Exportación de resultados a texto formateado o planilla CSV
 
 ui-tool-dns-name = Consulta DNS
-ui-tool-dns-description = Consultar tipos de registros DNS en servidores estándar o personalizados
+ui-tool-dns-description = Consulta de registros DNS con selección de servidor personalizado
 ui-tool-dns-host = Dominio o nombre de host
 ui-tool-dns-host-watermark = example.com
 ui-tool-dns-type = Tipo de registro
@@ -4715,8 +4715,8 @@ ui-tool-dns-help =
     - Tiempo de respuesta y seguimiento de la cadena de alias
     - Salida formateada y clara con copia al portapapeles con un clic
 
-ui-tool-dnsbatch-name = Resolución DNS por lotes
-ui-tool-dnsbatch-description = Resolver múltiples nombres de host simultáneamente en direcciones IPv4 e IPv6
+ui-tool-dnsbatch-name = Resolutor DNS por lotes
+ui-tool-dnsbatch-description = Resuelve varios nombres de host a direcciones IP simultáneamente
 ui-tool-dnsbatch-hostnames-label = Nombres de host a resolver (uno por línea o separados por comas)
 ui-tool-dnsbatch-resolve = Resolver lote
 ui-tool-dnsbatch-copy-csv = Exportar CSV
@@ -4740,7 +4740,7 @@ ui-tool-dnsbatch-help =
     - Exportación a planilla CSV con estado y duración de respuesta
 
 ui-tool-portscan-name = Escáner de puertos
-ui-tool-portscan-description = Escanear puertos TCP de destino para detectar servicios abiertos y filtrado de firewall
+ui-tool-portscan-description = Escáner de puertos con detección de servicios y compatibilidad con rangos
 ui-tool-portscan-host = Host de destino
 ui-tool-portscan-host-watermark = example.com o 192.168.1.1
 ui-tool-portscan-ports = Rango de puertos
@@ -4772,8 +4772,8 @@ ui-tool-portscan-help =
     - Clasificación en tiempo real en Abierto, Cerrado y Filtrado
     - Resumen de métricas y exportación CSV
 
-ui-tool-headers-name = Analizador de cabeceras HTTP
-ui-tool-headers-description = Inspeccionar cabeceras HTTP, detectar divulgación de información y puntuar seguridad
+ui-tool-headers-name = Analizador de encabezados HTTP
+ui-tool-headers-description = Analizador de encabezados de seguridad HTTP con calificación y recomendaciones
 ui-tool-headers-url = URL de destino
 ui-tool-headers-url-watermark = https://example.com
 ui-tool-headers-analyze = Analizar cabeceras
@@ -4836,8 +4836,8 @@ ui-tool-headers-help =
     - Divulgación de información del servidor (Server, X-Powered-By, X-AspNet-Version)
 
 ## Inspector de certificados SSL/TLS
-ui-tool-cert-name = Inspector de certificados SSL/TLS
-ui-tool-cert-description = Inspeccionar cadenas de certificados SSL/TLS, SAN, validez y propiedades criptográficas
+ui-tool-cert-name = Inspector de certificados
+ui-tool-cert-description = Inspector de certificados SSL/TLS con validación de cadena
 ui-tool-cert-host = Host
 ui-tool-cert-host-watermark = example.com o IP
 ui-tool-cert-ports = Puertos
@@ -4865,8 +4865,8 @@ ui-tool-cert-status-expired = Caducado
 ui-tool-cert-error-host-required = Introduzca el nombre del host de destino.
 
 ## Traceroute TCP
-ui-tool-tcptrace-name = Traceroute TCP
-ui-tool-tcptrace-description = Descubrir los saltos de red y su latencia en la ruta hacia un destino
+ui-tool-tcptrace-name = Traceroute
+ui-tool-tcptrace-description = Traceroute TCP con latencia por salto y resolución de nombre de host
 ui-tool-tcptrace-host = Host de destino
 ui-tool-tcptrace-host-watermark = example.com o IP
 ui-tool-tcptrace-max-hops = Saltos máximos
@@ -4884,8 +4884,8 @@ ui-tool-tcptrace-status-destination = Destino
 ui-tool-tcptrace-error-host-required = Introduzca un host de destino.
 
 ## Explorador MIB SNMP
-ui-tool-snmpwalk-name = Explorador MIB SNMP
-ui-tool-snmpwalk-description = Consultar y recorrer árboles MIB SNMPv2c para métricas de sistema y de red
+ui-tool-snmpwalk-name = Explorador SNMP
+ui-tool-snmpwalk-description = Explorador del árbol SNMP con pruebas de cadena de comunidad
 ui-tool-snmpwalk-host = Host de destino
 ui-tool-snmpwalk-host-watermark = 192.168.1.1
 ui-tool-snmpwalk-community = Comunidad
@@ -4900,8 +4900,8 @@ ui-tool-snmpwalk-col-value = Valor
 ui-tool-snmpwalk-error-host-required = Introduzca el host SNMP de destino.
 
 ## Monitor de tabla ARP
-ui-tool-arpmon-name = Monitor de tabla ARP
-ui-tool-arpmon-description = Inspeccionar la caché ARP local, identificar fabricantes y detectar anomalías de red
+ui-tool-arpmon-name = Monitor ARP
+ui-tool-arpmon-description = Monitor de tabla ARP en tiempo real con detección de suplantación
 ui-tool-arpmon-scan = Analizar ahora
 ui-tool-arpmon-scanning = Analizando...
 ui-tool-arpmon-copy-csv = Exportar CSV
@@ -4917,8 +4917,8 @@ ui-tool-arpmon-status-changed = Modificado
 ui-tool-arpmon-status-conflict = Conflicto
 
 ## Probador de salida del cortafuegos
-ui-tool-fwtest-name = Probador de salida del cortafuegos
-ui-tool-fwtest-description = Probar la conectividad saliente a través de los puertos del cortafuegos, con medición de latencia
+ui-tool-fwtest-name = Probador de cortafuegos
+ui-tool-fwtest-description = Probador de reglas de cortafuegos para comprobaciones masivas de accesibilidad de puertos
 ui-tool-fwtest-hosts = Hosts de destino
 ui-tool-fwtest-hosts-watermark = Un host por línea, o separados por comas (p. ej. 1.1.1.1, 8.8.8.8)
 ui-tool-fwtest-ports = Puertos a probar
@@ -4934,7 +4934,7 @@ ui-tool-fwtest-error-hosts-required = Introduzca al menos un host de destino.
 
 ## Cartografía de red
 ui-tool-netmap-name = Cartografía de red
-ui-tool-netmap-description = Descubrir los hosts activos de una subred y sus servicios abiertos, y clasificar sus roles
+ui-tool-netmap-description = Mapeador de descubrimiento y topología de red con identificación de dispositivos
 ui-tool-netmap-subnet = Subred (CIDR)
 ui-tool-netmap-subnet-watermark = 192.168.1.0/24
 ui-tool-netmap-discover = Descubrir la red
@@ -4953,7 +4953,7 @@ ui-tool-netmap-error-cidr-required = Introduzca una subred válida en notación 
 
 ## Puertos abiertos
 ui-tool-openports-name = Puertos abiertos
-ui-tool-openports-description = Inspeccionar puertos TCP y UDP activos y sockets con identificación de procesos
+ui-tool-openports-description = Lista todos los puertos TCP/UDP abiertos con información de proceso (alternativa nativa a netstat)
 ui-tool-openports-title = Puertos abiertos
 ui-tool-openports-help =
     Lista los puertos TCP y UDP abiertos de este equipo con el proceso propietario de cada uno.
@@ -4981,7 +4981,7 @@ ui-tool-openports-col-process = Proceso
 
 ## Interfaces de red
 ui-tool-netif-name = Interfaces de red
-ui-tool-netif-description = Listar adaptadores de red con velocidad, dirección MAC, IPv4, puerta de enlace y estado DHCP
+ui-tool-netif-description = Lista todos los adaptadores de red con IP, MAC, velocidad, estado e información DHCP
 ui-tool-netif-title = Interfaces de red
 ui-tool-netif-help =
     Lista las interfaces de red de este equipo tal como las describe el sistema: tipo, estado operativo, velocidad del enlace, dirección MAC, dirección IPv4, máscara, puerta de enlace y DHCP.
@@ -5007,7 +5007,7 @@ ui-tool-netif-col-dhcp = DHCP
 
 ## Tabla de rutas
 ui-tool-routes-name = Tabla de rutas
-ui-tool-routes-description = Mostrar la tabla de rutas IPv4 activas con destinos, máscaras, puertas de enlace y métricas
+ui-tool-routes-description = Muestra la tabla de enrutamiento IPv4 con destino, máscara, pasarela, interfaz y métrica
 ui-tool-routes-title = Tabla de rutas
 ui-tool-routes-help =
     Muestra la tabla de enrutamiento IPv4 activa: destino, máscara de red, puerta de enlace, dirección de la interfaz y métrica de cada ruta.
@@ -5028,8 +5028,8 @@ ui-tool-routes-col-interface = Interfaz
 ui-tool-routes-col-metric = Métrica
 
 ## Redes Wi-Fi
-ui-tool-wifi-name = Redes Wi-Fi
-ui-tool-wifi-description = Escanear redes inalámbricas cercanas con BSSID, intensidad de señal, canal y cifrado
+ui-tool-wifi-name = Redes WiFi
+ui-tool-wifi-description = Escanea redes WiFi cercanas con SSID, intensidad de señal, canal y cifrado
 ui-tool-wifi-title = Redes Wi-Fi
 ui-tool-wifi-help =
     Escanea las redes Wi-Fi cercanas mediante netsh wlan show networks mode=bssid, o nmcli en Linux.
@@ -5101,7 +5101,7 @@ ui-tool-hosts-last-modified = Última modificación: { $time }
 
 ## Panel de estado de servicios
 ui-tool-services-name = Panel de estado de servicios
-ui-tool-services-description = Supervisar los servicios en segundo plano de Windows y controlar su estado
+ui-tool-services-description = Panel de estado de servicios de Windows con controles de inicio/detención
 ui-tool-services-title = Panel de estado de servicios
 ui-tool-services-help =
     Supervisa el estado de los servicios de Windows con controles de inicio y detención.
@@ -5349,7 +5349,7 @@ ui-tool-snmpwalk-community-accepted = Aceptada
 ui-tool-snmpwalk-community-rejected = Sin respuesta
 ## Visor de registros
 ui-tool-logview-name = Visor de registros
-ui-tool-logview-description = Ver un archivo de registro, filtrar sus líneas y seguir lo que se le añade
+ui-tool-logview-description = Visor de archivos de registro en tiempo real con filtrado y modo de seguimiento
 ui-tool-logview-title = Visor de registros / seguimiento
 ui-tool-logview-help =
     Visor de registros
@@ -5513,7 +5513,7 @@ ui-tool-diagram-error-too-large = el archivo es demasiado grande para abrirlo
 
 ## Biblioteca de comandos
 ui-tool-cmdlib-name = Biblioteca de comandos
-ui-tool-cmdlib-description = Comandos de administración, red y seguridad con sus valores rellenados
+ui-tool-cmdlib-description = Biblioteca con búsqueda de más de 500 comandos PowerShell y Bash con generación parametrizada
 ui-tool-cmdlib-title = Biblioteca de comandos
 ui-tool-cmdlib-help =
     Biblioteca de comandos

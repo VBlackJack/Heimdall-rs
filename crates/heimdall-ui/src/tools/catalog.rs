@@ -26,6 +26,7 @@ use iced::widget::{
 };
 use iced::{Color, Element, Length, Theme};
 
+use crate::ellipsis;
 use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
 use crate::shell::Message;
@@ -41,6 +42,13 @@ const CARD_GAP: f32 = 8.0;
 
 /// Padding inside a card, as the C# card's presenter (10 across, 8 down).
 const CARD_PADDING: [f32; 2] = [8.0, 10.0];
+
+/// Width of the two lines of a card's border, one above and one below.
+const CARD_BORDER_LINES: f32 = 2.0;
+
+/// Height of a card: its icon square, the padding above and below it, and the border's two
+/// lines, as the C# card measures (50 px in the audit of 2026-10-25).
+pub const CARD_HEIGHT: f32 = CARD_ICON_BOX + 2.0 * CARD_PADDING[0] + CARD_BORDER_LINES;
 
 /// Room kept at a card's right for its pin, as the C# content's margin.
 const CARD_PIN_ROOM: f32 = 24.0;
@@ -60,21 +68,8 @@ const CARD_ICON_ALPHA: f32 = 0.12;
 /// Room between a card's icon and its text, as the C#'s.
 const CARD_ICON_GAP: f32 = 10.0;
 
-/// Height of a card's line of text, in sizes of its font, said outright so that the room
-/// kept for its lines is theirs exactly.
+/// Height of a card's line of text, in sizes of its font.
 const CARD_LINE_HEIGHT: f32 = 1.3;
-
-/// Room for a card's name: one line, as the C#'s.
-const CARD_NAME_HEIGHT: f32 = font_size::BODY * CARD_LINE_HEIGHT;
-
-/// Lines a card's description is drawn on. The C# trims it to one line with an ellipsis,
-/// which iced cannot draw: it wraps here, at word boundaries, and what does not fit is left
-/// to the card's tooltip, as the C# leaves it.
-pub const CARD_DESCRIPTION_LINES: f32 = 2.0;
-
-/// Room for a card's description.
-const CARD_DESCRIPTION_HEIGHT: f32 =
-    font_size::SMALL_CAPTION * CARD_LINE_HEIGHT * CARD_DESCRIPTION_LINES;
 
 /// Side of a card's pin, as the C# glyph's size.
 const PIN_SIDE: f32 = 12.0;
@@ -88,6 +83,17 @@ const PIN_UNSET_OPACITY: f32 = 0.4;
 
 /// Widest the Tools page's search is, as the C#'s `MaxWidth`.
 const SEARCH_MAX_WIDTH: f32 = 400.0;
+
+/// Room the Tools page's search keeps around its text: its padding on both sides and its
+/// border.
+const SEARCH_CHROME_WIDTH: f32 = 24.0;
+
+/// How much wider the search grows for each character typed, as a WPF `TextBox` of natural
+/// width grows with its text (`FontSizeBody`, about 7 px a character).
+const SEARCH_CHAR_WIDTH: f32 = 7.0;
+
+/// Height of the line under the Tools page's header, as the C# header's bottom border.
+const HEADER_RULE_HEIGHT: f32 = 1.0;
 
 /// Padding of the Tools page's header, as the C# (16 across, 12 above, 8 below).
 const PAGE_HEADER_PADDING: iced::Padding = iced::Padding {
@@ -463,22 +469,19 @@ pub fn pin_id(tool: ToolId) -> iced::widget::Id {
 /// lists, then the network context in the accent when a host would be inherited.
 fn page_header<'a>(app: &App, search: &str, count: usize) -> Element<'a, Message> {
     let has_target = super::inherited_host(app).is_some();
-    container(
+    let header = container(
         column![
             row![
                 text(fl!("ui-tools-page-title"))
                     .size(font_size::SUBTITLE)
                     .font(styles::SEMIBOLD),
-                container(
-                    text_input(&fl!("ui-tools-search-placeholder"), search)
-                        .id(search_id())
-                        .style(styles::text_input)
-                        .size(font_size::BODY)
-                        .padding(super::INPUT_PADDING)
-                        .on_input(Message::ToolsSearch),
-                )
-                .max_width(SEARCH_MAX_WIDTH)
-                .width(Length::Fill),
+                text_input(&fl!("ui-tools-search-placeholder"), search)
+                    .id(search_id())
+                    .style(styles::text_input)
+                    .size(font_size::BODY)
+                    .padding(super::INPUT_PADDING)
+                    .width(search_width(search, &fl!("ui-tools-search-placeholder")))
+                    .on_input(Message::ToolsSearch),
                 iced::widget::space::horizontal(),
                 text(fl!("ui-tools-count", count = count))
                     .size(font_size::CAPTION)
@@ -499,9 +502,27 @@ fn page_header<'a>(app: &App, search: &str, count: usize) -> Element<'a, Message
         .spacing(spacing::SM),
     )
     .padding(PAGE_HEADER_PADDING)
-    .width(Length::Fill)
-    .style(styles::strip)
+    .width(Length::Fill);
+    // On the window's own background, closed by a line, as the C# header's `SurfaceBrush` and
+    // bottom border.
+    column![
+        header,
+        container(
+            iced::widget::space()
+                .width(Length::Fill)
+                .height(HEADER_RULE_HEIGHT)
+        )
+        .style(styles::rule),
+    ]
     .into()
+}
+
+/// How wide the Tools page's search is with `typed` in it: as wide as its watermark
+/// (`placeholder`) when empty, growing with what is typed up to [`SEARCH_MAX_WIDTH`], as the
+/// C# box.
+fn search_width(typed: &str, placeholder: &str) -> f32 {
+    let chars = typed.chars().count().max(placeholder.chars().count());
+    (SEARCH_CHROME_WIDTH + SEARCH_CHAR_WIDTH * chars as f32).min(SEARCH_MAX_WIDTH)
 }
 
 /// The identifier of the Tools page's search.
@@ -572,9 +593,9 @@ fn cards<'a>(app: &App, tools: &[ToolId], gap: f32) -> Element<'a, Message> {
 }
 
 /// A tool's card, as the C# `CreateToolsTabCard`: its icon on its category's colour, its
-/// name on one line and its description on [`CARD_DESCRIPTION_LINES`], each cut at a word
-/// boundary when it is longer, and whole in the card's tooltip, as the C#'s; pressed, the
-/// tool opens; its pin at its top right pins or unpins it.
+/// name and its description, each on one line ended with an ellipsis when it is longer, and
+/// the description whole in the card's tooltip, as the C#'s; pressed, the tool opens; its
+/// pin at its top right pins or unpins it.
 fn card<'a>(tool: ToolId, favorite: bool) -> Element<'a, Message> {
     let category = tool.category();
     let icon = container(icons::icon(
@@ -593,24 +614,16 @@ fn card<'a>(tool: ToolId, favorite: bool) -> Element<'a, Message> {
         row![
             icon,
             column![
-                container(
-                    text(super::label(tool))
-                        .size(font_size::BODY)
-                        .font(styles::SEMIBOLD)
-                        .line_height(text::LineHeight::Relative(CARD_LINE_HEIGHT))
-                        .wrapping(text::Wrapping::WordOrGlyph),
-                )
-                .height(CARD_NAME_HEIGHT)
-                .clip(true),
-                container(
-                    text(super::description(tool))
-                        .size(font_size::SMALL_CAPTION)
-                        .style(text::secondary)
-                        .line_height(text::LineHeight::Relative(CARD_LINE_HEIGHT))
-                        .wrapping(text::Wrapping::WordOrGlyph),
-                )
-                .height(CARD_DESCRIPTION_HEIGHT)
-                .clip(true),
+                ellipsis::text(super::label(tool))
+                    .size(font_size::BODY)
+                    .font(styles::SEMIBOLD)
+                    .line_height(text::LineHeight::Relative(CARD_LINE_HEIGHT))
+                    .width(Length::Fill),
+                ellipsis::text(super::description(tool))
+                    .size(font_size::SMALL_CAPTION)
+                    .style(text::secondary)
+                    .line_height(text::LineHeight::Relative(CARD_LINE_HEIGHT))
+                    .width(Length::Fill),
             ]
             .width(Length::Fill),
         ]
@@ -622,6 +635,7 @@ fn card<'a>(tool: ToolId, favorite: bool) -> Element<'a, Message> {
         .align_y(iced::Alignment::Center),
     )
     .width(CARD_WIDTH)
+    .height(CARD_HEIGHT)
     .padding(CARD_PADDING)
     .style(styles::tool_card)
     .on_press(Message::OpenTool(tool));

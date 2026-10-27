@@ -450,6 +450,28 @@ fn the_palette_shows_the_sessions_by_folder_then_the_tools_used_lately() {
 }
 
 #[test]
+fn a_session_in_no_folder_comes_after_the_folders_whatever_its_name() {
+    let dir = tempfile::tempdir().expect("dir");
+    let app = app_with(
+        dir.path(),
+        vec![
+            ssh("scan", "Alpha scanner", "127.0.0.1", None),
+            ssh("web", "webserver", "10.0.0.8", Some("Production")),
+        ],
+    );
+    // The first section is a folder's, as the tree lists "(No Folder)" last, though the
+    // loose session's name sorts before every other.
+    assert_eq!(
+        lines(&app, ""),
+        [
+            (folder("Windows"), "Domain controller".to_owned()),
+            (folder("Production"), "webserver".to_owned()),
+            (QuickGroup::Servers, "Alpha scanner".to_owned()),
+        ]
+    );
+}
+
+#[test]
 fn the_tools_are_found_with_the_sessions_a_command_word_first() {
     let dir = tempfile::tempdir().expect("dir");
     let app = app_with(dir.path(), vec![ssh("u", "uuid box", "u.lab", Some("Lab"))]);

@@ -282,8 +282,9 @@ const MAX_FONT_SIZE: f32 = 28.0;
 /// Width of the font size field, as the C# one's.
 const FONT_SIZE_FIELD_WIDTH: f32 = 80.0;
 
-/// Room above Quick Connect.
-const PALETTE_TOP: f32 = 80.0;
+/// How strongly the window dims behind Quick Connect: lighter than behind a dialog, the
+/// palette being a launcher the window stays readable under.
+const PALETTE_SCRIM_ALPHA: f32 = 0.5;
 
 /// How long the pointer rests on the tree's search before its tooltip shows: the system's
 /// hover time, WPF's default for the C# box.
@@ -417,6 +418,32 @@ fn drop_layer<'a>(files: &heimdall_app::files::FilesPane, count: usize) -> Eleme
                 .style(styles::panel),
         )
         .center(Length::Fill),
+    )
+}
+
+/// Quick Connect over the window, centred and dimmed behind, as the C# popup
+/// (`Placement="Center"`); a click beside it closes it, one on it does not.
+fn palette_layer<'a>(
+    palette: &crate::palette::Palette,
+    rows: &[heimdall_app::QuickRow],
+    theme: &Theme,
+) -> Element<'a, Message> {
+    opaque(
+        mouse_area(
+            container(opaque(crate::palette::view(palette, rows, theme)))
+                .center(Length::Fill)
+                .style(|theme: &Theme| container::Style {
+                    background: Some(
+                        Color {
+                            a: PALETTE_SCRIM_ALPHA,
+                            ..styles::scrim(theme)
+                        }
+                        .into(),
+                    ),
+                    ..container::Style::default()
+                }),
+        )
+        .on_press(Message::PaletteClose),
     )
 }
 
@@ -5759,16 +5786,7 @@ impl Shell {
             .and_then(|(menu, at)| Some((self.open_menu_entries(menu)?, *at)));
         if let Some(palette) = self.palette.as_ref().filter(|_| !locked) {
             let rows = self.palette_rows(palette);
-            // At the top, as the C# palette; a click beside it closes it.
-            layers = layers.push(opaque(
-                mouse_area(
-                    container(crate::palette::view(palette, &rows, &self.theme()))
-                        .center_x(Length::Fill)
-                        .padding(PALETTE_TOP)
-                        .height(Length::Fill),
-                )
-                .on_press(Message::PaletteClose),
-            ));
+            layers = layers.push(palette_layer(palette, &rows, &self.theme()));
         }
         if let Some(overlay) = self.drop_overlay() {
             layers = layers.push(overlay);

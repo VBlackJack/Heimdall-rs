@@ -34,11 +34,43 @@ use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, radius, spacing};
 
-/// Widest the palette grows, as the C# one.
-const PALETTE_WIDTH: f32 = 600.0;
+/// Width of the palette, as the C# popup's `MinWidth="550"`.
+const PALETTE_WIDTH: f32 = 550.0;
 
-/// Tallest its list grows before it scrolls.
-const LIST_HEIGHT: f32 = 420.0;
+/// Height of the palette with a full list, as the C# window measured 520 px in the audit of
+/// 2026-10-25: the field, the list and the hints together.
+const PALETTE_HEIGHT: f32 = 520.0;
+
+/// About how tall a result line is (two lines of text and the padding), used only to let a
+/// short list shrink the palette; a wrong guess leaves a gap or a scroll, never a clipped
+/// footer.
+const ROW_HEIGHT_ESTIMATE: f32 = 48.0;
+
+/// About how tall a section header is, as above.
+const HEADER_HEIGHT_ESTIMATE: f32 = 28.0;
+
+/// About how tall the field, the hints and their lines are together, as above.
+const CHROME_HEIGHT_ESTIMATE: f32 = 90.0;
+
+/// Room around the hints, as the C# `Padding="14,6"`.
+const HINTS_PADDING: [f32; 2] = [6.0, 14.0];
+
+/// Room around a line's content, as the C# template's `Margin="10,6"`.
+const ROW_PADDING: [f32; 2] = [6.0, 10.0];
+
+/// Room kept at each side of the list, as the C# item container's `Margin="2,0"`.
+const LIST_SIDE_MARGIN: f32 = 2.0;
+
+/// Room around a section's header, as the C# `Padding="14,10,14,4"`.
+const HEADER_PADDING: iced::Padding = iced::Padding {
+    top: 10.0,
+    right: 14.0,
+    bottom: 4.0,
+    left: 14.0,
+};
+
+/// Height of the lines between the field, the list and the hints.
+const RULE_HEIGHT: f32 = 1.0;
 
 /// Side of a line's protocol icon, as the C# template's 14 by 14 `Path`.
 const ICON_SIDE: f32 = 14.0;
@@ -351,6 +383,7 @@ fn result_line<'a>(
         .align_y(Alignment::Center),
     )
     .width(Length::Fill)
+    .padding(ROW_PADDING)
     .style(styles::palette_row(chosen))
     .on_press(Message::PaletteChoose(index))
     .into()
@@ -364,11 +397,7 @@ fn header<'a>(group: &QuickGroup) -> Element<'a, Message> {
             .font(styles::SEMIBOLD)
             .style(text::secondary),
     )
-    .padding(iced::Padding {
-        top: spacing::SM,
-        left: spacing::SM,
-        ..iced::Padding::ZERO
-    })
+    .padding(HEADER_PADDING)
     .into()
 }
 
@@ -380,13 +409,16 @@ pub fn view<'a>(palette: &Palette, rows: &[QuickRow], theme: &Theme) -> Element<
     } else {
         fl!("ui-palette-placeholder")
     };
-    let mut list = column![].spacing(spacing::XS / 2.0);
+    let mut list = column![];
+    let mut wanted = CHROME_HEIGHT_ESTIMATE;
     let mut section: Option<&QuickGroup> = None;
     for (index, row) in rows.iter().enumerate() {
         if section != Some(&row.group) {
             list = list.push(header(&row.group));
+            wanted += HEADER_HEIGHT_ESTIMATE;
             section = Some(&row.group);
         }
+        wanted += ROW_HEIGHT_ESTIMATE;
         list = list.push(result_line(
             row,
             index,
@@ -395,41 +427,70 @@ pub fn view<'a>(palette: &Palette, rows: &[QuickRow], theme: &Theme) -> Element<
             theme,
         ));
     }
-    let mut content = column![].spacing(spacing::SM);
+    let mut head = column![].spacing(spacing::SM);
     if palette.split.is_some() {
         // As the C# `PaletteModeLabel`: in the accent, semi-bold, over the field.
-        content = content.push(
+        head = head.push(
             text(fl!("ui-palette-mode-split"))
                 .size(font_size::CAPTION)
                 .font(styles::SEMIBOLD)
                 .style(styles::accent_text),
         );
     }
-    content = content.push(
+    head = head.push(
         styles::field(&placeholder, &palette.query)
             .style(styles::text_input)
             .id(field_id())
             .on_input(Message::PaletteQuery)
             .on_submit(Message::PaletteSubmit),
     );
-    if rows.is_empty() {
-        content = content.push(text(fl!("ui-palette-nothing")).size(font_size::CAPTION));
-    } else {
-        content = content.push(styles::scroll(list).height(Length::Shrink));
-    }
-    content = content.push(
-        text(fl!("ui-palette-hints"))
-            .size(font_size::CAPTION)
-            .style(text::secondary),
-    );
-    container(
-        container(row![content].height(Length::Shrink))
-            .max_height(LIST_HEIGHT)
+    let rule = || {
+        container(
+            iced::widget::space()
+                .width(Length::Fill)
+                .height(RULE_HEIGHT),
+        )
+        .style(styles::rule)
+    };
+    let body: Element<'a, Message> = if rows.is_empty() {
+        container(text(fl!("ui-palette-nothing")).size(font_size::CAPTION))
             .padding(spacing::SM)
-            .width(Length::Fill)
-            .style(styles::panel),
+            .height(Length::Fill)
+            .into()
+    } else {
+        container(styles::scroll(list).height(Length::Fill))
+            .height(Length::Fill)
+            .padding([0.0, LIST_SIDE_MARGIN])
+            .into()
+    };
+    // A column of a set height, the list taking what the field (and the split label) and the
+    // hints leave: the list scrolls and shrinks, they keep their own size.
+    let split_label = if palette.split.is_some() {
+        HEADER_HEIGHT_ESTIMATE
+    } else {
+        0.0
+    };
+    let height = (wanted + split_label).min(PALETTE_HEIGHT);
+    container(
+        column![
+            container(head).padding(spacing::SM),
+            rule(),
+            body,
+            rule(),
+            container(
+                text(fl!("ui-palette-hints"))
+                    .size(font_size::CAPTION)
+                    .style(text::secondary),
+            )
+            .padding(HINTS_PADDING),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill),
     )
+    .width(Length::Fill)
     .max_width(PALETTE_WIDTH)
+    .height(height)
+    .style(styles::panel)
     .into()
 }
 

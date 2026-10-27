@@ -178,6 +178,7 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
                 vec![
                     ToolId::ArpMon,
                     ToolId::BannerGrabber,
+                    ToolId::Cert,
                     ToolId::Dns,
                     ToolId::FwTest,
                     ToolId::HttpHeaders,
@@ -188,7 +189,6 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
                     ToolId::Ping,
                     ToolId::PortScan,
                     ToolId::SnmpWalk,
-                    ToolId::Cert,
                     ToolId::SubnetCalculator,
                     ToolId::TcpPing,
                     ToolId::TcpTrace,
@@ -590,6 +590,21 @@ fn a_diagram_with_changes_not_saved_asks_before_its_tab_or_the_window_closes() {
 }
 
 #[test]
+fn the_tools_are_named_as_the_csharp_registry_names_them() {
+    for (tool, name) in [
+        (ToolId::ArpMon, "ARP Monitor"),
+        (ToolId::Cert, "Certificate Inspector"),
+        (ToolId::FwTest, "Firewall Tester"),
+        (ToolId::SnmpWalk, "SNMP Walker"),
+        (ToolId::TcpTrace, "Traceroute"),
+        (ToolId::CmdLib, "Command Library"),
+        (ToolId::DefaultCreds, "Default Credential Scanner"),
+    ] {
+        assert_eq!(tools::label(tool), name, "{tool:?}");
+    }
+}
+
+#[test]
 fn every_tool_has_a_name_a_description_and_texts_in_every_language() {
     for tool in ToolId::ALL {
         assert!(!tools::label(tool).is_empty());
@@ -921,7 +936,7 @@ fn the_text_diff_compares_and_shows_its_counts_in_the_header() {
 }
 
 #[test]
-fn a_card_description_wraps_inside_its_card() {
+fn a_card_is_as_tall_as_the_csharp_one_with_its_description_on_one_line() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::Navigate(Destination::Tools));
@@ -932,6 +947,10 @@ fn a_card_description_wraps_inside_its_card() {
             (card.width - catalog::CARD_WIDTH).abs() < 0.5,
             "{tool:?}: {card:?}"
         );
+        assert!(
+            (card.height - catalog::CARD_HEIGHT).abs() < 0.5,
+            "{tool:?}: {card:?}"
+        );
         let description = ui
             .find(tools::description(tool))
             .expect("description")
@@ -940,20 +959,11 @@ fn a_card_description_wraps_inside_its_card() {
             description.x + description.width <= card.x + card.width,
             "{tool:?}: {description:?} past {card:?}"
         );
+        assert!(
+            description.y + description.height <= card.y + card.height,
+            "{tool:?}: {description:?} under {card:?}"
+        );
     }
-    // A description longer than a line goes on to a second one, rather than being cut.
-    let long = ui
-        .find(tools::description(ToolId::RegexTester))
-        .expect("description")
-        .bounds();
-    let short = ui
-        .find(tools::description(ToolId::JsonFormatter))
-        .expect("description")
-        .bounds();
-    assert!(
-        long.height > short.height * 1.5,
-        "{long:?} against one line {short:?}"
-    );
 }
 
 #[test]
