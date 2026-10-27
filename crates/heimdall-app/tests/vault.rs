@@ -649,6 +649,7 @@ async fn rdp_vault(dir: &Path, domain: &str) -> App {
     }
     vault.save().expect("save");
     let rdp = |id: &str, allow_tls_only: bool| RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new(id),
         name: id.to_owned(),
@@ -1171,6 +1172,7 @@ fn a_password_saved_for_an_ftp_account_answers_its_question() {
     let profiles_file = dir.path().join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     store.merge_ftp([FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("f"),
         name: "files".to_owned(),
         group: None,

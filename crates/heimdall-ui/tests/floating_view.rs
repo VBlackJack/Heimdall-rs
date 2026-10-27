@@ -94,6 +94,7 @@ fn profile(id: &str) -> SshProfile {
 /// A remote desktop, `dc`.
 fn desktop_profile() -> RdpProfile {
     RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "DC".to_owned(),

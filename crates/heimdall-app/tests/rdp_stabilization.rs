@@ -40,6 +40,7 @@ fn app_with(dir: &Path, options: RdpOptions) -> App {
     let profiles_file = dir.join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     store.merge_rdp([RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "Domain controller".to_owned(),

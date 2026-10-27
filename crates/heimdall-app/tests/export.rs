@@ -52,6 +52,7 @@ fn app(dir: &Path) -> App {
     }]);
     // Arguments listed, as a profile made on Linux keeps them.
     store.merge_local([LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("tool"),
         name: "Tool".to_owned(),
         group: None,

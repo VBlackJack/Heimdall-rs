@@ -399,6 +399,7 @@ fn shell(
     program_path: Option<&Path>,
 ) -> LocalShell {
     LocalShell {
+        remote_os: profile.remote_os,
         name: profile.name.clone(),
         program: program_path
             .map(|path| path.to_string_lossy().into_owned())
@@ -450,6 +451,7 @@ mod tests {
 
     fn local(program: Option<&str>, arguments: TermArguments) -> LocalShell {
         LocalShell {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             name: "shell".to_owned(),
             program: program.map(str::to_owned),
             arguments,

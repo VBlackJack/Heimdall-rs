@@ -209,7 +209,7 @@ fn node<'a>(node: Node) -> Element<'a, Message> {
     container(content)
         .padding(spacing::MD)
         .width(NODE_WIDTH)
-        .style(styles::card)
+        .style(styles::diagram_node)
         .into()
 }
 

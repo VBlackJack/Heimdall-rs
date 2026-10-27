@@ -54,6 +54,7 @@ fn app(dir: &Path, profile: &WinRmProfile) -> App {
 
 fn profile(host: &str, username: Option<&str>) -> WinRmProfile {
     WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("w"),
         name: "DC".to_owned(),
         group: None,

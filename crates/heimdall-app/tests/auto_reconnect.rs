@@ -37,6 +37,7 @@ fn app(dir: &Path) -> App {
     let profiles_file = dir.join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     let dc = RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "Domain controller".to_owned(),
@@ -62,6 +63,7 @@ fn app(dir: &Path) -> App {
         dc.clone(),
         // Auto-reconnect cleared in its profile.
         RdpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: ProfileId::new("quiet"),
             name: "Quiet".to_owned(),
             auto_reconnect: false,
@@ -69,6 +71,7 @@ fn app(dir: &Path) -> App {
         },
         // Following the application's RDP options.
         RdpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: ProfileId::new("follows"),
             name: "Follows".to_owned(),
             follow_defaults: true,

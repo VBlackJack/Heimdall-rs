@@ -173,6 +173,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
         ConnectAs::Sftp => ssh(Purpose::Files),
         ConnectAs::Rdp => (
             TabProfile::Rdp(RdpProfile {
+                remote_os: heimdall_core::profile::RemoteOs::default(),
                 extras: heimdall_core::profile::RdpExtras::default(),
                 id: transient_id(),
                 name,
@@ -199,6 +200,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
         ),
         ConnectAs::Vnc => (
             TabProfile::Vnc(VncProfile {
+                remote_os: heimdall_core::profile::RemoteOs::default(),
                 id: transient_id(),
                 name,
                 group: None,

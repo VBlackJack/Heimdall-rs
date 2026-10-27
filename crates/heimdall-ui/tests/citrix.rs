@@ -66,6 +66,7 @@ fn settings() -> Settings {
 
 fn outlook() -> CitrixProfile {
     CitrixProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("outlook"),
         name: "Outlook".to_owned(),
         group: None,

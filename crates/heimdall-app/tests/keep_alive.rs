@@ -178,6 +178,7 @@ fn a_local_shell_has_no_remote_tmout_and_gets_no_enter() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     let effects = app.update(Message::OpenLocal(LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name: "shell".to_owned(),
         program: None,
         arguments: LocalArguments::List(Vec::new()),

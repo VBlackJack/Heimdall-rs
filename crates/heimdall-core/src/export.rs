@@ -450,6 +450,7 @@ fn rdp(profile: &RdpProfile) -> Entry {
     let options = &profile.options;
     let server = Entry {
         vault_entry_name: profile.vault_entry.clone(),
+        remote_os: remote_os_name(profile.remote_os),
         ssh_gateway_id: profile.gateway.as_ref().map(|id| id.as_str().to_owned()),
         local_port: Some(
             profile
@@ -548,6 +549,7 @@ fn telnet(profile: &TelnetProfile) -> Entry {
 
 fn vnc(profile: &VncProfile) -> Entry {
     Entry {
+        remote_os: remote_os_name(profile.remote_os),
         vault_entry_name: profile.vault_entry.clone(),
         vnc_port: Some(profile.port),
         vnc_view_only: profile.view_only,
@@ -566,6 +568,7 @@ fn vnc(profile: &VncProfile) -> Entry {
 
 fn ftp(profile: &FtpProfile) -> Entry {
     Entry {
+        remote_os: remote_os_name(profile.remote_os),
         vault_entry_name: profile.vault_entry.clone(),
         ftp_port: Some(profile.port),
         ftp_username: profile.username.clone(),
@@ -585,6 +588,7 @@ fn ftp(profile: &FtpProfile) -> Entry {
 /// leaves out too.
 fn citrix(profile: &CitrixProfile) -> Entry {
     Entry {
+        remote_os: remote_os_name(profile.remote_os),
         citrix_store_front_url: profile.store_front_url.clone(),
         citrix_app_name: profile.app_name.clone(),
         citrix_ica_file_path: profile.ica_file.clone(),
@@ -615,6 +619,7 @@ fn local(profile: &LocalProfile, windows_line: &dyn Fn(&LocalArguments) -> Strin
             .map(|folder| folder.to_string_lossy().into_owned()),
         elevation_mode: command.run_as_administrator.then_some(RUNAS_ELEVATION),
         session_logging_override: profile.session_logging,
+        remote_os: remote_os_name(profile.remote_os),
         ..server(
             &profile.id,
             &profile.name,
@@ -627,6 +632,7 @@ fn local(profile: &LocalProfile, windows_line: &dyn Fn(&LocalArguments) -> Strin
 
 fn winrm(profile: &WinRmProfile) -> Entry {
     Entry {
+        remote_os: remote_os_name(profile.remote_os),
         ssh_gateway_id: profile.gateway.as_ref().map(|id| id.as_str().to_owned()),
         local_port: Some(
             profile
@@ -656,6 +662,7 @@ fn winrm(profile: &WinRmProfile) -> Entry {
 /// would read as its own DPAPI one.
 fn web(profile: &WebProfile) -> Entry {
     Entry {
+        remote_os: remote_os_name(profile.remote_os),
         ssh_gateway_id: profile.gateway.as_ref().map(|id| id.as_str().to_owned()),
         web_port: Some(profile.port),
         web_use_http: profile.use_http,

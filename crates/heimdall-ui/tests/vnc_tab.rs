@@ -54,6 +54,7 @@ fn app(dir: &Path) -> App {
     app_of(
         dir,
         VncProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: ProfileId::new("kiosk"),
             name: "Lobby kiosk".to_owned(),
             group: Some("Floor".to_owned()),
@@ -184,6 +185,7 @@ fn assert_in_order(shell: &Shell, labels: &[&str]) {
 /// The profile "Lab desk", a VNC server on this computer's `port` taking no password.
 fn desk(port: u16) -> VncProfile {
     VncProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("desk"),
         name: "Lab desk".to_owned(),
         group: None,

@@ -93,6 +93,7 @@ fn said(dir: &Path, event: ConnectionEvent) -> (Shell, TabId) {
     let profiles_file = dir.join("profiles.toml");
     let mut store = heimdall_core::store::ProfileStore::open(&profiles_file).expect("store");
     store.merge_ftp(vec![FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("files"),
         name: "Files".to_owned(),
         group: None,

@@ -47,6 +47,10 @@ const WARNING_CARD_PADDING: [f32; 2] = [8.0, 12.0];
 /// the description's top one.
 const SECTION_TITLE_GAP: f32 = 6.0;
 
+/// Space inside a form's section card, as the C# `DialogSectionCardStyle` padding
+/// (`SpacingMl`).
+const SECTION_CARD_PADDING: f32 = 16.0;
+
 /// How serious a message is, as the C# `MessageDialog` severities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -84,6 +88,16 @@ pub fn section<'a>(title: String, description: Option<String>) -> Element<'a, Me
         );
     }
     heading.into()
+}
+
+/// `content` on a section's card, as the C# `DialogSectionCardStyle`: the card colour,
+/// rounded and outlined, the section's heading and fields inside it.
+pub fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content)
+        .padding(SECTION_CARD_PADDING)
+        .width(Length::Fill)
+        .style(styles::section_card)
+        .into()
 }
 
 /// A field's label, above it, as the C# server dialog's `LabelStyle`: semi-bold, in the

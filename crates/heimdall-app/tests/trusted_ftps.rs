@@ -63,6 +63,7 @@ async fn serve(root: &Path, keys: &Path) -> u16 {
 /// The anonymous FTPS profile "files", on `host:port`.
 fn profile(host: &str, port: u16) -> FtpProfile {
     FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("files"),
         name: "files".to_owned(),
         group: None,
@@ -384,6 +385,7 @@ fn an_ftp_tab_whose_certificate_changed_forgets_its_server_and_asks_again() {
 /// The anonymous FTPS profile `id`, on `host:port`.
 fn profile_as(id: &str, host: &str, port: u16) -> FtpProfile {
     FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new(id),
         ..profile(host, port)
     }

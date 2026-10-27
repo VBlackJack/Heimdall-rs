@@ -109,7 +109,7 @@ use crate::i18n::fl;
 use crate::icons::{self, Icon, Tint};
 use crate::menu_fit::menu_at;
 use crate::palette::Palette;
-pub use crate::profile_tabs::ProfileTab;
+pub use crate::profile_tabs::{ProfileTab, RdpSubTab};
 use crate::report;
 use crate::search_keys::SearchKeys;
 pub use crate::session_settings::SessionField;
@@ -235,8 +235,18 @@ const TAB_HEADERS_PADDING: iced::Padding = iced::Padding {
     left: spacing::SM,
 };
 
-/// Space between two sections of the profile form, as the C# cards' margin and padding.
-const SECTION_GAP: f32 = spacing::LG + spacing::MD;
+/// Width of the "Operating system of the far end" list, as the C# `MinWidth` of 200 and the
+/// longest name it shows.
+const REMOTE_OS_LIST_WIDTH: f32 = 240.0;
+
+/// Space between the cards of a form's tab, as the C# `DialogSectionCardStyle` bottom margin.
+const CARD_GAP: f32 = spacing::MD;
+
+/// Space inside a pill sub-tab, as the C# `SegmentedTabItemStyle` padding `12,6`.
+const SEGMENT_PADDING: [f32; 2] = [6.0, 12.0];
+
+/// Space between the pill sub-tabs and the bar's edge, as the C# `SpacingXxs`.
+const SEGMENT_BAR_PADDING: f32 = 2.0;
 
 /// The boxes of a `WinRM` profile drawn under its port, as the C# General tab draws them.
 const WINRM_TRANSPORT: [ProfileToggle; 2] =
@@ -913,6 +923,12 @@ pub enum Message {
     SettingsSection(SettingsSection),
     /// Show this tab of the profile form.
     ProfileTab(ProfileTab),
+    /// Open or close the local shell form's list of common shells.
+    ToggleShellList,
+    /// Take this shell from the list into the form's executable, and close the list.
+    ShellPreset(String),
+    /// Show this pill sub-tab of the RDP options of the profile form.
+    RdpSubTab(RdpSubTab),
     /// The RDP profile form's "Refresh" of its monitors, as the C# `RefreshMonitorsCommand`:
     /// the screens listed again.
     RefreshMonitors,
@@ -1300,6 +1316,9 @@ impl fmt::Debug for Message {
             Self::SubmitBulkPassword => f.write_str("SubmitBulkPassword"),
             Self::SettingsSection(section) => write!(f, "SettingsSection({section:?})"),
             Self::ProfileTab(tab) => write!(f, "ProfileTab({tab:?})"),
+            Self::RdpSubTab(tab) => write!(f, "RdpSubTab({tab:?})"),
+            Self::ToggleShellList => f.write_str("ToggleShellList"),
+            Self::ShellPreset(preset) => write!(f, "ShellPreset({preset:?})"),
             Self::RefreshMonitors => f.write_str("RefreshMonitors"),
             Self::SettingsSearch(typed) => write!(f, "SettingsSearch({typed:?})"),
             Self::FindModifiedSettings => f.write_str("FindModifiedSettings"),
@@ -1849,6 +1868,10 @@ pub struct Shell {
     settings_rail_focused: bool,
     /// The profile form's tab shown, General each time the form opens.
     profile_tab: ProfileTab,
+    /// The pill sub-tab of the RDP options shown, Display & Audio each time the form opens.
+    rdp_sub_tab: RdpSubTab,
+    /// Whether the local shell form's list of common shells is open.
+    presets_open: bool,
     /// Whether a save of the open profile form was refused: from then on, as the C# server
     /// dialog, each tab's header counts the fields left to fix on it.
     profile_refused: bool,
@@ -2181,6 +2204,8 @@ impl Shell {
             settings_section: SettingsSection::first_of(SettingsTab::default()),
             settings_rail_focused: false,
             profile_tab: ProfileTab::default(),
+            rdp_sub_tab: RdpSubTab::default(),
+            presets_open: false,
             profile_refused: false,
             settings_search: String::new(),
             settings_highlight: None,
@@ -2978,6 +3003,23 @@ impl Shell {
         {
             return Task::none();
         }
+        // Escape closes the list of common shells of the local shell form before the dialog.
+        if self.presets_open
+            && matches!(
+                message,
+                Message::EscapeUntaken | Message::DialogKey { confirm: false }
+            )
+        {
+            self.presets_open = false;
+            return Task::none();
+        }
+        // Ctrl+Tab and Ctrl+Shift+Tab go through the session form's tabs while it is open.
+        if let Message::Shortcut(step @ (WindowShortcut::NextTab | WindowShortcut::PreviousTab)) =
+            &message
+            && let Some(task) = self.cycle_profile_tabs(*step == WindowShortcut::NextTab)
+        {
+            return task;
+        }
         // Enter and Escape are the welcome tour's while it is shown and nothing over it.
         if let Some(tour) = self.tour_key(&message) {
             return self.update(Message::Tour(tour));
@@ -3074,6 +3116,9 @@ impl Shell {
             | Message::Search(_)
             | Message::SettingsSection(_)
             | Message::ProfileTab(_)
+            | Message::RdpSubTab(_)
+            | Message::ToggleShellList
+            | Message::ShellPreset(_)
             | Message::ProfilePassword(_)
             | Message::BulkPasswordField { .. }
             | Message::FocusBulkPasswordField(_)
@@ -3398,10 +3443,20 @@ impl Shell {
         }
         self.forget_finished();
         self.keep_monitors();
+        // The list of common shells is the local shell form's: gone with it or its protocol.
+        if !matches!(
+            &self.app.dialog,
+            Some(Dialog::EditProfile { draft, .. })
+                if draft.protocol == DraftProtocol::Local && draft.protocol_chosen
+        ) {
+            self.presets_open = false;
+        }
         // The form closed, or back to its protocols: it opens again on General. A gateway
         // edited from it keeps its tab for its return.
         if !self.profile_form_open() {
             self.profile_tab = ProfileTab::General;
+            self.rdp_sub_tab = RdpSubTab::default();
+            self.presets_open = false;
             self.profile_refused = false;
         }
         // The previous run's sessions, offered once nothing else is asked and the window is
@@ -3507,6 +3562,16 @@ impl Shell {
                 self.profile_tab = tab;
                 // A tab opens at its top.
                 return operation::snap_to(profile_page_id(), RelativeOffset::START);
+            }
+            // A pill sub-tab shows within the tab, which keeps its place.
+            Message::RdpSubTab(tab) => self.rdp_sub_tab = tab,
+            Message::ToggleShellList => self.presets_open = !self.presets_open,
+            Message::ShellPreset(preset) => {
+                self.presets_open = false;
+                return self.update(Message::App(AppMessage::ProfileField {
+                    field: ProfileField::LocalProgram,
+                    value: preset,
+                }));
             }
             Message::ProfilePassword(value) => self.profile_password = Zeroizing::new(value),
             Message::BulkPasswordField { index, value } => {
@@ -3808,6 +3873,8 @@ impl Shell {
             bulk_password: &self.bulk_password,
             passwords: self.password_store(),
             profile_tab: self.profile_tab,
+            rdp_sub_tab: self.rdp_sub_tab,
+            presets_open: self.presets_open,
             profile_refused: self.profile_refused,
             scheduled: self.scheduled_dialog(),
         }
@@ -4758,6 +4825,34 @@ impl Shell {
         )
     }
 
+    /// Ctrl+Tab (`forward`) or Ctrl+Shift+Tab with the session form open: the next or
+    /// previous place among its tabs, the RDP pill sub-tabs included while they are
+    /// enabled; `None` when no form is open, the key being the window's.
+    fn cycle_profile_tabs(&mut self, forward: bool) -> Option<Task<Message>> {
+        let Some(Dialog::EditProfile { draft, .. }) = &self.app.dialog else {
+            return None;
+        };
+        if !draft.protocol_chosen {
+            return None;
+        }
+        let tabs = ProfileTab::of(draft.protocol);
+        let shown = if tabs.contains(&self.profile_tab) {
+            self.profile_tab
+        } else {
+            ProfileTab::General
+        };
+        let pills =
+            draft.protocol == DraftProtocol::Rdp && !draft.is_on(ProfileToggle::FollowDefaults);
+        let (tab, sub) =
+            crate::profile_tabs::step(&tabs, (shown, self.rdp_sub_tab), pills, forward);
+        self.rdp_sub_tab = sub;
+        Some(if tab == shown {
+            Task::none()
+        } else {
+            self.update(Message::ProfileTab(tab))
+        })
+    }
+
     /// Drops the tasks of closed tabs and the drafts of questions no longer asked.
     fn forget_finished(&mut self) {
         let app = &self.app;
@@ -4882,11 +4977,18 @@ impl Shell {
         // A form refused shows the tab holding the field to fix.
         if let Some(DialogFocus::FormError(DialogForm::Profile, error)) = next {
             self.profile_tab = ProfileTab::holding(error.field());
+            // The options a form can refuse (the fixed size, the wait) are Display & Audio's.
+            self.rdp_sub_tab = RdpSubTab::DisplayAudio;
             self.profile_refused = true;
         }
         self.dialog_focus = next;
         if next.is_none() {
             return Task::none();
+        }
+        // The session form opens with its caret after the name, as the C# dialog does, so a
+        // click or a key edits it where it ends.
+        if matches!(next, Some(DialogFocus::Form(DialogForm::Profile))) {
+            return operation::focus(field.clone()).chain(operation::move_cursor_to_end(field));
         }
         // Selected, so typing replaces what is there: a renamed entry's name, a wrong value.
         operation::focus(field.clone()).chain(operation::select_all(field))
@@ -11015,6 +11117,10 @@ struct Forms<'a> {
     monitors: &'a [crate::rdp_options::Monitor],
     /// The profile form's tab shown.
     profile_tab: ProfileTab,
+    /// The RDP options' pill sub-tab shown.
+    rdp_sub_tab: RdpSubTab,
+    /// Whether the local shell form's list of common shells is open.
+    presets_open: bool,
     /// Whether a save of the profile form was refused, its tabs counting what to fix.
     profile_refused: bool,
     /// The settings' wait after connecting, in milliseconds: what an RDP profile leaving
@@ -11124,6 +11230,16 @@ fn protocol_name(protocol: DraftProtocol) -> String {
     }
 }
 
+/// The protocol's name in the badge above the tabs, as the C# connection type's: "RDP" and
+/// "Local", where the picker's cards say "Remote Desktop" and "Local Shell".
+fn protocol_badge_name(protocol: DraftProtocol) -> String {
+    match protocol {
+        DraftProtocol::Rdp => fl!("ui-profile-protocol-rdp-badge"),
+        DraftProtocol::Local => fl!("ui-profile-protocol-local-badge"),
+        _ => protocol_name(protocol),
+    }
+}
+
 fn protocol_description(protocol: DraftProtocol) -> String {
     match protocol {
         DraftProtocol::Rdp => fl!("ui-profile-protocol-rdp-desc"),
@@ -11172,7 +11288,7 @@ pub fn protocol_picker<'a>() -> Element<'a, Message> {
         .padding(spacing::MD)
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(styles::secondary)
+        .style(styles::protocol_card)
         .on_press(Message::App(AppMessage::ChooseProtocol(protocol)))
     };
     // The cards of a row share the height of the tallest, as the C# UniformGrid gives every
@@ -11194,7 +11310,11 @@ pub fn protocol_picker<'a>() -> Element<'a, Message> {
             Some(fl!("ui-profile-protocol-picker-desc"))
         ),
         styles::scroll(cards).height(Length::Fill),
-        dialog_parts::buttons([dialog_parts::cancel()]),
+        // As the C# dialog: Save is there, and waits for a protocol to be chosen.
+        dialog_parts::buttons([
+            dialog_parts::cancel(),
+            dialog_parts::action(fl!("ui-profile-save-button"), styles::primary),
+        ]),
     ]
     .spacing(spacing::MD)
     .height(Length::Fill)
@@ -11633,7 +11753,9 @@ fn network_section<'a>(
                 .on_press(Message::App(AppMessage::EditGateway(id))),
         );
     }
-    section_column = section_column.push(crate::connection_path::card(draft, gateways));
+    section_column = section_column.push(dialog_parts::card(crate::connection_path::card(
+        draft, gateways,
+    )));
     // Said where the SSL box was, as the C# dialog says it; HTTPS asked for, then a gateway
     // chosen, is said to be off.
     if draft.protocol == DraftProtocol::WinRm && draft.routed_gateway().is_some() {
@@ -12169,15 +12291,20 @@ fn options_section<'a>(
     draft: &'a ProfileDraft,
     monitors: &[crate::rdp_options::Monitor],
     resize_delay: u32,
+    sub_tab: RdpSubTab,
 ) -> Column<'a, Message> {
-    let mut tab = Column::new().spacing(SECTION_GAP);
+    let mut tab = Column::new().spacing(CARD_GAP);
     if draft.shows_session_logging() {
-        tab = tab.push(session_logging_choice(draft));
+        tab = tab.push(dialog_parts::card(session_logging_choice(draft)));
     }
-    tab = tab.push(protocol_options(draft, monitors, resize_delay));
+    for options in protocol_options(draft, monitors, resize_delay, sub_tab) {
+        tab = tab.push(dialog_parts::card(options));
+    }
     // A card of its own after the options, as the C# one.
     if draft.protocol == DraftProtocol::Ssh {
-        tab = tab.push(crate::post_connect_form::view(&draft.post_connect));
+        tab = tab.push(dialog_parts::card(crate::post_connect_form::view(
+            &draft.post_connect,
+        )));
     }
     tab
 }
@@ -12189,14 +12316,16 @@ fn error_caption<'a>(said: String) -> iced::widget::Text<'a> {
         .style(styles::error_text)
 }
 
-/// The protocol's options, as its C# card; an RDP form's monitors among `monitors`, its
-/// wait after connecting left empty taking the settings' `resize_delay`.
+/// The protocol's options, one element for each C# card of the tab, to be set on a card; an
+/// RDP form's monitors among `monitors`, its wait after connecting left empty taking the
+/// settings' `resize_delay`, its options under the pill sub-tab `sub_tab`.
 fn protocol_options<'a>(
     draft: &'a ProfileDraft,
     monitors: &[crate::rdp_options::Monitor],
     resize_delay: u32,
-) -> Column<'a, Message> {
-    let mut form = Column::new().spacing(spacing::MD);
+    sub_tab: RdpSubTab,
+) -> Vec<Element<'a, Message>> {
+    let mut form: Vec<Element<'a, Message>> = Vec::new();
     let options = match draft.protocol {
         DraftProtocol::Rdp => Some((
             fl!("ui-profile-options-rdp"),
@@ -12225,51 +12354,25 @@ fn protocol_options<'a>(
         | DraftProtocol::Web => None,
     };
     if let Some((options, description)) = options {
-        form = form.push(section(options, Some(description)));
+        form.push(section(options, Some(description)));
     }
     if draft.protocol == DraftProtocol::Rdp {
         // As the C# card: the choice first; the profile's own options stay shown, those the
-        // defaults decide greyed and said not to be the ones in effect; then the C# tabs.
-        form = form.push(toggle_box(
+        // defaults decide greyed and said not to be the ones in effect; then the C# pill
+        // sub-tabs.
+        form.push(toggle_box(
             draft,
             ProfileToggle::FollowDefaults,
             toggle_label(ProfileToggle::FollowDefaults),
         ));
         if draft.is_on(ProfileToggle::FollowDefaults) {
-            form = form
-                .push(dialog_parts::hint(fl!("ui-profile-rdp-defaults-banner")))
-                .push(dialog_parts::hint(fl!(
-                    "ui-profile-rdp-defaults-not-in-effect"
-                )));
+            form.push(dialog_parts::hint(fl!("ui-profile-rdp-defaults-banner")).into());
+            form.push(dialog_parts::hint(fl!("ui-profile-rdp-defaults-not-in-effect")).into());
         }
-        form = form
-            .push(crate::rdp_options::display_audio(
-                draft,
-                monitors,
-                move |field| {
-                    if field == ProfileField::ResizeDelay {
-                        // The C# watermark: the settings' value, which empty takes.
-                        let global = fl!("ui-profile-resize-delay-global", ms = resize_delay);
-                        labelled_field(draft, field, Some(global))
-                    } else {
-                        form_field(draft, field)
-                    }
-                },
-            ))
-            .push(crate::rdp_options::devices(draft))
-            .push(crate::rdp_options::performance(draft))
-            .push(crate::rdp_options::behavior(draft));
-    }
-    if draft.protocol == DraftProtocol::Citrix {
-        form = form.push(crate::citrix_form::advanced(|field| {
-            form_field(draft, field)
-        }));
-    }
-    if draft.protocol == DraftProtocol::Web {
-        form = form.push(crate::web_form::opening(draft));
+        form.push(rdp_sub_tabs(draft, monitors, resize_delay, sub_tab));
     }
     if draft.protocol == DraftProtocol::Ssh {
-        form = form.push(ssh_mode_choice(draft));
+        form.push(ssh_mode_choice(draft));
     }
     for toggle in ProfileToggle::of(draft.protocol) {
         // The RDP groups draw their own boxes, in the C# tabs; the favourite mark is the
@@ -12280,26 +12383,87 @@ fn protocol_options<'a>(
             || (draft.protocol == DraftProtocol::WinRm && WINRM_TRANSPORT.contains(toggle))
             || (draft.protocol == DraftProtocol::Rdp && crate::rdp_options::draws(*toggle));
         if !drawn_elsewhere && draft.shows_toggle(*toggle) {
-            form = form.push(toggle_box(draft, *toggle, toggle_label(*toggle)));
+            form.push(toggle_box(draft, *toggle, toggle_label(*toggle)));
             // What the box does, under it, as the C# dialog's hint.
             if let Some(hint) = toggle_hint(*toggle) {
-                form = form.push(dialog_parts::hint(hint));
+                form.push(dialog_parts::hint(hint).into());
             }
         }
     }
     for warning in option_warnings(draft) {
-        form = form.push(error_caption(warning));
-    }
-    if draft.protocol == DraftProtocol::Local {
-        form = form.push(crate::local_form::advanced(draft, |field| {
-            form_field(draft, field)
-        }));
+        form.push(error_caption(warning).into());
     }
     if draft.protocol == DraftProtocol::Telnet {
-        form = form.push(error_caption(fl!("ui-profile-telnet-warning")));
+        form.push(error_caption(fl!("ui-profile-telnet-warning")).into());
     }
+    let mut cards: Vec<Element<'a, Message>> = Vec::new();
+    if !form.is_empty() {
+        cards.push(Column::with_children(form).spacing(spacing::MD).into());
+    }
+    // The cards of their own, after the options.
+    match draft.protocol {
+        DraftProtocol::Citrix => cards.push(crate::citrix_form::advanced(|field| {
+            form_field(draft, field)
+        })),
+        DraftProtocol::Web => cards.push(crate::web_form::opening(draft)),
+        DraftProtocol::Local => cards.push(crate::local_form::advanced(draft, |field| {
+            form_field(draft, field)
+        })),
+        _ => {}
+    }
+    cards
+}
 
-    form
+/// The RDP options under the C# pill sub-tabs: their bar, then the sub-tab shown on a card.
+fn rdp_sub_tabs<'a>(
+    draft: &'a ProfileDraft,
+    monitors: &[crate::rdp_options::Monitor],
+    resize_delay: u32,
+    shown: RdpSubTab,
+) -> Element<'a, Message> {
+    let bar = RdpSubTab::ALL.into_iter().fold(row![], |bar, tab| {
+        let label = text(tab.label()).size(font_size::CAPTION);
+        bar.push(
+            button(if tab == shown {
+                label.font(styles::SEMIBOLD)
+            } else {
+                label
+            })
+            .padding(SEGMENT_PADDING)
+            .style(styles::segment(tab == shown))
+            // As the C#: the whole tab control is disabled while the defaults decide.
+            .on_press_maybe(
+                (!draft.is_on(ProfileToggle::FollowDefaults)).then_some(Message::RdpSubTab(tab)),
+            ),
+        )
+    });
+    let page = match shown {
+        RdpSubTab::DisplayAudio => {
+            crate::rdp_options::display_audio(draft, monitors, move |field| {
+                if field == ProfileField::ResizeDelay {
+                    // The C# watermark: the settings' value, which empty takes.
+                    let global = fl!("ui-profile-resize-delay-global", ms = resize_delay);
+                    labelled_field(draft, field, Some(global))
+                } else {
+                    form_field(draft, field)
+                }
+            })
+        }
+        RdpSubTab::Devices => crate::rdp_options::devices(draft),
+        RdpSubTab::Performance => crate::rdp_options::performance(draft),
+        RdpSubTab::Behavior => crate::rdp_options::behavior(draft),
+    };
+    column![
+        container(bar)
+            .padding(SEGMENT_BAR_PADDING)
+            .style(styles::segment_bar),
+        container(page)
+            .padding(spacing::MD)
+            .width(Length::Fill)
+            .style(styles::card),
+    ]
+    .spacing(spacing::MD)
+    .into()
 }
 
 /// What the options chosen in `draft` weaken, each said under them: the legacy algorithms,
@@ -12347,9 +12511,13 @@ fn profile_form<'a>(
     };
     let page: Element<'a, Message> = match shown {
         ProfileTab::General => general_tab(draft, forms).into(),
-        ProfileTab::Options => {
-            options_section(draft, forms.monitors, forms.rdp_resize_delay).into()
-        }
+        ProfileTab::Options => options_section(
+            draft,
+            forms.monitors,
+            forms.rdp_resize_delay,
+            forms.rdp_sub_tab,
+        )
+        .into(),
         ProfileTab::Network => network_section(draft, forms.gateways),
         ProfileTab::Info => info_tab(draft).into(),
     };
@@ -12385,7 +12553,7 @@ fn protocol_line<'a>(protocol: DraftProtocol, adding: bool) -> Element<'a, Messa
             Tint::Accent,
             icons::GLYPH_SIDE
         ),
-        text(protocol_name(protocol)).font(styles::SEMIBOLD),
+        text(protocol_badge_name(protocol)).font(styles::SEMIBOLD),
     ]
     .spacing(spacing::XS)
     .align_y(iced::Alignment::Center);
@@ -12496,27 +12664,49 @@ fn general_tab<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column<'a, Mes
         if draft.protocol == DraftProtocol::WinRm {
             basics = basics.push(winrm_transport(draft));
         }
+    }
+    // What the far end runs, under the address and above its test, as the C# General tab's
+    // list.
+    basics = basics.push(remote_os_choice(draft));
+    if draft.shows(ProfileField::Host) {
         basics = basics.push(crate::address_test_view::view(draft, forms.gateways));
     }
-    // What the far end runs, under the address, as the C# General tab's list.
-    if draft.shows_remote_os() {
-        basics = basics.push(remote_os_choice(draft));
-    }
-    let mut tab = column![basics].spacing(SECTION_GAP);
+    // Each section on a card of its own, as the C# `DialogSectionCardStyle`.
+    let mut tab = column![dialog_parts::card(basics)].spacing(CARD_GAP);
     if draft.protocol == DraftProtocol::Citrix {
-        tab = tab.push(crate::citrix_form::basics(|field| form_field(draft, field)));
+        tab = tab.push(dialog_parts::card(crate::citrix_form::basics(|field| {
+            form_field(draft, field)
+        })));
     }
     if draft.protocol == DraftProtocol::Web {
-        tab = tab.push(crate::web_form::address(draft, |field| {
-            form_field(draft, field)
-        }));
+        tab = tab.push(dialog_parts::card(crate::web_form::address(
+            draft,
+            |field| form_field(draft, field),
+        )));
     }
     if draft.protocol == DraftProtocol::Local {
-        tab = tab.push(crate::local_form::basics(draft, |field| {
-            form_field(draft, field)
-        }));
+        tab = tab.push(dialog_parts::card(crate::local_form::basics(
+            draft,
+            forms.presets_open,
+            |field| form_field(draft, field),
+        )));
     }
-    tab.push(credentials_section(draft, forms))
+    if has_credentials(draft) {
+        tab = tab.push(dialog_parts::card(credentials_section(draft, forms)));
+    }
+    tab
+}
+
+/// Whether the General tab has a credentials card: the protocols that sign in, and any
+/// other that shows an account field or a password.
+fn has_credentials(draft: &ProfileDraft) -> bool {
+    !matches!(
+        draft.protocol,
+        DraftProtocol::Telnet | DraftProtocol::Local | DraftProtocol::Citrix
+    ) || draft.shows(ProfileField::Username)
+        || draft.shows(ProfileField::Domain)
+        || draft.shows(ProfileField::KeyPath)
+        || draft.shows_password()
 }
 
 /// A `WinRM` profile's transport under its port, as the C# General tab: HTTPS and the
@@ -12551,7 +12741,21 @@ fn winrm_transport<'a>(draft: &ProfileDraft) -> Column<'a, Message> {
 /// The C# Info tab: the organization, its folder, environment and favourite mark, then the
 /// metadata, its tags, MAC address and password manager's entry.
 fn info_tab(draft: &ProfileDraft) -> Column<'_, Message> {
-    let mut organization = column![
+    // The environment and the favourite mark on one row, as the C# does.
+    let mut environment = row![container(environment_choice(draft)).width(Length::Fill)]
+        .spacing(spacing::MD)
+        .align_y(iced::Alignment::End);
+    if draft.shows_toggle(ProfileToggle::Favorite) {
+        environment = environment.push(
+            container(toggle_box(
+                draft,
+                ProfileToggle::Favorite,
+                toggle_label(ProfileToggle::Favorite),
+            ))
+            .width(Length::Fill),
+        );
+    }
+    let organization = column![
         section(
             fl!("ui-profile-section-organization"),
             Some(fl!("ui-profile-section-organization-desc"))
@@ -12559,16 +12763,9 @@ fn info_tab(draft: &ProfileDraft) -> Column<'_, Message> {
         form_field(draft, ProfileField::Group),
         // As the C#: the separator is taught by the example and by a sentence that stays.
         dialog_parts::hint(fl!("ui-profile-folder-hint")),
-        environment_choice(draft),
+        environment,
     ]
     .spacing(spacing::MD);
-    if draft.shows_toggle(ProfileToggle::Favorite) {
-        organization = organization.push(toggle_box(
-            draft,
-            ProfileToggle::Favorite,
-            toggle_label(ProfileToggle::Favorite),
-        ));
-    }
     let mut metadata = column![
         section(
             fl!("ui-profile-section-metadata"),
@@ -12584,7 +12781,11 @@ fn info_tab(draft: &ProfileDraft) -> Column<'_, Message> {
             .push(form_field(draft, ProfileField::VaultEntry))
             .push(dialog_parts::hint(fl!("ui-profile-vault-entry-help")));
     }
-    column![organization, metadata].spacing(SECTION_GAP)
+    column![
+        dialog_parts::card(organization),
+        dialog_parts::card(metadata)
+    ]
+    .spacing(CARD_GAP)
 }
 
 /// Asks for a name, or for permission bits in octal: Enter in the field confirms, like the
@@ -14037,7 +14238,7 @@ fn remote_os_choice(draft: &ProfileDraft) -> Element<'_, Message> {
         )
         .style(styles::pick_list)
         .menu_style(styles::menu)
-        .width(Length::Fill),
+        .width(REMOTE_OS_LIST_WIDTH),
         dialog_parts::hint(fl!("ui-profile-remote-os-hint")),
     ]
     .spacing(spacing::XS)
@@ -15181,6 +15382,7 @@ mod tests {
         use heimdall_core::profile::{ProfileId, RdpOptions, RdpProfile, Resolution, VncProfile};
 
         let vnc = VncProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: ProfileId::new("v"),
             name: "v".to_owned(),
             group: None,
@@ -15195,6 +15397,7 @@ mod tests {
         assert!(fits_by_default(&TabProfile::Vnc(vnc)));
         let rdp = |options| {
             TabProfile::Rdp(RdpProfile {
+                remote_os: heimdall_core::profile::RemoteOs::default(),
                 extras: heimdall_core::profile::RdpExtras::default(),
                 id: ProfileId::new("r"),
                 name: "r".to_owned(),

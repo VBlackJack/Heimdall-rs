@@ -478,6 +478,7 @@ fn ssh_profile() -> SshProfile {
 
 fn rdp_profile() -> RdpProfile {
     RdpProfile {
+        remote_os: crate::profile::RemoteOs::default(),
         extras: crate::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "DC".to_owned(),
@@ -503,6 +504,7 @@ fn rdp_profile() -> RdpProfile {
 
 fn winrm_profile(username: Option<&str>) -> WinRmProfile {
     WinRmProfile {
+        remote_os: crate::profile::RemoteOs::default(),
         id: ProfileId::new("ps"),
         name: "PS".to_owned(),
         group: None,

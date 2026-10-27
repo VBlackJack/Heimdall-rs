@@ -37,6 +37,7 @@ const PICKED: u16 = 50_123;
 
 fn ilo(gateway: Option<&str>) -> WebProfile {
     WebProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("ilo"),
         name: "iLO".to_owned(),
         group: Some("BMC".to_owned()),
@@ -372,6 +373,7 @@ fn a_console_is_edited_in_its_own_protocol_and_keeps_its_gateway() {
     assert_eq!(
         saved,
         [WebProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             port: 8443,
             ..ilo(Some("bastion"))
         }]
@@ -382,6 +384,7 @@ fn a_console_is_edited_in_its_own_protocol_and_keeps_its_gateway() {
 fn consoles_behind_one_gateway_never_share_a_browser_origin_nor_a_manual_tunnel() {
     let dir = tempfile::tempdir().expect("dir");
     let idrac = WebProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("idrac"),
         name: "iDRAC".to_owned(),
         ..ilo(Some("bastion"))

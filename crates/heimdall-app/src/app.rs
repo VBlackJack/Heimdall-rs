@@ -2772,7 +2772,13 @@ impl TabProfile {
         let declared = match self {
             Self::Ssh(profile) => profile.remote_os,
             Self::Telnet(profile) => profile.remote_os,
-            _ => heimdall_core::profile::RemoteOs::Auto,
+            Self::Rdp(profile) => profile.remote_os,
+            Self::Vnc(profile) => profile.remote_os,
+            Self::Ftp(profile) => profile.remote_os,
+            Self::WinRm(profile) => profile.remote_os,
+            Self::Citrix(profile) => profile.remote_os,
+            Self::Local(shell) => shell.remote_os,
+            Self::Tool(_) => heimdall_core::profile::RemoteOs::Auto,
         };
         declared.or(self.kind().platform_guess())
     }

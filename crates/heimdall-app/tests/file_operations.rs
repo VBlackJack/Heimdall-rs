@@ -1952,6 +1952,7 @@ impl heimdall_app::InputSink for NoInput {
 fn local_browser(app: &mut App, file: &Path) -> TabId {
     let (shell, attempt) = match app
         .update(Message::OpenLocal(heimdall_app::local_driver::LocalShell {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             name: "Shell".to_owned(),
             program: None,
             arguments: heimdall_term::local::LocalArguments::List(Vec::new()),

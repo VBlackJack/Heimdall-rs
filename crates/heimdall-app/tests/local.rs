@@ -46,6 +46,7 @@ fn app(dir: &Path) -> App {
 
 fn shell(program: &str, args: &[&str]) -> LocalShell {
     LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name: "Shell".to_owned(),
         program: Some(program.to_owned()),
         arguments: LocalArguments::List(args.iter().map(|arg| (*arg).to_owned()).collect()),

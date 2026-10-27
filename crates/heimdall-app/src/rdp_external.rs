@@ -600,6 +600,7 @@ mod tests {
 
     fn profile() -> RdpProfile {
         RdpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: ProfileId::new("rds"),
             name: "Session host".to_owned(),
             group: None,

@@ -144,6 +144,7 @@ mod tests {
 
     fn console(host: &str, port: u16) -> WebProfile {
         WebProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: ProfileId::new("w"),
             name: "iLO".to_owned(),
             group: None,

@@ -83,6 +83,7 @@ fn docked(dir: &Path) -> (App, TabId) {
     let mut core = app(dir);
     let (shell, attempt) = match core
         .update(AppMessage::OpenLocal(LocalShell {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             name: "Shell".to_owned(),
             program: None,
             arguments: LocalArguments::List(Vec::new()),

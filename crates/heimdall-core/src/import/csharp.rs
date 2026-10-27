@@ -1600,12 +1600,7 @@ fn convert(server: &LegacyServer, suggested_tunnel_port: u16) -> Result<SshProfi
             SshMode::Embedded
         },
         x11_forwarding: !sftp && server.ssh_x11_forwarding,
-        // An SFTP profile opens no prompt for a command to be typed at.
-        remote_os: if sftp {
-            RemoteOs::Auto
-        } else {
-            remote_os_of(server)
-        },
+        remote_os: remote_os_of(server),
     })
 }
 
@@ -1708,6 +1703,7 @@ fn convert_rdp(
     let choices = RdpChoices::of(server, defaults);
     let (resolution, (fixed_width, fixed_height)) = resolution_of(server);
     Ok(RdpProfile {
+        remote_os: remote_os_of(server),
         id: ProfileId::new(server.id.clone()),
         name: if server.display_name.is_empty() {
             server.remote_server.clone()
@@ -1821,6 +1817,7 @@ fn convert_vnc(server: &LegacyServer) -> Result<VncProfile, SkipReason> {
         _ => DEFAULT_VNC_PORT,
     };
     Ok(VncProfile {
+        remote_os: remote_os_of(server),
         id: ProfileId::new(server.id.clone()),
         name: if server.display_name.is_empty() {
             server.remote_server.clone()
@@ -1854,6 +1851,7 @@ fn convert_ftp(server: &LegacyServer) -> Result<FtpProfile, SkipReason> {
         Some(value) => u16::try_from(value).map_err(|_| SkipReason::InvalidPort(value))?,
     };
     Ok(FtpProfile {
+        remote_os: remote_os_of(server),
         id: ProfileId::new(server.id.clone()),
         name: if server.display_name.is_empty() {
             server.remote_server.clone()
@@ -1884,6 +1882,7 @@ fn convert_citrix(server: &LegacyServer) -> Result<CitrixProfile, SkipReason> {
     };
     let app_name = trimmed(server.citrix_app_name.as_ref());
     Ok(CitrixProfile {
+        remote_os: remote_os_of(server),
         id: ProfileId::new(server.id.clone()),
         name: if server.display_name.trim().is_empty() {
             app_name
@@ -1922,6 +1921,7 @@ fn convert_local(server: &LegacyServer) -> Result<LocalProfile, SkipReason> {
         return Err(SkipReason::UnsafeLocalCommand);
     }
     Ok(LocalProfile {
+        remote_os: remote_os_of(server),
         id: ProfileId::new(server.id.clone()),
         name: if server.display_name.is_empty() {
             program.clone().unwrap_or_else(|| server.id.clone())
@@ -2134,6 +2134,7 @@ fn convert_winrm(
         None
     };
     Ok(WinRmProfile {
+        remote_os: remote_os_of(server),
         id: ProfileId::new(server.id.clone()),
         name: if server.display_name.is_empty() {
             server.remote_server.clone()
