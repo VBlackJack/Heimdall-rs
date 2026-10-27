@@ -710,8 +710,9 @@ impl Icon {
     }
 
     /// Width of its line when it is stroked, as the expander's arrow and the chrome's
-    /// glyphs; `None` when it is filled, as every geometry of the C#, the dots of More and
-    /// the favourite's star.
+    /// glyphs; `None` when it is filled, as every geometry of the C#, tool icons included
+    /// (`Path.Fill` only, never a stroke: their open lines draw nothing, as in the C#), the
+    /// dots of More and the favourite's star.
     const fn stroke(self) -> Option<f32> {
         match self {
             Self::ChevronRight | Self::ChevronDown => Some(STROKE_WIDTH),
@@ -745,55 +746,6 @@ impl Icon {
             | Self::Photo
             | Self::Eye
             | Self::EyeHidden
-            // The C# fills these, which draws nothing of an open line and the comparison's
-            // pages as two blocks: their lines are stroked here, as their drawing means them.
-            | Self::ToolBase64
-            | Self::ToolUrlEncoder
-            | Self::ToolJwt
-            | Self::ToolTotp
-            | Self::ToolJson
-            | Self::ToolRegex
-            | Self::ToolDiff
-            | Self::ToolTextCase
-            | Self::ToolPasswordGenerator
-            | Self::ToolSshKeyGenerator
-            | Self::ToolSshAudit
-            | Self::ToolTlsAudit
-            | Self::ToolDnsSec
-            | Self::ToolCve
-            | Self::ToolDefaultCreds
-            | Self::ToolSecNumCloud
-            | Self::ToolSmb
-            | Self::ToolCertificateGenerator
-            | Self::ToolPasswordAudit
-            | Self::ToolHttpStatus
-            | Self::ToolWakeOnLan
-            | Self::ToolWhois
-            | Self::ToolBannerGrabber
-            | Self::ToolDnsLookup
-            | Self::ToolPortScanner
-            | Self::ToolHttpHeaders
-            | Self::ToolCertInspector
-            | Self::ToolTraceroute
-            | Self::ToolArpMonitor
-            | Self::ToolFirewallTester
-            | Self::ToolNetMap
-            | Self::ToolHostsFileEditor
-            | Self::ToolServiceStatus
-            | Self::ToolLogViewer
-            | Self::ToolCronJobManager
-            | Self::ToolNotes
-            | Self::ToolDiagram
-            | Self::ToolCommandLibrary
-            // These hold open lines too, which a fill would lose; the ULID's blocks are
-            // closed, filled as the UUID's.
-            | Self::ToolSubnet
-            | Self::ToolIpConverter
-            | Self::ToolNetworkCalculator
-            | Self::ToolChmod
-            | Self::ToolDateTime
-            | Self::ToolCrontab
-            | Self::ToolSshConfig
             | Self::Monitor
             | Self::Resolution
             | Self::Keyboard
@@ -1608,6 +1560,28 @@ mod tests {
         assert_eq!(Icon::FavoriteStarFill.data(), Icon::FavoriteStar.data());
         assert!(Icon::FavoriteStarFill.stroke().is_none(), "filled");
         assert!(Icon::FavoriteStar.stroke().is_some(), "outlined");
+    }
+
+    #[test]
+    fn every_tool_icon_is_filled_as_the_csharp_draws_it() {
+        let tool_icons: Vec<Icon> = Icon::ALL
+            .into_iter()
+            .filter(|icon| format!("{icon:?}").starts_with("Tool"))
+            .collect();
+        assert!(tool_icons.len() >= 40, "{}", tool_icons.len());
+        for icon in tool_icons {
+            assert!(icon.stroke().is_none(), "{icon:?}: the C# fills it");
+            assert!(icon.line_width(24.0).is_none(), "{icon:?}");
+        }
+        // Every tool of the registry resolves to one of those filled icons.
+        for tool in heimdall_app::tools::ToolId::ALL {
+            let icon = crate::tools::icon(tool);
+            assert!(icon.stroke().is_none(), "{tool:?}: {icon:?}");
+        }
+        // The chrome's own glyphs stay lines, as the C#'s Segoe glyphs.
+        for icon in [Icon::Monitor, Icon::Keyboard, Icon::Lock, Icon::Close] {
+            assert!(icon.stroke().is_some(), "{icon:?}");
+        }
     }
 
     #[test]
