@@ -1992,7 +1992,7 @@ fn with_no_session_saved_the_window_welcomes_and_offers_to_add_one() {
     snapshot(&shell, "home-empty.png");
     let mut ui = simulator(&shell);
     ui.find("Welcome to Heimdall-rs").expect("welcomes");
-    ui.find("Ctrl+N to add a session | Ctrl+K to quick connect | F1 for all shortcuts")
+    ui.find("Ctrl+N to add a session · Ctrl+K to quick connect · F1 for all shortcuts")
         .expect("the shortcuts");
     assert!(
         ui.find("Select a session in the sidebar to see its details.")
@@ -2064,7 +2064,7 @@ fn the_welcome_is_a_card_of_a_title_three_actions_in_order_and_the_shortcuts() {
     let import = ui.find("Import Connections").expect("import").bounds();
     let tools = ui.find("Explore Tools").expect("tools").bounds();
     let shortcuts = ui
-        .find("Ctrl+N to add a session | Ctrl+K to quick connect | F1 for all shortcuts")
+        .find("Ctrl+N to add a session · Ctrl+K to quick connect · F1 for all shortcuts")
         .expect("shortcuts")
         .bounds();
     assert!(

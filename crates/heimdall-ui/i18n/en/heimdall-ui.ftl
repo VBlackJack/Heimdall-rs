@@ -444,7 +444,7 @@ ui-home-subtitle = Add a session, import your existing connections, or explore t
 ui-home-add-button = Add Session
 ui-home-import-button = Import Connections
 ui-home-explore-tools-button = Explore Tools
-ui-home-shortcuts = Ctrl+N to add a session | Ctrl+K to quick connect | F1 for all shortcuts
+ui-home-shortcuts = Ctrl+N to add a session · Ctrl+K to quick connect · F1 for all shortcuts
 ui-home-select = Select a session in the sidebar to see its details.
 ui-home-select-hint = Ctrl+K connects to a host or opens a tool.
 
@@ -1510,7 +1510,6 @@ ui-palette-tool-badge = TOOL
 
 ## The status bar, as the C# one.
 ui-status-ready = Ready. Select a session or open a tool to get started.
-ui-status-tool-ready = { $tool }: { $text }
 ui-status-connected = Connected to: { $name }
 ui-status-connected-short = Connected
 ui-status-state = { $name }: { $state }

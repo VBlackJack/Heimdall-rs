@@ -370,7 +370,7 @@ ui-home-subtitle = Añade una sesión, importa tus conexiones existentes o explo
 ui-home-add-button = Añadir sesión
 ui-home-import-button = Importar conexiones
 ui-home-explore-tools-button = Explorar herramientas
-ui-home-shortcuts = Ctrl+N para añadir una sesión | Ctrl+K para conexión rápida | F1 para todos los atajos
+ui-home-shortcuts = Ctrl+N para añadir una sesión · Ctrl+K para conexión rápida · F1 para todos los atajos
 ui-home-select = Selecciona una sesión en el panel lateral para ver sus detalles.
 ui-home-select-hint = Ctrl+K: conexión rápida a un host o apertura de una herramienta.
 
@@ -1368,7 +1368,6 @@ ui-palette-account = · { $account }
 ui-palette-tool-badge = TOOL
 
 ui-status-ready = Listo. Selecciona una sesión o abre una herramienta para empezar.
-ui-status-tool-ready = { $tool }: { $text }
 ui-status-connected = Conectado a: { $name }
 ui-status-connected-short = Conectado
 ui-status-state = { $name }: { $state }

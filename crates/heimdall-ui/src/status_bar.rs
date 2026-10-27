@@ -669,7 +669,7 @@ pub fn status_text_in(
     let said = status_text(status, notice, targets);
     match tool {
         Some(tool) if notice.is_none() && *status == SessionStatus::Ready => {
-            fl!("ui-status-tool-ready", tool = tool, text = said)
+            fl!("ui-status-state", name = tool, state = said)
         }
         _ => said,
     }

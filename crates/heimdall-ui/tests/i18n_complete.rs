@@ -160,9 +160,10 @@ fn every_english_key_is_named_by_the_code() {
     assert!(unnamed.is_empty(), "keys no code names: {unnamed:#?}");
 }
 
-/// Longest Quick Connect footer hint, in characters, that fits one line of the palette at its
-/// small caption size: the French one wrapped "Echap = fermer" onto a second line at 12 px
-/// and 113 characters (2026-10-25), so a hint is kept well under that.
+/// Longest Quick Connect footer hint, in characters. A proxy for width: the French one
+/// wrapped "Echap = fermer" onto a second line at 12 px and 113 characters (2026-10-25); at
+/// the small caption size (11 px) the 98-character hints measure about 447 px of the 522 px
+/// usable.
 const PALETTE_HINTS_MAX_CHARS: usize = 100;
 
 /// The palette's footer hint stays on one line in every language.
