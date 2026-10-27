@@ -42,6 +42,7 @@ use heimdall_term::GridSize;
 
 fn outlook() -> CitrixProfile {
     CitrixProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("outlook"),
         name: "Outlook".to_owned(),
         group: Some("Apps".to_owned()),
@@ -572,6 +573,7 @@ fn a_citrix_profile_that_cannot_launch_is_refused_with_the_csharp_reason() {
     };
     assert_eq!(
         refused(CitrixProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             store_front_url: Some("ftp://store.lab/".to_owned()),
             ..outlook()
         }),
@@ -579,6 +581,7 @@ fn a_citrix_profile_that_cannot_launch_is_refused_with_the_csharp_reason() {
     );
     assert_eq!(
         refused(CitrixProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             store_front_url: Some("https://admin:secret@store.lab/".to_owned()),
             ..outlook()
         }),
@@ -586,6 +589,7 @@ fn a_citrix_profile_that_cannot_launch_is_refused_with_the_csharp_reason() {
     );
     assert_eq!(
         refused(CitrixProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             store_front_url: None,
             app_name: None,
             ..outlook()
@@ -672,6 +676,7 @@ fn a_citrix_profile_is_edited_and_duplicated_in_its_own_protocol() {
     assert_eq!(
         saved(dir.path()),
         [CitrixProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             app_name: Some("Outlook".to_owned()),
             sso: true,
             ..outlook()
@@ -909,6 +914,7 @@ async fn a_master_password_takes_the_launch_lines_and_a_locked_vault_refuses_the
     let system = SystemCredentials::memory();
     // A profile with no other way to launch: neither StoreFront nor ICA file.
     let bare = CitrixProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("bare"),
         store_front_url: None,
         ..outlook()

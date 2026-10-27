@@ -169,6 +169,7 @@ fn app_with(dir: &Path, port: u16, require_tls: bool) -> App {
     let profiles_file = dir.join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     store.merge_vnc([VncProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("kiosk"),
         name: "Kiosk".to_owned(),
         group: None,

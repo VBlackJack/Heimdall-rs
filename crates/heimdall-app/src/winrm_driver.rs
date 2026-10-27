@@ -291,6 +291,7 @@ pub fn shell(
         .collect();
     arguments.push(command);
     LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name,
         program: Some(program),
         arguments: LocalArguments::List(arguments),

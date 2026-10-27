@@ -62,6 +62,7 @@ async fn session(port: u16) -> RemoteSession {
 
 fn profile(id: &str, port: u16) -> FtpProfile {
     FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new(id),
         name: id.to_owned(),
         group: None,

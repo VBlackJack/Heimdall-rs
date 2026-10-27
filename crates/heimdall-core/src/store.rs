@@ -736,6 +736,48 @@ impl ProfileStore {
                     .find(|profile| &profile.id == id)
                     .map(|profile| profile.remote_os)
             })
+            .or_else(|| {
+                self.rdp
+                    .iter()
+                    .find(|profile| &profile.id == id)
+                    .map(|profile| profile.remote_os)
+            })
+            .or_else(|| {
+                self.local
+                    .iter()
+                    .find(|profile| &profile.id == id)
+                    .map(|profile| profile.remote_os)
+            })
+            .or_else(|| {
+                self.vnc
+                    .iter()
+                    .find(|profile| &profile.id == id)
+                    .map(|profile| profile.remote_os)
+            })
+            .or_else(|| {
+                self.ftp
+                    .iter()
+                    .find(|profile| &profile.id == id)
+                    .map(|profile| profile.remote_os)
+            })
+            .or_else(|| {
+                self.web
+                    .iter()
+                    .find(|profile| &profile.id == id)
+                    .map(|profile| profile.remote_os)
+            })
+            .or_else(|| {
+                self.citrix
+                    .iter()
+                    .find(|profile| &profile.id == id)
+                    .map(|profile| profile.remote_os)
+            })
+            .or_else(|| {
+                self.winrm
+                    .iter()
+                    .find(|profile| &profile.id == id)
+                    .map(|profile| profile.remote_os)
+            })
             .unwrap_or_default()
     }
 

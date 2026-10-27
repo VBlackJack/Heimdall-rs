@@ -99,6 +99,7 @@ fn app(dir: &Path, ftp_port: u16) -> App {
         remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.merge_ftp([FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("files"),
         name: "files".to_owned(),
         group: None,

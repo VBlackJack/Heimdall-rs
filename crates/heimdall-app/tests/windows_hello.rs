@@ -74,6 +74,7 @@ fn tool() -> LocalProfile {
         run_as_administrator: false,
     };
     LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("tool"),
         name: "Tool".to_owned(),
         group: None,
@@ -295,6 +296,7 @@ fn a_local_shell_without_a_profile_does_not_wait() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = gated(dir.path(), 5);
     let effects = app.update(Message::OpenLocal(LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name: "shell".to_owned(),
         program: Some(PROGRAM.to_owned()),
         arguments: heimdall_term::local::LocalArguments::List(Vec::new()),

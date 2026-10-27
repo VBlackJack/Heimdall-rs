@@ -47,6 +47,8 @@ pub struct LocalShell {
     pub working_directory: Option<PathBuf>,
     /// Variables set for it, as the C# `HEIMDALL_*` ones of a saved profile.
     pub environment: Vec<(String, String)>,
+    /// What the shell reaches, as the profile's `RemoteOs`: the tools' platform.
+    pub remote_os: heimdall_core::profile::RemoteOs,
 }
 
 /// What a local attempt needs.

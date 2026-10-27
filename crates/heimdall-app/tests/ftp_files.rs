@@ -59,6 +59,7 @@ async fn session(port: u16) -> RemoteSession {
 
 fn profile(id: &str, port: u16) -> FtpProfile {
     FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new(id),
         name: id.to_owned(),
         group: None,
@@ -723,6 +724,7 @@ async fn a_plain_ftp_session_is_said_to_be_in_clear_and_an_ftps_one_is_not() {
     let port = serve(root.path()).await;
     let dir = tempfile::tempdir().expect("dir");
     let ftps = FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         tls: true,
         ..profile("secure", port)
     };

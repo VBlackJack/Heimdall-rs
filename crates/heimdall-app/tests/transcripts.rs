@@ -67,6 +67,7 @@ fn app(dir: &Path) -> App {
         remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.merge_winrm([WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("dc"),
         name: "DC".to_owned(),
         group: None,
@@ -390,6 +391,7 @@ fn a_profile_s_own_session_logging_wins_over_the_settings_either_way() {
     switch.session_logging = Some(false);
     store.merge_telnet([switch]);
     store.merge_local([LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("shell"),
         name: "Shell".to_owned(),
         group: None,

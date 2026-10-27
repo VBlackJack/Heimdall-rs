@@ -255,6 +255,7 @@ mod tests {
 
     fn profile(host: &str) -> WinRmProfile {
         WinRmProfile {
+            remote_os: crate::profile::RemoteOs::default(),
             id: ProfileId::new("w"),
             name: "W".to_owned(),
             group: None,
@@ -281,6 +282,7 @@ mod tests {
     #[test]
     fn through_a_gateway_the_session_goes_to_the_forward_over_http_only() {
         let routed = WinRmProfile {
+            remote_os: crate::profile::RemoteOs::default(),
             gateway: Some(ProfileId::new("bastion")),
             username: Some("LAB\\admin".to_owned()),
             ..profile("dc01.lab.local")
@@ -300,6 +302,7 @@ mod tests {
             "the forward is dialled: {command}"
         );
         let https = WinRmProfile {
+            remote_os: crate::profile::RemoteOs::default(),
             use_ssl: true,
             port: DEFAULT_WINRM_HTTPS_PORT,
             ..routed.clone()
@@ -315,6 +318,7 @@ mod tests {
         );
         // The profile's host is still checked: it is where the forward leads.
         let bad = WinRmProfile {
+            remote_os: crate::profile::RemoteOs::default(),
             host: "h$(calc)".to_owned(),
             ..routed
         };
@@ -336,6 +340,7 @@ mod tests {
     #[test]
     fn the_session_is_entered_between_the_guard_and_the_mark() {
         let profile = WinRmProfile {
+            remote_os: crate::profile::RemoteOs::default(),
             username: Some("LAB\\admin".to_owned()),
             ..profile("dc01.lab.local")
         };
@@ -352,6 +357,7 @@ mod tests {
     #[test]
     fn a_stored_password_is_read_from_the_environment_then_removed() {
         let profile = WinRmProfile {
+            remote_os: crate::profile::RemoteOs::default(),
             username: Some(" LAB\\o'neil ".to_owned()),
             ..profile("dc01.lab.local")
         };
@@ -392,6 +398,7 @@ mod tests {
     #[test]
     fn through_a_gateway_the_stored_password_is_still_the_servers() {
         let routed = WinRmProfile {
+            remote_os: crate::profile::RemoteOs::default(),
             gateway: Some(ProfileId::new("bastion")),
             username: Some("LAB\\admin".to_owned()),
             ..profile("dc01.lab.local")
@@ -426,6 +433,7 @@ mod tests {
             Err(CommandError::InvalidHost)
         );
         let profile = WinRmProfile {
+            remote_os: crate::profile::RemoteOs::default(),
             username: Some("a\"b".to_owned()),
             ..profile("h")
         };
@@ -448,6 +456,7 @@ mod tests {
     #[test]
     fn https_skipping_checks_and_an_account_are_all_said() {
         let profile = WinRmProfile {
+            remote_os: crate::profile::RemoteOs::default(),
             port: DEFAULT_WINRM_HTTPS_PORT,
             use_ssl: true,
             skip_certificate_check: true,
@@ -465,6 +474,7 @@ mod tests {
     #[test]
     fn skipping_certificate_checks_is_never_said_over_http() {
         let profile = WinRmProfile {
+            remote_os: crate::profile::RemoteOs::default(),
             skip_certificate_check: true,
             ..profile("h")
         };
@@ -507,6 +517,7 @@ mod tests {
     #[test]
     fn every_quote_powershell_ends_a_literal_on_is_doubled() {
         let profile = WinRmProfile {
+            remote_os: crate::profile::RemoteOs::default(),
             username: Some("o'b\u{2018}c\u{2019}d\u{201A}e\u{201B}f".to_owned()),
             ..profile("h")
         };
@@ -523,6 +534,7 @@ mod tests {
     fn an_account_name_no_windows_account_has_is_refused() {
         for username in ["", "  ", "a\"b", "a\nb", "a\u{0}b"] {
             let profile = WinRmProfile {
+                remote_os: crate::profile::RemoteOs::default(),
                 username: Some(username.to_owned()),
                 ..profile("h")
             };

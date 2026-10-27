@@ -37,6 +37,7 @@ use heimdall_term::GridSize;
 
 fn rdp(id: &str, external: bool, rd_gateway: Option<&str>) -> RdpProfile {
     RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: RdpExtras {
             external,
             rd_gateway: rd_gateway.map(str::to_owned),

@@ -49,6 +49,7 @@ fn ssh(id: &str, group: Option<&str>) -> SshProfile {
 
 fn rdp(id: &str, group: Option<&str>) -> RdpProfile {
     RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new(id),
         name: id.to_owned(),

@@ -468,6 +468,7 @@ fn an_ftp_tab_whose_certificate_changed_offers_to_forget_the_server() {
     let profiles_file = dir.path().join("profiles.toml");
     let mut store = heimdall_core::store::ProfileStore::open(&profiles_file).expect("store");
     store.merge_ftp(vec![FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("files"),
         name: "files".to_owned(),
         group: None,

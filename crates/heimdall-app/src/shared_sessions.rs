@@ -1270,6 +1270,7 @@ fn ssh_profile(
 /// accepted on the file's word.
 fn vnc_profile(id: &ProfileId, name: &str, host: &str, port: u16) -> VncProfile {
     VncProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: id.clone(),
         name: name.to_owned(),
         group: None,
@@ -1294,6 +1295,7 @@ fn rdp_profile(
     rd_gateway: Option<&str>,
 ) -> RdpProfile {
     RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: RdpExtras {
             rd_gateway: rd_gateway.map(str::to_owned),
             ..RdpExtras::default()

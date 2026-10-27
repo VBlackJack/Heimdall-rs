@@ -67,6 +67,7 @@ fn elevated(folder: Option<PathBuf>) -> LocalCommand {
 
 fn profile(command: LocalCommand, approved: bool) -> LocalProfile {
     LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("admin"),
         name: "Admin shell".to_owned(),
         group: None,

@@ -60,6 +60,7 @@ fn bastion() -> SshGateway {
 
 fn profile(name: &str, username: Option<&str>, gateway: Option<&str>) -> WinRmProfile {
     WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: id(name),
         name: name.to_owned(),
         group: None,

@@ -146,6 +146,7 @@ fn url(folder: &Path) -> String {
 fn local_shell(app: &mut App, folder: &Path, sink: &Arc<Sink>) -> ((TabId, AttemptId), TabId) {
     let shell = match app
         .update(Message::OpenLocal(LocalShell {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             name: "Shell".to_owned(),
             program: None,
             arguments: LocalArguments::List(Vec::new()),

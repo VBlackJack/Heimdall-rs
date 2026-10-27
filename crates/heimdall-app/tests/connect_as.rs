@@ -55,6 +55,7 @@ fn app(dir: &Path) -> App {
         remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.merge_rdp([RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "Domain controller".to_owned(),
@@ -77,6 +78,7 @@ fn app(dir: &Path) -> App {
         auto_reconnect: true,
     }]);
     store.merge_local([LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("sh"),
         name: "shell".to_owned(),
         group: None,

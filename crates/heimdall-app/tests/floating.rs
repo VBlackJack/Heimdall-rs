@@ -105,6 +105,7 @@ fn profile(id: &str, account: bool) -> SshProfile {
 /// An RDP profile sharing the clipboard.
 fn desktop_profile() -> RdpProfile {
     RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "DC".to_owned(),
@@ -739,6 +740,7 @@ fn detach_secondary_leaves_the_keyboard_where_it_was_outside_the_split() {
 /// A local shell started, with the file browser docked beside it; the shell and the browser.
 fn shell_with_browser(app: &mut App, folder: &Path) -> (TabId, TabId) {
     let local = LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name: "Shell".to_owned(),
         program: None,
         arguments: LocalArguments::List(Vec::new()),

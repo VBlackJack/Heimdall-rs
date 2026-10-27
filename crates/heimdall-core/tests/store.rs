@@ -315,6 +315,7 @@ fn an_unreadable_file_without_a_usable_copy_fails_as_before() {
 
 fn rdp(id: &str) -> RdpProfile {
     RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new(id),
         name: id.to_uppercase(),
@@ -432,6 +433,7 @@ fn vnc_profiles_read_back_with_their_options_and_are_removed_like_the_others() {
     let mut store = ProfileStore::open(&path).expect("opens");
     store.merge_telnet([telnet("t")]);
     let watch = VncProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("v"),
         name: "Kiosk".to_owned(),
         group: None,
@@ -467,6 +469,7 @@ fn vnc_profiles_read_back_with_their_options_and_are_removed_like_the_others() {
 
 fn local(id: &str, line: &str) -> LocalProfile {
     LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new(id),
         name: id.to_uppercase(),
         group: Some("Tools".to_owned()),
@@ -767,6 +770,7 @@ fn a_colour_depth_the_session_cannot_have_is_refused() {
 
 fn winrm(id: &str) -> WinRmProfile {
     WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new(id),
         name: format!("WinRM {id}"),
         group: Some("Windows".to_owned()),
@@ -787,6 +791,7 @@ fn winrm_profiles_read_back_and_are_removed_like_the_others() {
     let mut store = ProfileStore::open(&path).expect("opens");
     store.merge([profile("s", "h")]);
     let moved = WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         port: 5985,
         use_ssl: false,
         ..winrm("w")
@@ -846,6 +851,7 @@ fn a_renamed_profile_keeps_its_old_name_as_its_vault_entry_as_the_csharp_rename_
     store.merge([profile("a", "h1")]);
     store.merge_rdp([rdp("r")]);
     store.merge_vnc([VncProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("v"),
         name: "Kiosk".to_owned(),
         group: None,
@@ -959,6 +965,7 @@ fn ftp_profiles_read_back_and_passive_is_written_only_when_off() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join(PROFILES_FILE_NAME);
     let ftp = |id: &str, passive: bool| FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new(id),
         name: id.to_owned(),
         group: Some("Files".to_owned()),
@@ -997,6 +1004,7 @@ fn citrix_profiles_read_back_with_their_launch_settings() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join(PROFILES_FILE_NAME);
     let store_front = CitrixProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("outlook"),
         name: "Outlook".to_owned(),
         group: Some("Apps".to_owned()),
@@ -1008,6 +1016,7 @@ fn citrix_profiles_read_back_with_their_launch_settings() {
         citrix_id: None,
     };
     let ica = CitrixProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("erp"),
         name: "ERP".to_owned(),
         group: None,
@@ -1030,6 +1039,7 @@ fn citrix_profiles_read_back_with_their_launch_settings() {
 
 fn web_console(id: &str) -> heimdall_core::profile::WebProfile {
     heimdall_core::profile::WebProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new(id),
         name: "iLO".to_owned(),
         group: Some("Lab/BMC".to_owned()),
@@ -1048,6 +1058,7 @@ fn web_consoles_read_back_with_their_address_and_gateway() {
     let path = dir.path().join(PROFILES_FILE_NAME);
     let routed = web_console("ilo");
     let plain = heimdall_core::profile::WebProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("nas"),
         name: "NAS".to_owned(),
         group: None,
@@ -1294,6 +1305,7 @@ fn an_rdp_profile_keeps_what_the_built_in_client_does_not_use_and_its_metadata_i
     let path = dir.path().join(PROFILES_FILE_NAME);
     let mut store = ProfileStore::open(&path).expect("opens");
     let kept = RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         options: RdpOptions {
             resolution: Resolution::MultiMonitor,
             aspect: Aspect::UltraWide,
@@ -1704,6 +1716,40 @@ fn a_version_15_file_reads_with_no_far_end_os_and_a_declared_one_is_kept() {
     assert_eq!(back.remote_os_of(&ssh_id), RemoteOs::Windows);
     assert_eq!(back.remote_os_of(&telnet_id), RemoteOs::Linux);
     assert_eq!(back.remote_os_of(&ProfileId::new("none")), RemoteOs::Auto);
+}
+
+#[test]
+fn an_rdp_and_a_local_profile_keep_a_declared_far_end_os_in_the_file() {
+    use heimdall_core::profile::RemoteOs;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    let mut xrdp = rdp("x");
+    xrdp.remote_os = RemoteOs::Linux;
+    let plain = rdp("w");
+    let wsl = LocalProfile {
+        id: ProfileId::new("wsl"),
+        name: "WSL".to_owned(),
+        group: None,
+        command: LocalCommand::default(),
+        approved: None,
+        session_logging: None,
+        remote_os: RemoteOs::Linux,
+    };
+    store.merge_rdp([xrdp, plain]);
+    store.merge_local([wsl.clone()]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert_eq!(
+        text.matches("remote_os = \"linux\"").count(),
+        2,
+        "written for the two that declare it only: {text}"
+    );
+    let back = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(back.remote_os_of(&ProfileId::new("x")), RemoteOs::Linux);
+    assert_eq!(back.remote_os_of(&ProfileId::new("w")), RemoteOs::Auto);
+    assert_eq!(back.remote_os_of(&ProfileId::new("wsl")), RemoteOs::Linux);
+    assert_eq!(back.local_profiles()[0].remote_os, RemoteOs::Linux);
 }
 
 #[test]

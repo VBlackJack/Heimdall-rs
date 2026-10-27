@@ -81,6 +81,7 @@ fn bastion() -> SshGateway {
 /// "DC", through `gateway`.
 fn profile(gateway: &str) -> WinRmProfile {
     WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("w"),
         name: "DC".to_owned(),
         group: None,
@@ -136,6 +137,7 @@ fn https_through_a_gateway_starts_nothing_and_says_why_as_the_csharp() {
     let mut app = app(
         dir.path(),
         WinRmProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             use_ssl: true,
             port: DEFAULT_WINRM_HTTPS_PORT,
             ..profile("bastion")
@@ -229,6 +231,7 @@ fn a_winrm_profile_reached_directly_is_probed_with_no_route() {
     let mut app = app(
         dir.path(),
         WinRmProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             gateway: None,
             ..profile("bastion")
         },
@@ -248,6 +251,7 @@ fn skipped_certificate_checks_are_said_once_powershell_runs_and_before_ntlm() {
     let mut app = app(
         dir.path(),
         WinRmProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             gateway: None,
             use_ssl: true,
             skip_certificate_check: true,

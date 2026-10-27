@@ -722,6 +722,7 @@ mod tests {
 
     fn dc() -> RdpProfile {
         RdpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             extras: heimdall_core::profile::RdpExtras::default(),
             id: ProfileId::new("dc"),
             name: "dc".to_owned(),
@@ -778,6 +779,7 @@ mod tests {
             ..RdpOptions::default()
         };
         let config = rdp_config(&request(RdpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             extras: heimdall_core::profile::RdpExtras::default(),
             id: ProfileId::new("dc"),
             name: "dc".to_owned(),

@@ -28,6 +28,7 @@ use heimdall_core::store::ProfileStore;
 /// A profile with options of its own, all different from the defaults.
 fn own(follow_defaults: bool) -> RdpProfile {
     RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "dc".to_owned(),

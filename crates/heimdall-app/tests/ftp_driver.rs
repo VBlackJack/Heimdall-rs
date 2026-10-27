@@ -53,6 +53,7 @@ async fn serve(root: &Path, keys: Option<&Path>) -> u16 {
 fn request(port: u16, tls: bool, known_hosts: &Path) -> FtpRequest {
     FtpRequest {
         profile: FtpProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: ProfileId::new("ftp"),
             name: "ftp".to_owned(),
             group: None,

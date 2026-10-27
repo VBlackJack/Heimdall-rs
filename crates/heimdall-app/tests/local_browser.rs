@@ -89,6 +89,7 @@ fn app(dir: &Path) -> App {
 /// A local shell, started in `folder` when one is given.
 fn local(folder: Option<PathBuf>) -> LocalShell {
     LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name: "Shell".to_owned(),
         program: None,
         arguments: LocalArguments::List(Vec::new()),
@@ -605,6 +606,7 @@ fn a_profile_running_another_program_still_opens_the_default_shell_and_stays_as_
     };
     let mut store = ProfileStore::open(&profiles).expect("store");
     store.merge_local([LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new("tool"),
         name: "Tool".to_owned(),
         group: Some("Ops".to_owned()),
@@ -1547,6 +1549,7 @@ fn expected_run(name: &str, folder: &Path) -> (LocalShell, String, bool) {
         other => panic!("{name} does not run here: {other:?}"),
     };
     let shell = LocalShell {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         name: name.to_owned(),
         program: Some(program),
         arguments,

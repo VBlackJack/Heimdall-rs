@@ -67,6 +67,7 @@ async fn idle_client() -> RemoteSession {
 
 fn profile(id: &str, tls: bool) -> FtpProfile {
     FtpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: ProfileId::new(id),
         name: id.to_owned(),
         group: None,

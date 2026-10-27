@@ -153,6 +153,7 @@ async fn putty_is_pointed_at_the_profile_s_port() {
 /// An external RDP profile through the gateway, on `port`.
 fn rdp_profile(server_port: u16, port: Option<u16>) -> RdpProfile {
     RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: RdpExtras {
             external: true,
             ..RdpExtras::default()
@@ -252,6 +253,7 @@ async fn winrm_command(lab: &Lab, dir: &Path, port: Option<u16>) -> String {
     let registry = AnswerRegistry::default();
     let request = heimdall_app::winrm_driver::WinRmRequest {
         profile: heimdall_core::profile::WinRmProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: ProfileId::new("w"),
             name: "DC".to_owned(),
             group: None,

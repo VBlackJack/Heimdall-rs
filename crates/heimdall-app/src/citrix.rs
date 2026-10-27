@@ -479,6 +479,7 @@ mod tests {
 
     fn profile() -> CitrixProfile {
         CitrixProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             id: heimdall_core::profile::ProfileId::new("c"),
             name: "Outlook".to_owned(),
             group: None,
@@ -524,6 +525,7 @@ mod tests {
             })
         );
         let unnamed = CitrixProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             app_name: Some("  ".to_owned()),
             ..profile()
         };
@@ -564,6 +566,7 @@ mod tests {
     #[test]
     fn the_store_front_is_checked_first_as_the_csharp_checks_it() {
         let with = |url: &str| CitrixProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             store_front_url: Some(url.to_owned()),
             ..profile()
         };
@@ -597,12 +600,14 @@ mod tests {
         let file = dir.path().join("outlook.ica");
         std::fs::write(&file, "[ApplicationServers]\n").expect("write");
         let launching = CitrixProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             ica_file: Some(file.display().to_string()),
             ..profile()
         };
         assert_eq!(plan(&launching, None), Ok(CitrixLaunch::IcaFile(file)));
         // Not there: its StoreFront application instead, as the C#.
         let gone = CitrixProfile {
+            remote_os: heimdall_core::profile::RemoteOs::default(),
             ica_file: Some(dir.path().join("gone.ica").display().to_string()),
             ..profile()
         };

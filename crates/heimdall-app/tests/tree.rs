@@ -69,6 +69,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     store.merge([web()]);
     store.merge_rdp([RdpProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         extras: heimdall_core::profile::RdpExtras::default(),
         id: id("rdp"),
         name: "dc".to_owned(),
@@ -100,6 +101,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         remote_os: heimdall_core::profile::RemoteOs::Auto,
     }]);
     store.merge_vnc([VncProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: id("vnc"),
         name: "kiosk".to_owned(),
         group: None,
@@ -114,6 +116,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
     // The default shell.
     let command = LocalCommand::default();
     store.merge_local([LocalProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: id("local"),
         name: "shell".to_owned(),
         group: None,
@@ -129,6 +132,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         },
     );
     store.merge_winrm([WinRmProfile {
+        remote_os: heimdall_core::profile::RemoteOs::default(),
         id: id("winrm"),
         name: "ps".to_owned(),
         group: None,
