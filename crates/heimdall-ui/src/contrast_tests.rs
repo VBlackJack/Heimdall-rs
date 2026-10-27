@@ -213,7 +213,7 @@ fn walk(walk: &mut Walk<'_>, theme: &Theme) {
 
     // Boxes drawn with their own text.
     let boxes: [(&str, BoxStyle); 8] = [
-        ("status counter", styles::status_pill_box(theme)),
+        ("status counter", styles::status_counter(theme)),
         ("folder count badge", styles::count_badge(theme)),
         ("tooltip", styles::tooltip(theme)),
         ("menu card", styles::menu_card(theme)),

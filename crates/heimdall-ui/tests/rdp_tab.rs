@@ -2459,7 +2459,7 @@ fn the_quick_connect_button_opens_quick_connect_over_a_desktop_that_has_the_keyb
     );
     let button = {
         let mut ui = simulator(&shell);
-        ui.find("Quick connect")
+        ui.find("Quick Connect (Ctrl+K)")
             .expect("the navigation's button")
             .bounds()
     };

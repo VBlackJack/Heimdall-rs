@@ -78,8 +78,13 @@ const PILL_GAP: f32 = 20.0;
 /// Space between the card's buttons: the C#'s `Margin="4"` on each.
 const BUTTON_GAP: f32 = 8.0;
 
-/// Space under the "select a session" card's title, as the C# `Margin="0,0,0,16"`.
-const SELECT_TITLE_GAP: f32 = 16.0;
+/// Space under the "select a session" card's title, as the C# `Margin="0,0,0,6"`
+/// (`MainWindow.xaml:2209`).
+const SELECT_TITLE_GAP: f32 = 6.0;
+
+/// Space under the "select a session" card's hint, as the C# `Margin="0,0,0,16"`
+/// (`MainWindow.xaml:2217`).
+const SELECT_HINT_GAP: f32 = 16.0;
 
 /// A round badge of `side` holding `icon` in `glyph`, outlined in the accent if `accented`.
 fn badge<'a, Message: 'a>(
@@ -155,11 +160,12 @@ pub fn welcome<'a, Message: 'a>(
 }
 
 /// The card of a window with sessions saved and none shown, as the C#'s second Launchpad
-/// card (`MainWindow.xaml:2180-2253`): a badge, how to open a session and the button that
-/// connects quickly.
+/// card (`MainWindow.xaml:2180-2253`): a badge, how to open a session, a hint about the
+/// quick connect and the button that connects quickly.
 #[must_use]
 pub fn select<'a, Message: 'a>(
     title: String,
+    hint: String,
     button: Element<'a, Message>,
 ) -> Element<'a, Message> {
     let content = column![
@@ -170,6 +176,11 @@ pub fn select<'a, Message: 'a>(
             .font(styles::SEMIBOLD)
             .align_x(Alignment::Center),
         gap(SELECT_TITLE_GAP),
+        text(hint)
+            .size(font_size::CAPTION)
+            .style(text::secondary)
+            .align_x(Alignment::Center),
+        gap(SELECT_HINT_GAP),
         button,
     ]
     .align_x(Alignment::Center);

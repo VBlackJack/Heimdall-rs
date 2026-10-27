@@ -324,8 +324,10 @@ fn an_empty_tunnels_page_is_the_shared_card_with_the_gateways_link_and_new() {
     {
         let mut ui = simulator(&shell);
         ui.find("No active tunnels").expect("the card's title");
-        // The grid's header means nothing over no row: the card stands alone.
-        assert!(ui.find("Started").is_err(), "no column header");
+        // As the C# grid: its column titles stay over the card.
+        for title in ["Gateway", "Label", "Local", "Remote", "Port", "Started"] {
+            ui.find(title).expect(title);
+        }
         ui.click("Manage gateways in Settings...")
             .expect("the card's hint, the gateways link");
         assert!(
@@ -344,7 +346,7 @@ fn an_empty_tunnels_page_is_the_shared_card_with_the_gateways_link_and_new() {
         ui.find("No active tunnels").is_err(),
         "a tunnel replaces the card"
     );
-    ui.find("Started").expect("the grid is back");
+    ui.find("Started").expect("the grid is still there");
 }
 
 #[test]

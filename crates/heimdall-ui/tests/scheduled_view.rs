@@ -145,6 +145,10 @@ fn without_a_task_the_page_says_so_and_offers_its_own_add() {
         let mut ui = simulator(&shell);
         ui.find("No scheduled tasks configured.")
             .expect("the C# empty state");
+        // As the C# grid: its column titles stay over the card.
+        for title in ["On", "Session", "Type", "Schedule", "Last Run", "Next Run"] {
+            ui.find(title).expect(title);
+        }
         ui.find("+ Add").expect("the header's Add");
         ui.click("Create Task").expect("its own Add");
         let messages: Vec<Message> = ui.into_messages().collect();

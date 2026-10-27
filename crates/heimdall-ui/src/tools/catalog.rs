@@ -237,7 +237,13 @@ pub fn sidebar_panel<'a>(app: &App, filter: &str) -> Element<'a, Message> {
         text(context_label(app))
             .size(font_size::SMALL_CAPTION)
             .style(text::secondary),
-        styles::scroll(list).height(Length::Fill),
+        // The scroll bar's width kept free on the right, so a group's count is not drawn
+        // under the bar, as the tree's rows keep theirs.
+        styles::scroll(container(list).padding(iced::Padding {
+            right: styles::SCROLLBAR_WIDTH,
+            ..iced::Padding::ZERO
+        }))
+        .height(Length::Fill),
     ]
     .spacing(spacing::SM)
     .height(Length::Fill)

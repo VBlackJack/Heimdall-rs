@@ -416,14 +416,11 @@ pub fn status_pill_active(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     }
 }
 
-/// The status bar's counter, a pill that is not a button, as the C#
-/// `StatusBarPillBorderStyle`: the card colour, outlined in the border colour.
-pub fn status_pill_box(theme: &Theme) -> BoxStyle {
-    let brushes = Brushes::of(theme);
+/// The status bar's counter, as the C# run's: the secondary text on the bar itself, no fill
+/// and no border.
+pub fn status_counter(theme: &Theme) -> BoxStyle {
     BoxStyle {
-        background: Some(Background::Color(brushes.card)),
-        text_color: Some(brushes.text),
-        border: brushes.outline(brushes.edge, radius::SM),
+        text_color: Some(Brushes::of(theme).secondary_text),
         ..BoxStyle::default()
     }
 }
@@ -1589,19 +1586,25 @@ mod tests {
         for each in AppTheme::ALL {
             for accent in Accent::ALL {
                 let theme = themes::theme(each, accent);
-                // Quick Connect's label is the secondary button's text on its card; the
-                // counter's words are the pill's, on the card too.
+                // Quick Connect's label is the secondary text on the secondary button's
+                // card; the counter's words are the same text on the bar itself.
                 let button = secondary(&theme, ButtonStatus::Active);
                 let Some(Background::Color(card)) = button.background else {
                     panic!("{each:?}: the button has a card");
                 };
-                let pill = status_pill_box(&theme);
-                assert_eq!(pill.background, Some(Background::Color(card)));
-                for (what, color) in [
-                    ("Quick Connect", button.text_color),
-                    ("counter", pill.text_color.expect("the pill sets its text")),
+                let brushes = Brushes::of(&theme);
+                let counter = status_counter(&theme);
+                assert_eq!(counter.background, None, "no fill, as the C#");
+                assert_eq!(
+                    counter.text_color,
+                    Some(brushes.secondary_text),
+                    "the dim text"
+                );
+                for (what, color, ground) in [
+                    ("Quick Connect", brushes.secondary_text, card),
+                    ("counter", brushes.secondary_text, brushes.surface),
                 ] {
-                    let ratio = contrast(color, card);
+                    let ratio = contrast(color, ground);
                     assert!(
                         ratio >= SMALL_TEXT_CONTRAST,
                         "{each:?}/{accent:?}: the {what} is {ratio:.2}:1"

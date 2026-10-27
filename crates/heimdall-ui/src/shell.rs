@@ -2005,8 +2005,9 @@ const NAV_TITLE_PADDING: iced::Padding = iced::Padding {
     left: 0.0,
 };
 
-/// Room at the toolbar's sides, as the C# `Mw_ToolbarLayout`'s `Margin="8,0"`.
-const NAV_BAR_PADDING: [f32; 2] = [spacing::XS, spacing::SM];
+/// Room at the toolbar's sides, as the C# `Mw_ToolbarLayout`'s `Margin="8,0"`: none above or
+/// below, so the bar is as high as its tabs (about 34 px in the C#).
+const NAV_BAR_PADDING: [f32; 2] = [0.0, spacing::SM];
 
 /// Height of the Quick Connect button, as the C#'s `Height="30"`.
 const QUICK_CONNECT_HEIGHT: f32 = 30.0;
@@ -4186,9 +4187,24 @@ impl Shell {
     #[must_use]
     pub fn status_report(&self) -> String {
         let targets = self.app.broadcast_target_count();
-        let now =
-            crate::status_bar::status_text(&self.app.session_status(), self.app.notice(), targets);
+        let now = self.status_line(targets);
         crate::status_bar::status_report(&now, self.app.announcements(), targets)
+    }
+
+    /// What the left of the status bar says: [`crate::status_bar::status_text`], led by the
+    /// name of the tool whose tab is shown, as the C# bar's "Hash Generator: Ready...".
+    fn status_line(&self, targets: usize) -> String {
+        let tool = self
+            .app
+            .active_tab()
+            .and_then(heimdall_app::Tab::tool)
+            .map(crate::tools::label);
+        crate::status_bar::status_text_in(
+            tool.as_deref(),
+            &self.app.session_status(),
+            self.app.notice(),
+            targets,
+        )
     }
 
     fn shortcut(&mut self, shortcut: WindowShortcut) -> Vec<Effect> {
@@ -6227,18 +6243,29 @@ impl Shell {
                     self.app.profile_state(&profile.id),
                     self.app.can_edit(&profile.id),
                 ),
+                // As the C# card (`MainWindow.xaml:2194-2250`): a hint line, then the quick
+                // connect button, a magnifier before its label.
                 None => crate::launchpad::select(
                     fl!("ui-home-select"),
-                    button(text(fl!("ui-nav-quick-connect")).size(font_size::BODY))
-                        .padding(crate::launchpad::SELECT_BUTTON_PADDING)
-                        .style(styles::secondary)
-                        .on_press(Message::TreeShortcut(TreeShortcut::QuickConnect))
-                        .into(),
+                    fl!("ui-home-select-hint"),
+                    button(
+                        row![
+                            icons::icon(Icon::Zoom, Tint::Accent, font_size::BODY),
+                            text(fl!("ui-nav-quick-connect")).size(font_size::BODY),
+                        ]
+                        .spacing(QUICK_CONNECT_GAP)
+                        .align_y(iced::Alignment::Center),
+                    )
+                    .padding(crate::launchpad::SELECT_BUTTON_PADDING)
+                    .style(styles::secondary)
+                    .on_press(Message::TreeShortcut(TreeShortcut::QuickConnect))
+                    .into(),
                 ),
             };
         }
         // The buttons keep the order and the state of the C# Launchpad's
-        // (`MainWindow.xaml:2155-2174`): the import is off with nothing to import.
+        // (`MainWindow.xaml:2155-2174`): the import is always on, as the C# one, which opens
+        // its file dialog. The C# Heimdall's own data is offered first when there is some.
         let action = |label: String| {
             button(text(label).size(font_size::BODY_LARGE)).padding(crate::tokens::BUTTON_PADDING)
         };
@@ -6253,11 +6280,11 @@ impl Shell {
                     .into(),
                 action(fl!("ui-home-import-button"))
                     .style(styles::secondary)
-                    .on_press_maybe(
-                        self.app
-                            .can_import()
-                            .then_some(Message::App(AppMessage::ImportLegacy)),
-                    )
+                    .on_press(Message::App(if self.app.can_import() {
+                        AppMessage::ImportLegacy
+                    } else {
+                        AppMessage::Sessions(heimdall_app::SessionsMessage::File)
+                    }))
                     .into(),
                 // As the C# empty state's "Explore Tools", which opens the Tools page
                 // as the navigation does (`MainWindow.xaml.cs:2331`).
@@ -6408,9 +6435,10 @@ impl Shell {
                 button(
                     row![
                         icons::icon(Icon::Zoom, Tint::Accent, font_size::BODY),
-                        // The primary text, not the C#'s `TextSecondaryBrush`: that is about 3:1
-                        // on the button in Dracula, below the 4.5:1 small text needs.
-                        text(fl!("ui-nav-quick-connect")).size(font_size::CAPTION),
+                        // Dim, as the C# label (`TextSecondaryBrush`, `MainWindow.xaml:253`).
+                        text(fl!("ui-nav-quick-connect"))
+                            .size(font_size::CAPTION)
+                            .style(text::secondary),
                     ]
                     .spacing(QUICK_CONNECT_GAP)
                     .align_y(iced::Alignment::Center),
@@ -6482,7 +6510,7 @@ impl Shell {
         let targets = self.app.broadcast_target_count();
         let tunnels = self.app.live_tunnels();
         crate::status_bar::view(
-            crate::status_bar::status_text(&self.app.session_status(), self.app.notice(), targets),
+            self.status_line(targets),
             row(self.share_controls())
                 .push(self.tunnels_toggle())
                 .push(self.broadcast_controls(targets))
@@ -7058,9 +7086,7 @@ impl Shell {
     /// instead of sharing the widest row's.
     fn tree_list(&self) -> Vec<(bool, Element<'_, Message>)> {
         let mut list: Vec<(bool, Element<'_, Message>)> = Vec::new();
-        if self.app.profile_summaries().is_empty() {
-            list.push((false, text(fl!("ui-sidebar-empty")).into()));
-        }
+        // Nothing is said of an empty inventory: the window's welcome says it, as the C# tree.
         let rows = self.app.tree_rows(&self.search);
         let filter = self.app.tree_filter();
         let searching = !self.search.trim().is_empty() || filter.is_active();
