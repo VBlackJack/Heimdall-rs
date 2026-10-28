@@ -266,11 +266,29 @@ pub enum Icon {
     NewWindow,
     /// The `Key` glyph (`E8D7`): a key, the empty state of the hash, HMAC and JWT pages.
     Key,
+    /// The `Edit` glyph (`E70F`): a pencil, a command or runbook edited.
+    Edit,
+    /// The `Copy` glyph (`F413`): two sheets, a command or runbook duplicated.
+    Copy,
+    /// The `Delete` glyph (`E74D`): a bin, a command or runbook deleted.
+    Trash,
+    /// The `Play` glyph (`E768`): a triangle, a runbook run.
+    Play,
+    /// The `Sync` glyph (`E895`): two arrows turning, a library synchronized.
+    Sync,
+    /// The `Download` glyph (`E8B5`): an arrow down into a tray, a library imported.
+    Import,
+    /// The `Upload` glyph (`EDE1`): an arrow up out of a tray, a library exported.
+    Export,
+    /// The `History` glyph (`E81C`): a clock, the history of the commands sent.
+    History,
+    /// The `Runbooks` glyph (`E9D5`): a checklist, the runbooks panel.
+    Runbooks,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 102] = [
+    pub const ALL: [Self; 111] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -373,6 +391,15 @@ impl Icon {
         Self::Lock,
         Self::NewWindow,
         Self::Key,
+        Self::Edit,
+        Self::Copy,
+        Self::Trash,
+        Self::Play,
+        Self::Sync,
+        Self::Import,
+        Self::Export,
+        Self::History,
+        Self::Runbooks,
     ];
 
     /// The icon of `kind`, as the C# `ConnectionTypeToGeometryConverter` picks it.
@@ -712,6 +739,25 @@ impl Icon {
             Self::NewWindow => {
                 "M2.5,4.5 L13.5,4.5 L13.5,13.5 L2.5,13.5 Z M2.5,7 L13.5,7 M6.5,2 L9,2 M9,2 L9,4.5 M9,2 L6,5"
             }
+            Self::Edit => "M2,14 L2.8,10.8 L11,2.6 L13.4,5 L5.2,13.2 Z M9.6,4 L12,6.4",
+            Self::Copy => "M5.5,5.5 L13.5,5.5 L13.5,14 L5.5,14 Z M2.5,10.5 L2.5,2 L10.5,2",
+            Self::Trash => {
+                "M2.5,4 L13.5,4 M6,4 L6,2 L10,2 L10,4 M4,4 L4.8,14 L11.2,14 L12,4 M6.8,6.5 L6.8,11.5 M9.2,6.5 L9.2,11.5"
+            }
+            Self::Play => "M4.5,2.5 L12.5,8 L4.5,13.5 Z",
+            Self::Sync => {
+                "M3.2,8 A4.8,4.8 0 0 1 12.8,8 M10.4,6.6 L12.8,8.2 L14.6,5.8 M12.8,8 A4.8,4.8 0 0 1 3.2,8 M5.6,9.4 L3.2,7.8 L1.4,10.2"
+            }
+            Self::Import => {
+                "M8,2 L8,10 M4.5,6.8 L8,10.3 L11.5,6.8 M2.5,11 L2.5,14 L13.5,14 L13.5,11"
+            }
+            Self::Export => {
+                "M8,10 L8,2 M4.5,5.2 L8,1.7 L11.5,5.2 M2.5,11 L2.5,14 L13.5,14 L13.5,11"
+            }
+            Self::History => "M8,2 A6,6 0 1 1 7.99,2 Z M8,5 L8,8.2 L10.2,9.6",
+            Self::Runbooks => {
+                "M2,3.5 L3.2,4.8 L5.2,2.2 M7.5,3.8 L14,3.8 M2,8.5 L3.2,9.8 L5.2,7.2 M7.5,8.8 L14,8.8 M2,13.5 L3.2,14.8 L5.2,12.2 M7.5,13.8 L14,13.8"
+            }
         }
     }
 
@@ -758,7 +804,16 @@ impl Icon {
             | Self::FullScreen
             | Self::Lock
             | Self::Key
-            | Self::NewWindow => Some(GLYPH_STROKE_WIDTH),
+            | Self::NewWindow
+            | Self::Edit
+            | Self::Copy
+            | Self::Trash
+            | Self::Play
+            | Self::Sync
+            | Self::Import
+            | Self::Export
+            | Self::History
+            | Self::Runbooks => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }
     }
