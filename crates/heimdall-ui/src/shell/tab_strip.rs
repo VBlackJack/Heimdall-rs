@@ -54,8 +54,11 @@ const TAB_STRIP_PADDING: iced::Padding = iced::Padding {
 /// Room around a tab's heading, as the C# tab header's `10,6`.
 const TAB_HEADING_PADDING: [f32; 2] = [6.0, 10.0];
 
-/// Side of a tab's close button, as the C#'s 20 by 20.
-const TAB_CLOSE_SIDE: f32 = 20.0;
+/// Side of a tab's close button, as the C#'s 24 by 24 (`MainWindow.xaml:1722`): the tallest
+/// thing in a tab's heading, so it sets the tab's height (1 + 8 + 6 + 24 + 6 + 2 + 8 = 55
+/// in the C#, the 1 and the 2 being its border and its group bar, which the underline of 3
+/// stands for here).
+const TAB_CLOSE_SIDE: f32 = 24.0;
 
 /// Side of the pin before a pinned tab's title, as the C#'s glyph.
 const TAB_PIN_SIDE: f32 = 10.0;

@@ -2701,6 +2701,7 @@ fn the_font_size_set_starts_new_terminals_and_ctrl_0_comes_back_to_it() {
 
 #[test]
 fn the_font_family_chosen_draws_every_terminal_and_one_missing_falls_back_visibly() {
+    use heimdall_core::settings::TERMINAL_FONT_FAMILY_DEFAULT;
     use heimdall_ui::terminal_view::font::{FONT_FAMILY, TerminalFont};
 
     let dir = tempfile::tempdir().expect("dir");
@@ -2710,12 +2711,17 @@ fn the_font_family_chosen_draws_every_terminal_and_one_missing_falls_back_visibl
         let view = shell.terminal_view(tab, true);
         (view.family(), view.metrics())
     };
-    assert_eq!(shell.terminal_font(), TerminalFont::EMBEDDED);
+    // The C# default family ("Consolas") where this computer has it, the embedded one else.
+    let default_font = TerminalFont::chosen(TERMINAL_FONT_FAMILY_DEFAULT);
+    assert_eq!(shell.terminal_font(), default_font);
     assert_eq!(
         drawn(&shell),
         (
-            FONT_FAMILY,
-            heimdall_ui::terminal_view::metrics::CellMetrics::default()
+            default_font.family,
+            heimdall_ui::terminal_view::metrics::CellMetrics::of(
+                default_font.metrics,
+                heimdall_ui::terminal_view::metrics::DEFAULT_FONT_SIZE
+            )
         )
     );
     let _ = shell.update(Message::ShowSettings);
@@ -2755,7 +2761,10 @@ fn the_font_family_chosen_draws_every_terminal_and_one_missing_falls_back_visibl
     let _ = shell.update(Message::App(AppMessage::Settings(
         heimdall_app::SettingsMessage::TerminalFontFamily(String::new()),
     )));
-    assert_eq!(shell.app().settings().terminal_font_family, FONT_FAMILY);
+    assert_eq!(
+        shell.app().settings().terminal_font_family,
+        TERMINAL_FONT_FAMILY_DEFAULT
+    );
 }
 
 #[test]

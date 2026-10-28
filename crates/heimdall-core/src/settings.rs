@@ -1149,9 +1149,20 @@ pub const TERMINAL_FONT_SIZE_UNWRITTEN: u16 = 15;
 /// Smallest terminal font size accepted, as the C# setting's range.
 pub const TERMINAL_FONT_SIZE_MIN: u16 = 8;
 
-/// Family of the terminals' text unless chosen: the one embedded in the application, which
-/// every terminal was drawn in before the family could be chosen.
-pub const TERMINAL_FONT_FAMILY_DEFAULT: &str = "Source Code Pro";
+/// Family of the font embedded in the application, which every terminal was drawn in before
+/// the family could be chosen, and which draws any terminal whose chosen family the computer
+/// lacks.
+pub const TERMINAL_FONT_FAMILY_EMBEDDED: &str = "Source Code Pro";
+
+/// Family of the terminals' text unless chosen, as the C# `DefaultTerminalFontFamily`
+/// (`AppSettings.cs:210`, "Consolas"): the system font of Windows, where the C# runs; the
+/// embedded family elsewhere, no other system having Consolas and the font being no one
+/// this application may carry.
+pub const TERMINAL_FONT_FAMILY_DEFAULT: &str = if cfg!(windows) {
+    "Consolas"
+} else {
+    TERMINAL_FONT_FAMILY_EMBEDDED
+};
 
 /// `family` as the settings keep it: trimmed, the default when nothing is left.
 #[must_use]

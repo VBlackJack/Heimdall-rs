@@ -967,11 +967,20 @@ fn resolution_presets_round_trip_and_reset_with_the_other_rdp_settings() {
 }
 
 #[test]
-fn the_terminal_font_family_is_the_embedded_one_until_chosen_and_kept_as_named() {
-    use heimdall_core::settings::TERMINAL_FONT_FAMILY_DEFAULT;
+fn the_terminal_font_family_is_the_csharp_default_until_chosen_and_kept_as_named() {
+    use heimdall_core::settings::{TERMINAL_FONT_FAMILY_DEFAULT, TERMINAL_FONT_FAMILY_EMBEDDED};
 
     let dir = tempfile::tempdir().expect("dir");
-    assert_eq!(TERMINAL_FONT_FAMILY_DEFAULT, "Source Code Pro");
+    assert_eq!(TERMINAL_FONT_FAMILY_EMBEDDED, "Source Code Pro");
+    // The C# `DefaultTerminalFontFamily` where the C# runs, the embedded one elsewhere.
+    assert_eq!(
+        TERMINAL_FONT_FAMILY_DEFAULT,
+        if cfg!(windows) {
+            "Consolas"
+        } else {
+            "Source Code Pro"
+        }
+    );
     assert_eq!(
         Settings::default().terminal_font_family,
         TERMINAL_FONT_FAMILY_DEFAULT
