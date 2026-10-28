@@ -434,3 +434,119 @@ fn an_import_says_the_first_command_left_out_and_refuses_a_file_of_too_many() {
         Err(LibraryError::TooManyActions)
     ));
 }
+
+/// A draft whose Linux table is `rows`, over the pattern `linux`.
+fn tabled(linux: &str, rows: Vec<ParameterDraft>) -> Draft {
+    Draft {
+        linux_parameters: Some(rows),
+        ..draft("Table", linux)
+    }
+}
+
+fn row(name: &str) -> ParameterDraft {
+    ParameterDraft {
+        name: name.to_owned(),
+        ..ParameterDraft::default()
+    }
+}
+
+#[test]
+fn a_parameter_table_is_the_whole_truth_as_in_the_csharp() {
+    let mut library = UserLibrary::default();
+    let mut port = row(" port ");
+    port.label = " Port ".to_owned();
+    port.kind = "int".to_owned();
+    port.default_value = "22".to_owned();
+    port.required = true;
+    port.description = "The port".to_owned();
+    let mut mode = row("mode");
+    mode.kind = CHOICE_TYPE.to_owned();
+    mode.allowed_values = "fast, slow, FAST, ".to_owned();
+    // A placeholder the table does not list is left as written, and a row with no name is
+    // not a parameter.
+    let mut draft = tabled("nc {host} {port} {mode}", vec![port, row(""), mode]);
+    draft.linux_name = " Netcat ".to_owned();
+    let id = library.upsert(&draft).expect("kept");
+    let template = library
+        .get(&id)
+        .and_then(|command| command.template(TemplatePlatform::Linux))
+        .expect("a template");
+    assert_eq!(template.name, "Netcat");
+    let names: Vec<&str> = template.parameters.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["port", "mode"]);
+    let port = &template.parameters[0];
+    assert_eq!(
+        (port.label.as_str(), port.kind.as_str(), port.required),
+        ("Port", "int", true)
+    );
+    assert_eq!(port.default_value.as_deref(), Some("22"));
+    assert_eq!(port.description.as_deref(), Some("The port"));
+    assert_eq!(
+        template.parameters[1].allowed_values.as_deref(),
+        Some(&["fast".to_owned(), "slow".to_owned()][..])
+    );
+}
+
+#[test]
+fn a_table_draws_the_drift_between_the_pattern_and_its_parameters() {
+    let mut draft = tabled("ping {host} {count}", vec![row("count"), row("unused")]);
+    assert_eq!(
+        draft.drift(TemplatePlatform::Linux),
+        (vec!["host".to_owned()], vec!["unused".to_owned()])
+    );
+    draft.linux_pattern.clear();
+    assert_eq!(draft.drift(TemplatePlatform::Linux), (Vec::new(), Vec::new()));
+}
+
+#[test]
+fn two_rows_of_one_name_are_refused_and_the_rows_are_counted() {
+    let mut library = UserLibrary::default();
+    assert_eq!(
+        library.upsert(&tabled("ls", vec![row("a"), row("a")])),
+        Err(DraftError::ParameterDuplicate)
+    );
+    let many = (0..=MAX_PARAMETERS).map(|n| row(&format!("p{n}"))).collect();
+    assert_eq!(
+        library.upsert(&tabled("ls", many)),
+        Err(DraftError::TooManyParameters)
+    );
+    assert!(library.commands().is_empty());
+}
+
+#[test]
+fn editing_through_the_table_keeps_how_a_parameter_is_quoted() {
+    let mut library = UserLibrary::default();
+    let id = library
+        .upsert(&draft("Echo", "echo '{text}'"))
+        .expect("kept");
+    let mut command = library.get(&id).cloned().expect("there");
+    command
+        .linux_command_template
+        .as_mut()
+        .expect("template")
+        .parameters[0]
+        .quoting = Some(Quoting::InlineInQuotes);
+    library.commands[0] = command;
+    let mut edit = Draft::of(library.get(&id).expect("there"));
+    edit.parameters_mut(TemplatePlatform::Linux)[0].label = "Words".to_owned();
+    library.upsert(&edit).expect("kept");
+    let parameter = &library
+        .get(&id)
+        .and_then(|each| each.template(TemplatePlatform::Linux))
+        .expect("template")
+        .parameters[0];
+    assert_eq!(parameter.label, "Words");
+    assert_eq!(parameter.quoting, Some(Quoting::InlineInQuotes));
+}
+
+#[test]
+fn a_draft_with_no_table_declares_the_placeholders_as_before() {
+    let mut library = UserLibrary::default();
+    let id = library.upsert(&draft("Ping", "ping {host}")).expect("kept");
+    let template = library
+        .get(&id)
+        .and_then(|each| each.template(TemplatePlatform::Linux))
+        .expect("template");
+    assert_eq!(template.parameters.len(), 1);
+    assert_eq!(template.parameters[0].name, "host");
+}
