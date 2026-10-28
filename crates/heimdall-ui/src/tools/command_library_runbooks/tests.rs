@@ -717,3 +717,37 @@ fn a_delete_that_could_not_be_made_keeps_the_selection() {
     assert_eq!(pane.selected.as_deref(), Some(id.as_str()));
     assert_eq!(pane.store.runbooks().len(), 1);
 }
+
+#[test]
+fn a_changed_editor_asks_before_it_is_thrown_away_and_a_clean_one_does_not() {
+    let folder = tempfile::tempdir().expect("folder");
+    let mut pane = pane_in(folder.path());
+    send(&mut pane, RunbookMessage::New);
+    send(&mut pane, RunbookMessage::Cancel);
+    assert!(pane.editor.is_none(), "nothing changed");
+
+    send(&mut pane, RunbookMessage::New);
+    send(&mut pane, RunbookMessage::Name("Draft".to_owned()));
+    send(&mut pane, RunbookMessage::Cancel);
+    assert!(pane.is_asking_to_discard());
+    send(&mut pane, RunbookMessage::KeepEditing);
+    assert!(pane.is_editing() && !pane.is_asking_to_discard());
+    send(&mut pane, RunbookMessage::Cancel);
+    send(&mut pane, RunbookMessage::DiscardEdit);
+    assert!(pane.editor.is_none());
+    assert!(pane.store.runbooks().is_empty());
+}
+
+#[test]
+fn enter_in_the_search_box_adds_the_first_action_found() {
+    let folder = tempfile::tempdir().expect("folder");
+    let mut pane = pane_in(folder.path());
+    send(&mut pane, RunbookMessage::New);
+    send(
+        &mut pane,
+        RunbookMessage::PickSearch("traceroute".to_owned()),
+    );
+    send(&mut pane, RunbookMessage::PickSubmit);
+    let steps = pane.editor.as_ref().map(|editor| editor.steps.len());
+    assert_eq!(steps, Some(1));
+}

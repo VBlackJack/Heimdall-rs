@@ -26,12 +26,16 @@ use std::path::Path;
 use heimdall_app::tools::ToolId;
 use heimdall_app::{App, AppConfig, TabId};
 use heimdall_core::tools::runbooks::{RUNBOOKS_FILE, Runbook, RunbookStore, Step};
-use heimdall_core::tools::user_commands::TemplatePlatform;
+use heimdall_core::tools::user_commands::{
+    Criticality, LIBRARY_FILE, TemplatePlatform, UserLibrary, UserPlatform,
+};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
-use heimdall_ui::tools::{CommandLibraryMessage, RunbookMessage, ToolMessage};
+use heimdall_ui::tools::{
+    CommandField, CommandLibraryMessage, ParamField, RunbookMessage, ToolMessage,
+};
 use iced::{Settings, Size};
 
 /// Size of the simulated window, in logical pixels.
@@ -128,16 +132,6 @@ fn a_press_on_a_row_selects_the_runbook() {
 }
 
 #[test]
-fn the_editor_still_has_the_whole_page_until_it_is_a_dialog() {
-    let dir = tempfile::tempdir().expect("dir");
-    let (mut shell, tab) = opened(dir.path());
-    let _ = shell.update(runbooks(tab, RunbookMessage::Toggle));
-    let _ = shell.update(runbooks(tab, RunbookMessage::New));
-    let mut ui = simulator(&shell);
-    assert!(ui.find("Search commands").is_err());
-}
-
-#[test]
 fn a_run_keeps_its_buttons_in_the_window_at_800_by_600() {
     const SMALL: Size = Size::new(800.0, 600.0);
     let dir = tempfile::tempdir().expect("dir");
@@ -173,4 +167,207 @@ fn the_list_and_the_panel_share_a_tall_window_without_a_blank_strip() {
     // The panel's row is in the lower part of the window and the list above it has room.
     assert!(panel.y > search.y + 128.0, "{panel:?} {search:?}");
     assert!(panel.y + panel.height <= WINDOW.height, "{panel:?}");
+}
+
+fn library(tab: TabId, message: CommandLibraryMessage) -> Message {
+    Message::Tool(tab, ToolMessage::CmdLib(message))
+}
+
+fn type_into(shell: &mut Shell, tab: TabId, field: CommandField, value: &str) {
+    let _ = shell.update(library(
+        tab,
+        CommandLibraryMessage::Field(field, value.to_owned()),
+    ));
+}
+
+fn param(shell: &mut Shell, tab: TabId, index: usize, field: ParamField, value: &str) {
+    let _ = shell.update(library(
+        tab,
+        CommandLibraryMessage::ParamText(TemplatePlatform::Linux, index, field, value.to_owned()),
+    ));
+}
+
+/// The user's commands as the file holds them.
+fn kept(dir: &Path) -> UserLibrary {
+    UserLibrary::load(&dir.join(LIBRARY_FILE)).expect("a library")
+}
+
+/// What the dialog says of values written in the pattern and declared nowhere.
+const UNDECLARED: &str = "Written in the command but not declared as parameters, so they will be added as text parameters when you save: host, count";
+
+#[test]
+fn the_runbook_editor_is_a_dialog_over_the_list_and_escape_cancels_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path());
+    let _ = shell.update(runbooks(tab, RunbookMessage::Toggle));
+    let _ = shell.update(runbooks(tab, RunbookMessage::New));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("New runbook").expect("the dialog's title");
+        ui.find("When a step fails").expect("the mode, now a combo");
+        ui.find("Save").expect("Save");
+        ui.find("Cancel").expect("Cancel");
+        ui.find("Search commands")
+            .expect("the list stays under the veil");
+    }
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    let mut ui = simulator(&shell);
+    assert!(ui.find("Save").is_err(), "Escape closed the dialog");
+}
+
+#[test]
+fn a_runbook_dialog_saves_on_enter() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path());
+    let _ = shell.update(runbooks(tab, RunbookMessage::Toggle));
+    let _ = shell.update(runbooks(tab, RunbookMessage::New));
+    let _ = shell.update(runbooks(tab, RunbookMessage::Name("Second".to_owned())));
+    let _ = shell.update(runbooks(tab, RunbookMessage::AddLiteral));
+    let _ = shell.update(runbooks(
+        tab,
+        RunbookMessage::Command(0, "uptime".to_owned()),
+    ));
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    let store =
+        RunbookStore::load(&dir.path().join(RUNBOOKS_FILE), &|_: &str| None).expect("loaded");
+    assert!(store.runbooks().iter().any(|each| each.name == "Second"));
+    let mut ui = simulator(&shell);
+    assert!(ui.find("Save").is_err(), "Enter saved and closed it");
+}
+
+#[test]
+fn the_command_dialog_edits_a_parameter_row_and_saves_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path());
+    let _ = shell.update(library(tab, CommandLibraryMessage::New));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Title").expect("the dialog's fields");
+        ui.find("Risk Level").expect("the risk combo's label");
+        ui.find("+ Parameter").expect("a template asks for rows");
+    }
+    type_into(&mut shell, tab, CommandField::Title, "Ping");
+    type_into(&mut shell, tab, CommandField::Category, "Network");
+    let _ = shell.update(library(
+        tab,
+        CommandLibraryMessage::EditPlatform(UserPlatform::Linux),
+    ));
+    type_into(
+        &mut shell,
+        tab,
+        CommandField::LinuxPattern,
+        "ping {host} {count}",
+    );
+    {
+        let mut ui = simulator(&shell);
+        ui.find(UNDECLARED).expect("the C# warning");
+    }
+    let add = || {
+        library(
+            tab,
+            CommandLibraryMessage::AddParam(TemplatePlatform::Linux),
+        )
+    };
+    let _ = shell.update(add());
+    param(&mut shell, tab, 0, ParamField::Name, "host");
+    param(&mut shell, tab, 0, ParamField::Label, "Target");
+    let _ = shell.update(library(
+        tab,
+        CommandLibraryMessage::ParamRequired(TemplatePlatform::Linux, 0, true),
+    ));
+    let _ = shell.update(add());
+    param(&mut shell, tab, 1, ParamField::Name, "count");
+    // A third row, removed again.
+    let _ = shell.update(add());
+    let _ = shell.update(library(
+        tab,
+        CommandLibraryMessage::RemoveParam(TemplatePlatform::Linux, 2),
+    ));
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find(UNDECLARED).is_err(), "both are declared now");
+    }
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    let library = kept(dir.path());
+    let command = library.commands().first().expect("saved");
+    let template = command.template(TemplatePlatform::Linux).expect("template");
+    assert_eq!(template.parameters.len(), 2);
+    assert_eq!(template.parameters[0].name, "host");
+    assert_eq!(template.parameters[0].label, "Target");
+    assert!(template.parameters[0].required);
+    assert_eq!(template.parameters[1].name, "count");
+}
+
+#[test]
+fn escape_closes_a_clean_dialog_and_asks_before_a_changed_one_is_thrown_away() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path());
+    // Nothing typed: Escape closes it at once.
+    let _ = shell.update(library(tab, CommandLibraryMessage::New));
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("Risk Level").is_err(), "a clean dialog closes");
+    }
+    // Something typed: the C# question first.
+    let _ = shell.update(library(tab, CommandLibraryMessage::New));
+    type_into(&mut shell, tab, CommandField::Title, "Lost");
+    type_into(&mut shell, tab, CommandField::Category, "Network");
+    type_into(&mut shell, tab, CommandField::WindowsPattern, "Get-Date");
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Unsaved Changes").expect("the question");
+        ui.find("You have unsaved changes. Discard them and close?")
+            .expect("its words");
+        ui.find("Risk Level").expect("the dialog is still open");
+    }
+    // Enter does not answer it; a second Escape is its "No".
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert!(
+        kept(dir.path()).commands().is_empty(),
+        "Enter saved nothing"
+    );
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("Unsaved Changes").is_err(), "the question is gone");
+        ui.find("Risk Level").expect("still editing");
+    }
+    // Cancel asks again, and Yes throws the changes away.
+    let _ = shell.update(library(tab, CommandLibraryMessage::CancelEdit));
+    let _ = shell.update(library(tab, CommandLibraryMessage::DiscardEdit));
+    assert!(kept(dir.path()).commands().is_empty());
+    let mut ui = simulator(&shell);
+    assert!(ui.find("Risk Level").is_err(), "the dialog is closed");
+}
+
+#[test]
+fn the_risk_level_is_a_combo_box_whose_choice_is_kept() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path());
+    let _ = shell.update(library(tab, CommandLibraryMessage::New));
+    {
+        // One drop-down under its label, and no longer a chip per level: the three names are
+        // not buttons of the form any more (a pick list draws the one chosen, not the rest).
+        let mut ui = simulator(&shell);
+        ui.find("Risk Level").expect("the drop-down's label");
+        ui.find("Platforms")
+            .expect("the platform drop-down beside it");
+        assert!(ui.find("Dangerous").is_err(), "no chip for a level");
+    }
+    type_into(&mut shell, tab, CommandField::Title, "Wipe");
+    type_into(&mut shell, tab, CommandField::Category, "Disk");
+    let _ = shell.update(library(
+        tab,
+        CommandLibraryMessage::EditPlatform(UserPlatform::Linux),
+    ));
+    type_into(&mut shell, tab, CommandField::LinuxPattern, "sync");
+    let _ = shell.update(library(
+        tab,
+        CommandLibraryMessage::EditLevel(Criticality::Dangerous),
+    ));
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    let library = kept(dir.path());
+    assert_eq!(library.commands()[0].level, Criticality::Dangerous);
 }
