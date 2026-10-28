@@ -127,6 +127,35 @@ fn text_in(ui: &mut common::Drawn<'_>, label: &str, area: Rectangle) -> Rectangl
     .unwrap_or_else(|_| panic!("{label} in {area:?}"))
 }
 
+/// The version line the page draws, read from the page: `Version <release>+<7 hex digits>`,
+/// the C#'s informational version with the commit, written out here and not rebuilt from the
+/// page's own helper. A build with no git to ask shows the release alone.
+fn shown_version(ui: &mut common::Drawn<'_>) -> String {
+    let said = ui
+        .find(|candidate: Candidate<'_>| match candidate {
+            Candidate::Text { content, .. } if content.starts_with("Version ") => {
+                Some(content.to_owned())
+            }
+            _ => None,
+        })
+        .expect("the version line");
+    let release = heimdall_app::update_check::display_version();
+    match heimdall_ui::about_view::commit() {
+        Some(commit) => {
+            assert!(
+                commit.len() == 7
+                    && commit
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                "seven lower-case hex digits: {commit}"
+            );
+            assert_eq!(said, format!("Version {release}+{commit}"));
+        }
+        None => assert_eq!(said, format!("Version {release}")),
+    }
+    said
+}
+
 fn near(found: f32, expected: f32) -> bool {
     (found - expected).abs() <= TOLERANCE
 }
@@ -137,7 +166,7 @@ fn the_about_tab_says_the_version_and_where_the_data_is_and_turns_the_log_off() 
     let mut shell = shell(dir.path());
     let messages: Vec<Message> = {
         let mut ui = simulator(&shell);
-        let version = format!("Version {}", heimdall_ui::about_view::version_with_commit());
+        let version = shown_version(&mut ui);
         let config = dir.path().display().to_string();
         for label in [
             version.as_str(),
@@ -202,7 +231,7 @@ fn the_page_is_one_centred_column_as_wide_as_the_csharps_with_every_card_in_it()
 
     // The application's card: its name and version centred over the column, then its
     // author and licence, labels in one column and values beside them.
-    let version = format!("Version {}", heimdall_ui::about_view::version_with_commit());
+    let version = shown_version(&mut ui);
     let mut above = column.y;
     for label in ["Heimdall-rs", version.as_str()] {
         let bounds = text_in(&mut ui, label, column);

@@ -2104,6 +2104,7 @@ ui-settings-session-tree = Árbol de sesiones
 ui-settings-show-properties-panel = Mostrar el panel de propiedades
 ui-settings-show-properties-panel-hint = Acopla bajo el árbol un panel con los detalles de la sesión seleccionada. También en el menú de filtro del árbol y con Ctrl+Mayús+B.
 ui-settings-show-gateway-badge = Mostrar insignia de pasarela
+ui-settings-show-gateway-badge-hint = Muestra en cada fila de sesión la pasarela por la que pasa. También en el menú de filtro del árbol.
 ui-settings-prevent-sleep = Evitar la suspensión del sistema durante sesiones activas
 ui-settings-prevent-sleep-hint = Evita que Windows se suspenda mientras haya una sesión conectada; la pantalla puede seguir apagándose o bloqueándose.
 ui-settings-max-sessions = Avisar a partir de este número de sesiones abiertas

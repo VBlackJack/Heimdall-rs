@@ -119,6 +119,16 @@ const RAIL_GROUP_PADDING: iced::Padding = iced::Padding {
 /// the names keep the whole of [`RAIL_WIDTH`].
 const RAIL_ITEM_INDENT: f32 = 10.0;
 
+/// Width of the rail with its names, its indent and its padding: what the section's page
+/// leaves of the window once the rail is taken.
+const RAIL_TOTAL_WIDTH: f32 =
+    RAIL_WIDTH + RAIL_ITEM_INDENT + RAIL_PADDING.left + RAIL_PADDING.right;
+
+/// Narrowest inner width of the Appearance card that lays its three lists in columns: a
+/// list, its "Modified" marker and its "Reset" in the longest language each need about 180,
+/// and the two gaps between the columns.
+const APPEARANCE_COLUMNS_MIN_WIDTH: f32 = 3.0 * 180.0 + 2.0 * spacing::LG;
+
 /// Room around the rail: the page's own above and below, the page's edge at its left, and the
 /// C# rail border's 8 at its right.
 const RAIL_PADDING: iced::Padding = iced::Padding {
@@ -300,8 +310,7 @@ fn applies_glyph<'a>(applies: Applies) -> Element<'a, Message> {
 }
 
 /// What the glyph means, once, at the foot of the rail, under a line that says every setting
-/// applies as it is changed: one line for each of the two things it can mean, as the C#
-/// legend's glyph lines (`MainWindow.xaml`, the rail's foot).
+/// applies as it is changed. The sessions' wording is in each row's tooltip.
 fn apply_legend<'a>() -> Element<'a, Message> {
     container(
         column![
@@ -311,13 +320,6 @@ fn apply_legend<'a>() -> Element<'a, Message> {
             row![
                 icons::icon(Icon::NewWindow, Tint::Accent, APPLY_GLYPH_SIDE),
                 text(applies_text(Applies::NewConnections))
-                    .size(font_size::CAPTION)
-                    .style(text::secondary),
-            ]
-            .spacing(spacing::SM),
-            row![
-                icons::icon(Icon::NewWindow, Tint::Accent, APPLY_GLYPH_SIDE),
-                text(applies_text(Applies::NewSessions))
                     .size(font_size::CAPTION)
                     .style(text::secondary),
             ]
@@ -618,6 +620,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
     Some(match row {
         SettingRow::CollapseTunnelsPanel => fl!("ui-settings-collapse-tunnels-panel-hint"),
         SettingRow::ShowPropertiesPanel => fl!("ui-settings-show-properties-panel-hint"),
+        SettingRow::ShowGatewayBadge => fl!("ui-settings-show-gateway-badge-hint"),
         SettingRow::PreventSleep => fl!("ui-settings-prevent-sleep-hint"),
         SettingRow::Reachability => fl!("ui-settings-reachability-hint"),
         SettingRow::Onboarding => fl!("ui-settings-onboarding-hint"),
@@ -1193,15 +1196,16 @@ impl Shell {
 
     /// `rows` of `card` under its heading, in its card as the C#'s.
     fn card_view(&self, card: SettingsCard, rows: &[SettingRow]) -> Element<'_, Message> {
-        if card == SettingsCard::Appearance {
-            return self.appearance_card(rows);
-        }
         let mut body = Column::new().spacing(spacing::SM);
         if let Some(description) = card_description(card) {
             body = body.push(text(description).size(font_size::CAPTION));
         }
-        for &row in rows {
-            body = body.push(self.setting_row(row));
+        if card == SettingsCard::Appearance {
+            body = body.push(self.appearance_body(rows));
+        } else {
+            for &row in rows {
+                body = body.push(self.setting_row(row));
+            }
         }
         if matches!(card, SettingsCard::SshTrusted | SettingsCard::RdpTrusted)
             && let Some(unreadable) = crate::trusted_keys_view::unreadable(self.app.trusted_keys())
@@ -1230,28 +1234,41 @@ impl Shell {
         }
     }
 
-    /// The Appearance card, its language, theme and accent side by side in three columns of
-    /// equal width, as the C# card's grid, under the card's heading.
-    fn appearance_card(&self, rows: &[SettingRow]) -> Element<'_, Message> {
-        let columns = iced::widget::Row::with_children(rows.iter().map(|&row| {
-            container(self.setting_row(row))
-                .width(Length::FillPortion(1))
+    /// The rows of the Appearance card: its language, theme and accent side by side in
+    /// columns of equal width, as the C# card's grid, when the card is wide enough for the
+    /// longest "Modified" marker and its "Reset" in each; stacked otherwise, and when a search
+    /// leaves a single row of the card.
+    fn appearance_body(&self, rows: &[SettingRow]) -> Element<'_, Message> {
+        if rows.len() > 1 && self.appearance_columns_fit() {
+            iced::widget::Row::with_children(rows.iter().map(|&row| {
+                container(self.setting_row(row))
+                    .width(Length::FillPortion(1))
+                    .into()
+            }))
+            .spacing(spacing::LG)
+            .into()
+        } else {
+            Column::with_children(rows.iter().map(|&row| self.setting_row(row)))
+                .spacing(spacing::SM)
                 .into()
-        }))
-        .spacing(spacing::LG);
-        container(
-            column![
-                text(fl!("ui-settings-appearance"))
-                    .size(font_size::SUBTITLE)
-                    .font(styles::SEMIBOLD),
-                columns,
-            ]
-            .spacing(spacing::MD),
-        )
-        .padding(spacing::LG)
-        .width(Length::Fill)
-        .style(styles::card)
-        .into()
+        }
+    }
+
+    /// Whether the card's inner width, from the window's width less the sidebar, the rail and
+    /// the paddings, reaches [`APPEARANCE_COLUMNS_MIN_WIDTH`]; true while the window's size
+    /// is not known yet.
+    fn appearance_columns_fit(&self) -> bool {
+        let Some(window) = self.window_size else {
+            return true;
+        };
+        let sidebar = if self.sidebar_hidden {
+            0.0
+        } else {
+            self.sidebar_width + BORDER_WIDTH
+        };
+        let page = (window.width - sidebar - RAIL_TOTAL_WIDTH - BORDER_WIDTH - 2.0 * spacing::LG)
+            .min(SETTINGS_WIDTH);
+        page - 2.0 * spacing::LG >= APPEARANCE_COLUMNS_MIN_WIDTH
     }
 
     /// `row`, with its "Modified" marker when its value is not the default, outlined when a

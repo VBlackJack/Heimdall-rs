@@ -1901,13 +1901,17 @@ fn the_glyph_is_explained_once_at_the_foot_of_the_rail_and_every_setting_applies
     for said in [
         "Settings apply as you change them",
         "Applies to connections opened after the change",
-        "Applies to sessions opened after the change",
     ] {
         ui.find(said).expect(said);
     }
     // Nothing says "Save" or "saved immediately": there is no Save here.
     assert!(ui.find("Saved immediately").is_err());
     assert!(ui.find("Applies immediately").is_err());
+    // The glyph is per setting: the sessions' wording is in its tooltip, not on the page.
+    assert!(
+        ui.find("Applies to sessions opened after the change")
+            .is_err()
+    );
 }
 
 #[test]
@@ -2155,9 +2159,68 @@ fn the_rail_names_the_files_section_as_the_csharp_does_and_its_legend_names_both
         "Settings file & import",
         "Settings apply as you change them",
         "Applies to connections opened after the change",
-        "Applies to sessions opened after the change",
     ] {
         ui.find(said).expect(said);
     }
     assert!(ui.find("Import").is_err(), "no longer the bare word");
+}
+
+#[test]
+fn the_gateway_badge_box_says_it_is_also_in_the_tree_filter_menu() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = shell(dir.path());
+    let mut ui = simulator(&shell);
+    ui.find("Shows on each session row the gateway it goes through. Also in the tree filter menu.")
+        .expect("the hint");
+}
+
+#[test]
+fn the_appearance_card_stacks_its_lists_in_a_narrow_window_with_the_markers_in_spanish() {
+    let _english = english();
+    heimdall_ui::i18n::apply(Some(Language::Spanish));
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    change(&mut shell, SettingsMessage::Theme(AppTheme::Parchment));
+    change(&mut shell, SettingsMessage::Accent(Accent::Blue));
+    // The smallest window, the main sidebar open.
+    let narrow = Size::new(800.0, 600.0);
+    let _ = shell.update(Message::WindowResized(narrow));
+    let settings = IcedSettings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..IcedSettings::default()
+    };
+    let mut ui = common::simulator(settings, narrow, shell.view());
+    let language = common::last_bounds(&mut ui, "Idioma");
+    let theme = common::last_bounds(&mut ui, "Tema");
+    let accent = common::last_bounds(&mut ui, "Acento");
+    assert!(
+        language.y < theme.y && theme.y < accent.y,
+        "one under the other: {language:?} {theme:?} {accent:?}"
+    );
+    assert!(
+        (language.x - theme.x).abs() < 1.0 && (theme.x - accent.x).abs() < 1.0,
+        "one column: {language:?} {theme:?} {accent:?}"
+    );
+    // Neither marker leaves the window.
+    for marker in common::all_bounds(&mut ui, "Restablecer") {
+        assert!(marker.x + marker.width <= narrow.width, "{marker:?}");
+    }
+}
+
+#[test]
+fn a_search_leaving_one_row_of_the_appearance_card_shows_it_alone_not_in_columns() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(Message::SettingsSearch("accent".to_owned()));
+    assert_eq!(shell.settings_found("accent"), [SettingRow::Accent]);
+    let mut ui = simulator(&shell);
+    let accent = common::last_bounds(&mut ui, "Accent");
+    // The rail names "Appearance" too: the card's heading is the last.
+    let card = common::last_bounds(&mut ui, "Appearance");
+    assert!(
+        (accent.x - card.x).abs() < 1.0,
+        "under the heading at the card's left edge, not in a third column: {accent:?} {card:?}"
+    );
 }

@@ -18,9 +18,10 @@
 //! (`MainWindow.xaml:4684-4848`): one centred column of cards as wide as each other, the
 //! application's card first, its icon, name and version above its author and licence, then
 //! the System, Data and Quick access cards. The version is followed by the commit it was
-//! built from, as the C#'s, and there is no tagline under it, as in the C#. Heimdall-rs's own cards follow in the same
-//! column: the settings file's export and import, and the diagnostics log switch. What it
-//! says of the application comes from its package, never written twice.
+//! built from, as the C#'s, and there is no tagline under it, as in the C#. Heimdall-rs's
+//! own cards follow in the same column: the settings file's export and import, and the
+//! diagnostics log switch. What it says of the application comes from its package, never
+//! written twice.
 
 use std::path::{Path, PathBuf};
 

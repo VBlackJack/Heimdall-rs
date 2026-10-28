@@ -2277,6 +2277,7 @@ ui-settings-session-tree = Session tree
 ui-settings-show-properties-panel = Show properties panel
 ui-settings-show-properties-panel-hint = Docks a panel with the selected session's details under the tree. Also in the tree filter menu and on Ctrl+Shift+B.
 ui-settings-show-gateway-badge = Show gateway badge
+ui-settings-show-gateway-badge-hint = Shows on each session row the gateway it goes through. Also in the tree filter menu.
 ui-settings-prevent-sleep = Prevent system sleep during active sessions
 ui-settings-prevent-sleep-hint = Keeps Windows from sleeping while a session is connected; the screen may still turn off or lock.
 ui-settings-max-sessions = Warn above this many open sessions
