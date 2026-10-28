@@ -35,7 +35,8 @@ use heimdall_core::tools::command_library::{
 use heimdall_core::tools::library_transfer::{self, RunbookImport};
 use heimdall_core::tools::user_commands::{
     self, Criticality, Draft, DraftError, GenerateError, ImportReport, LIBRARY_FILE, LibraryError,
-    TemplatePlatform, UserCommand, UserLibrary, UserParameter, UserPlatform, ValueError,
+    ParameterDraft, TemplatePlatform, UserCommand, UserLibrary, UserParameter, UserPlatform,
+    ValueError,
 };
 use iced::widget::{
     Column, Row, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
@@ -58,7 +59,6 @@ mod sync;
 const PARAM_LABEL_WIDTH: f32 = 160.0;
 
 /// Width of the editor's field labels.
-const EDITOR_LABEL_WIDTH: f32 = 140.0;
 
 /// The most commands sent whose receipt is still awaited: a question left unanswered never
 /// gets one, so the oldest go.
@@ -105,6 +105,9 @@ const SHOW_MORE_HEIGHT: f32 = 40.0;
 
 /// The unit a scroll offset is given in: a thousandth of the scrollable range.
 const OFFSET_SCALE: f32 = 1000.0;
+
+/// Width of the field labels of the Git synchronization's form.
+pub(super) const EDITOR_LABEL_WIDTH: f32 = 140.0;
 
 /// The shares of the page's height the list and the details of the command opened take, so
 /// the list never collapses under tall details, whatever the window's height.
@@ -231,6 +234,21 @@ pub enum CommandLibraryMessage {
     Edit(String),
     /// A field of the editor changed.
     Field(Field, String),
+    /// A text of row `.1` of the parameter table of template `.0`.
+    ParamText(TemplatePlatform, usize, ParamField, String),
+    /// The type chosen for row `.1` of the table of template `.0`.
+    ParamKind(TemplatePlatform, usize, String),
+    /// Required ticked or unticked for row `.1` of the table of template `.0`.
+    ParamRequired(TemplatePlatform, usize, bool),
+    /// Add an empty row to the parameter table of template `.0`.
+    AddParam(TemplatePlatform),
+    /// Remove row `.1` of the parameter table of template `.0`.
+    RemoveParam(TemplatePlatform, usize),
+    /// Enter (`confirm`) or Escape reached the dialog over the window: save, or cancel.
+    DialogKey {
+        /// Enter, which saves, or Escape, which cancels.
+        confirm: bool,
+    },
     /// The platforms of the command edited.
     EditPlatform(UserPlatform),
     /// The level of the command edited.
@@ -338,6 +356,25 @@ pub enum Field {
     WindowsPattern,
     /// The POSIX shell pattern.
     LinuxPattern,
+    /// The name of the PowerShell template.
+    WindowsName,
+    /// The name of the POSIX shell template.
+    LinuxName,
+}
+
+/// A text of a row of the parameter table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamField {
+    /// The name between braces.
+    Name,
+    /// The label.
+    Label,
+    /// The default value.
+    Default,
+    /// The values a choice offers.
+    Allowed,
+    /// The description.
+    Description,
 }
 
 /// What an update asks of the window.
@@ -643,6 +680,28 @@ impl CommandLibraryPane {
             self.opened = None;
         }
         outcome
+    }
+
+    /// Whether an editor is open as a dialog over the window: the command's or a runbook's.
+    #[must_use]
+    pub fn has_dialog(&self) -> bool {
+        self.editor.is_some() || self.runbooks.is_editing()
+    }
+
+    /// The dialog to draw over the window, in `height`: the runbook editor or the command
+    /// editor; `None` when neither is open.
+    #[must_use]
+    pub fn dialog_view(&self, tab: TabId, height: f32) -> Option<Element<'_, Message>> {
+        if let Some(dialog) = self.runbooks.dialog_view(tab, &self.library, height) {
+            return Some(dialog);
+        }
+        let editor = self.editor.as_ref()?;
+        Some(super::command_library_dialog::command_dialog(
+            tab,
+            &editor.draft,
+            editor.problem,
+            height,
+        ))
     }
 
     /// Whether `command` is among the rows the filters and the search keep.
@@ -1208,7 +1267,7 @@ impl CommandLibraryPane {
     fn edit(&mut self, message: CommandLibraryMessage) {
         match message {
             CommandLibraryMessage::New if self.can_edit() => {
-                self.editor = Some(Editor::default());
+                self.editor = Some(Editor::on(Draft::blank()));
                 self.history_open = false;
             }
             // An editor with changes in it is never replaced by a capture: said, nothing lost.
@@ -1242,6 +1301,41 @@ impl CommandLibraryPane {
                         Field::Tags => draft.tags = value,
                         Field::WindowsPattern => draft.windows_pattern = value,
                         Field::LinuxPattern => draft.linux_pattern = value,
+                        Field::WindowsName => draft.windows_name = value,
+                        Field::LinuxName => draft.linux_name = value,
+                    }
+                }
+            }
+            CommandLibraryMessage::ParamText(platform, index, which, value) => {
+                self.with_row(platform, index, |row| match which {
+                    ParamField::Name => row.name = value,
+                    ParamField::Label => row.label = value,
+                    ParamField::Default => row.default_value = value,
+                    ParamField::Allowed => row.allowed_values = value,
+                    ParamField::Description => row.description = value,
+                });
+            }
+            CommandLibraryMessage::ParamKind(platform, index, kind) => {
+                self.with_row(platform, index, |row| row.kind = kind);
+            }
+            CommandLibraryMessage::ParamRequired(platform, index, on) => {
+                self.with_row(platform, index, |row| row.required = on);
+            }
+            CommandLibraryMessage::AddParam(platform) => {
+                if let Some(editor) = &mut self.editor {
+                    editor.problem = None;
+                    let table = editor.draft.parameters_mut(platform);
+                    if table.len() < user_commands::MAX_PARAMETERS {
+                        table.push(ParameterDraft::default());
+                    }
+                }
+            }
+            CommandLibraryMessage::RemoveParam(platform, index) => {
+                if let Some(editor) = &mut self.editor {
+                    editor.problem = None;
+                    let table = editor.draft.parameters_mut(platform);
+                    if index < table.len() {
+                        table.remove(index);
                     }
                 }
             }
@@ -1255,6 +1349,23 @@ impl CommandLibraryPane {
                 if let Some(editor) = &mut self.editor {
                     editor.problem = None;
                     editor.draft.level = level;
+                }
+            }
+            CommandLibraryMessage::DialogKey { confirm } => {
+                // Enter saves and Escape cancels, as the C# IsDefault and IsCancel buttons.
+                if self.runbooks.is_editing() {
+                    let message = if confirm {
+                        RunbookMessage::Save
+                    } else {
+                        RunbookMessage::Cancel
+                    };
+                    self.runbooks.update(message, &self.library);
+                } else if self.editor.is_some() {
+                    if confirm {
+                        self.save_editor();
+                    } else {
+                        self.editor = None;
+                    }
                 }
             }
             CommandLibraryMessage::Save => self.save_editor(),
@@ -1286,6 +1397,21 @@ impl CommandLibraryPane {
     }
 
     /// Keeps the editor's draft: saved to the file, or said why not.
+    /// Changes row `index` of the parameter table of `platform` in the editor.
+    fn with_row(
+        &mut self,
+        platform: TemplatePlatform,
+        index: usize,
+        change: impl FnOnce(&mut ParameterDraft),
+    ) {
+        if let Some(editor) = &mut self.editor {
+            editor.problem = None;
+            if let Some(row) = editor.draft.parameters_mut(platform).get_mut(index) {
+                change(row);
+            }
+        }
+    }
+
     fn save_editor(&mut self) {
         let Some(editor) = self.editor.as_mut() else {
             return;
@@ -1874,27 +2000,6 @@ impl CommandLibraryPane {
             ),
         ]
         .spacing(spacing::XS);
-        // The runbooks panel is docked under the list, as the C#. Only the editor, which is
-        // still a form and not yet a dialog, has the whole view.
-        if self.runbooks.is_open() && self.runbooks.is_editing() {
-            let mut page = column![tools].spacing(spacing::SM);
-            if self.export_choice {
-                page = page.push(export_choice_view(tab));
-            }
-            if self.sync.is_open() {
-                page = page.push(self.sync_view(tab));
-            }
-            if let Some(notice) = &self.notice {
-                page = page.push(notice_view(notice));
-            }
-            page = page.push(self.target_row(tab));
-            let panel = self.runbooks_panel(tab);
-            return super::tool_body(
-                page.push(
-                    scrollable(panel.unwrap_or_else(|| column![].into())).height(Length::Fill),
-                ),
-            );
-        }
         let shown = self.shown();
         let mine = self.shown_user();
         let count = shown.len() + mine.len();
@@ -1975,9 +2080,6 @@ impl CommandLibraryPane {
         let mut cards: Column<'a, Message> = Column::new().spacing(spacing::MD);
         if self.history_open {
             cards = cards.push(self.history_view(tab, state));
-        }
-        if let Some(editor) = &self.editor {
-            cards = cards.push(editor_view(tab, editor));
         }
         if count == 0 && self.editor.is_none() && !self.history_open {
             let mut page: Column<'a, Message> =
@@ -2975,6 +3077,8 @@ fn catalogue_draft(command: &UserCommand) -> Draft {
         windows_pattern: pattern_of(TemplatePlatform::Windows),
         linux_pattern: pattern_of(TemplatePlatform::Linux),
         tags: command.tags.join(TAG_JOINER),
+        // The table too, as the C# `AsCopyOf`: the copy asks for the same values.
+        ..Draft::of(command)
     }
 }
 
@@ -2995,7 +3099,7 @@ fn captured_draft(capture: &CapturedCommand, category: Option<&str>) -> Draft {
         windows_pattern,
         linux_pattern,
         tags: capture.tag.clone().unwrap_or_default(),
-        ..Draft::default()
+        ..Draft::blank()
     }
 }
 
@@ -3242,139 +3346,8 @@ fn command_box<'a>(command: String, buttons: Row<'a, Message>) -> Element<'a, Me
     .into()
 }
 
-/// A labelled row of choice buttons in the editor.
-fn choice_row<'a>(label: String, buttons: Vec<Element<'a, Message>>) -> Row<'a, Message> {
-    row![
-        text(label).size(font_size::BODY).width(EDITOR_LABEL_WIDTH),
-        Row::with_children(buttons).spacing(spacing::SM),
-    ]
-    .spacing(spacing::SM)
-    .align_y(iced::Alignment::Center)
-}
-
-/// The editor of a command of the user.
-fn editor_view(tab: TabId, editor: &Editor) -> Element<'_, Message> {
-    let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
-    let draft = &editor.draft;
-    let field = |label: String, value: &str, which: Field| {
-        row![
-            text(label).size(font_size::BODY).width(EDITOR_LABEL_WIDTH),
-            text_input("", value)
-                .size(font_size::BODY)
-                .padding(super::INPUT_PADDING)
-                .style(styles::text_input)
-                .on_input(move |typed| send(CommandLibraryMessage::Field(which, typed))),
-        ]
-        .spacing(spacing::SM)
-        .align_y(iced::Alignment::Center)
-    };
-    let choice = |label: String, on: bool, message: CommandLibraryMessage| {
-        button(text(label).size(font_size::BODY))
-            .padding(super::COPY_PADDING)
-            .style(if on {
-                styles::primary
-            } else {
-                styles::secondary
-            })
-            .on_press(send(message))
-            .into()
-    };
-    let mut form = column![
-        text(if draft.id.is_some() {
-            fl!("ui-tool-cmdlib-editor-edit")
-        } else {
-            fl!("ui-tool-cmdlib-editor-new")
-        })
-        .size(font_size::BODY_LARGE)
-        .font(styles::SEMIBOLD),
-        field(
-            fl!("ui-tool-cmdlib-field-title"),
-            &draft.title,
-            Field::Title
-        ),
-        field(
-            fl!("ui-tool-cmdlib-field-description"),
-            &draft.description,
-            Field::Description
-        ),
-        field(
-            fl!("ui-tool-cmdlib-field-category"),
-            &draft.category,
-            Field::Category
-        ),
-        field(fl!("ui-tool-cmdlib-field-tags"), &draft.tags, Field::Tags),
-        choice_row(
-            fl!("ui-tool-cmdlib-field-platform"),
-            UserPlatform::ALL
-                .into_iter()
-                .map(|platform| choice(
-                    user_platform_name(platform),
-                    draft.platform == platform,
-                    CommandLibraryMessage::EditPlatform(platform)
-                ))
-                .collect()
-        ),
-        choice_row(
-            fl!("ui-tool-cmdlib-field-level"),
-            Criticality::ALL
-                .into_iter()
-                .map(|level| choice(
-                    level_name(level),
-                    draft.level == level,
-                    CommandLibraryMessage::EditLevel(level)
-                ))
-                .collect()
-        ),
-    ]
-    .spacing(spacing::SM);
-    if draft.platform != UserPlatform::Linux {
-        form = form.push(field(
-            fl!("ui-tool-cmdlib-field-windows-pattern"),
-            &draft.windows_pattern,
-            Field::WindowsPattern,
-        ));
-    }
-    if draft.platform != UserPlatform::Windows {
-        form = form.push(field(
-            fl!("ui-tool-cmdlib-field-linux-pattern"),
-            &draft.linux_pattern,
-            Field::LinuxPattern,
-        ));
-    }
-    form = form.push(
-        text(fl!("ui-tool-cmdlib-field-pattern-hint"))
-            .size(font_size::CAPTION)
-            .style(text::secondary),
-    );
-    if let Some(problem) = editor.problem {
-        form = form.push(
-            text(draft_error(problem))
-                .size(font_size::BODY)
-                .style(styles::error_text),
-        );
-    }
-    form = form.push(
-        row![
-            button(text(fl!("ui-tool-cmdlib-save")).size(font_size::BODY))
-                .padding(super::PRIMARY_PADDING)
-                .style(styles::primary)
-                .on_press(send(CommandLibraryMessage::Save)),
-            button(text(fl!("ui-tool-cmdlib-cancel")).size(font_size::BODY))
-                .padding(super::PRIMARY_PADDING)
-                .style(styles::secondary)
-                .on_press(send(CommandLibraryMessage::CancelEdit)),
-        ]
-        .spacing(spacing::SM),
-    );
-    container(form)
-        .padding(spacing::MD)
-        .width(Length::Fill)
-        .style(styles::card)
-        .into()
-}
-
 /// The name of the platforms of a command of the user.
-fn user_platform_name(platform: UserPlatform) -> String {
+pub(super) fn user_platform_name(platform: UserPlatform) -> String {
     match platform {
         UserPlatform::Windows => fl!("ui-tool-cmdlib-platform-windows"),
         UserPlatform::Linux => fl!("ui-tool-cmdlib-platform-linux"),
@@ -3409,7 +3382,7 @@ fn user_platform_badge(platform: UserPlatform) -> String {
 }
 
 /// The name of `level`.
-fn level_name(level: Criticality) -> String {
+pub(super) fn level_name(level: Criticality) -> String {
     match level {
         Criticality::Info => fl!("ui-tool-cmdlib-level-info"),
         Criticality::Run => fl!("ui-tool-cmdlib-level-run"),
@@ -3439,7 +3412,7 @@ pub(super) fn category_name(key: &str) -> String {
 }
 
 /// Why a draft was not kept, in the window's language.
-fn draft_error(problem: DraftError) -> String {
+pub(super) fn draft_error(problem: DraftError) -> String {
     match problem {
         DraftError::TitleMissing => fl!("ui-tool-cmdlib-error-title-missing"),
         DraftError::TitleTooLong => fl!("ui-tool-cmdlib-error-title-long"),
@@ -3454,6 +3427,7 @@ fn draft_error(problem: DraftError) -> String {
         DraftError::PatternMultiline => fl!("ui-tool-cmdlib-error-pattern-multiline"),
         DraftError::PatternHidden => fl!("ui-tool-cmdlib-error-pattern-hidden"),
         DraftError::TooManyParameters => fl!("ui-tool-cmdlib-error-too-many-parameters"),
+        DraftError::ParameterDuplicate => fl!("ui-tool-cmdlib-error-param-duplicate"),
         DraftError::TooManyTags => fl!("ui-tool-cmdlib-error-too-many-tags"),
         DraftError::Gone => fl!("ui-tool-cmdlib-error-gone"),
     }
@@ -3742,6 +3716,25 @@ mod tests {
         pane.update(CommandLibraryMessage::Field(field, value.to_owned()));
     }
 
+    /// Declares each `{name}` of the Linux pattern in the editor's table, as a user does: the
+    /// table is the whole truth, a name not declared is left as written.
+    fn declare(pane: &mut CommandLibraryPane, pattern: &str) {
+        for name in user_commands::placeholders(pattern) {
+            let index = pane
+                .editor
+                .as_ref()
+                .and_then(|editor| editor.draft.parameters(TemplatePlatform::Linux))
+                .map_or(0, Vec::len);
+            pane.update(CommandLibraryMessage::AddParam(TemplatePlatform::Linux));
+            pane.update(CommandLibraryMessage::ParamText(
+                TemplatePlatform::Linux,
+                index,
+                ParamField::Name,
+                name,
+            ));
+        }
+    }
+
     /// A user command "Ping" made through the editor; its identity.
     fn make_ping(pane: &mut CommandLibraryPane) -> String {
         pane.update(CommandLibraryMessage::New);
@@ -3749,6 +3742,7 @@ mod tests {
         type_into(pane, Field::Title, "Ping");
         type_into(pane, Field::Category, "Network");
         type_into(pane, Field::LinuxPattern, "ping -c 3 {host}");
+        declare(pane, "ping -c 3 {host}");
         pane.update(CommandLibraryMessage::Save);
         assert!(pane.editor.is_none(), "kept");
         pane.library.commands()[0].id.clone()
@@ -4878,6 +4872,7 @@ mod tests {
         type_into(pane, Field::Title, title);
         type_into(pane, Field::Category, "Network");
         type_into(pane, Field::LinuxPattern, pattern);
+        declare(pane, pattern);
         pane.update(CommandLibraryMessage::Save);
         assert!(pane.editor.is_none(), "kept");
         pane.library

@@ -1331,7 +1331,10 @@ impl ParameterDraft {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            if !allowed.iter().any(|known| known.eq_ignore_ascii_case(value)) {
+            if !allowed
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(value))
+            {
                 allowed.push(value.to_owned());
             }
         }
@@ -1420,6 +1423,17 @@ impl Draft {
             linux_name: name(TemplatePlatform::Linux),
             windows_parameters: Some(parameters(TemplatePlatform::Windows)),
             linux_parameters: Some(parameters(TemplatePlatform::Linux)),
+        }
+    }
+
+    /// The draft of a new command: no parameter yet, in tables of their own, as the C# dialog
+    /// starts, so a `{name}` typed in a pattern is only said and not declared for the user.
+    #[must_use]
+    pub fn blank() -> Self {
+        Self {
+            windows_parameters: Some(Vec::new()),
+            linux_parameters: Some(Vec::new()),
+            ..Self::default()
         }
     }
 

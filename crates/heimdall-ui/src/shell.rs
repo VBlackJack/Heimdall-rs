@@ -3025,6 +3025,26 @@ impl Shell {
         if let Some(tour) = self.tour_key(&message) {
             return self.update(Message::Tour(tour));
         }
+        // Enter saves and Escape cancels the command library's editor while it is open as a
+        // dialog over the window, as the C# `IsDefault` and `IsCancel` buttons; a menu, Quick
+        // Connect or the search bar over it takes the Escape first.
+        if let Some(tab) = self.cmdlib_dialog_tab()
+            && self.palette.is_none()
+            && self.finder.is_none()
+            && self.menu.is_none()
+            && let Some(confirm) = match &message {
+                Message::DialogKey { confirm } => Some(*confirm),
+                Message::EscapeUntaken => Some(false),
+                _ => None,
+            }
+        {
+            return self.update(Message::Tool(
+                tab,
+                crate::tools::ToolMessage::CmdLib(crate::tools::CommandLibraryMessage::DialogKey {
+                    confirm,
+                }),
+            ));
+        }
         // Enter, Escape and Ctrl+C no field took are the Password Generator's while it is
         // shown, as the C# `PasswordGeneratorView.OnKeyDown`.
         if let Some((tab, key)) = self.password_key(&message) {
@@ -3152,7 +3172,9 @@ impl Shell {
                     // the main window's: an operation reaches every window, and a tab's own
                     // window has fields of its own.
                     use iced::advanced::widget::operation::{focusable, scope};
-                    let area = if self.app.dialog.is_some() && self.inline_rename().is_none() {
+                    let area = if (self.app.dialog.is_some() && self.inline_rename().is_none())
+                        || self.cmdlib_dialog_tab().is_some()
+                    {
                         dialog_area_id()
                     } else {
                         main_area_id()
@@ -5723,6 +5745,42 @@ impl Shell {
         ))
     }
 
+    /// The command library tab shown whose editor is open as a dialog over the window, with
+    /// no other dialog, the tour or a page of the navigation over it.
+    fn cmdlib_dialog_tab(&self) -> Option<TabId> {
+        let free = !self.gated()
+            && !self.settings_shown()
+            && self.page == Page::Tab
+            && self.tour.is_none()
+            && self.app.dialog.is_none();
+        let tab = self.shown_tab_id()?;
+        (free && self.tools.cmdlib_has_dialog(tab)).then_some(tab)
+    }
+
+    /// The editor of the command library over the window, veiled and centred as the C#
+    /// dialogs (`CommandActionDialog`, `RunbookDialog`); none while no editor is open.
+    fn cmdlib_dialog_layer(&self, locked: bool) -> Option<Element<'_, Message>> {
+        if locked {
+            return None;
+        }
+        let tab = self.cmdlib_dialog_tab()?;
+        Some(opaque(
+            container(responsive(move |size| {
+                // A margin of a spacing above and below it, as the profile form.
+                let height = size.height - 2.0 * spacing::LG;
+                match self.tools.cmdlib_dialog(tab, height) {
+                    Some(card) => anchored(card, tab).into(),
+                    None => iced::widget::space().into(),
+                }
+            }))
+            .id(dialog_area_id())
+            .style(|theme: &Theme| container::Style {
+                background: Some(styles::scrim(theme).into()),
+                ..container::Style::default()
+            }),
+        ))
+    }
+
     pub fn view(&self) -> Element<'_, Message> {
         let locked = self.gated();
         // Locked, the window is not drawn: nothing of it shows, and no hidden field takes
@@ -5790,6 +5848,9 @@ impl Shell {
             layers = layers.push(tour_layer(tour));
         }
         if let Some(layer) = self.dialog_layer(locked) {
+            layers = layers.push(layer);
+        }
+        if let Some(layer) = self.cmdlib_dialog_layer(locked) {
             layers = layers.push(layer);
         }
         if let Some(layer) = self.shared_report_layer().filter(|_| !locked) {

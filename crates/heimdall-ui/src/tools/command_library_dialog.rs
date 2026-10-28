@@ -279,11 +279,7 @@ fn template_label(platform: TemplatePlatform) -> String {
 
 /// The section of one template: its section title, command pattern, name and parameter table
 /// (`xaml:107-226`).
-fn template_section(
-    tab: TabId,
-    draft: &Draft,
-    platform: TemplatePlatform,
-) -> Column<'_, Message> {
+fn template_section(tab: TabId, draft: &Draft, platform: TemplatePlatform) -> Column<'_, Message> {
     let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
     let (pattern, pattern_field, name, name_field) = match platform {
         TemplatePlatform::Windows => (

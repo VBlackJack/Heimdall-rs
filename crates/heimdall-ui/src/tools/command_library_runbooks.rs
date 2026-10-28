@@ -40,9 +40,13 @@ use iced::{Element, Length};
 
 use self::run::{Run, RunSession};
 use super::ToolMessage;
+use super::command_library_dialog::{
+    Pick, RUNBOOK_DIALOG_HEIGHT, RUNBOOK_DIALOG_WIDTH, frame, pick,
+};
 use super::command_library_tool::{
     CommandLibraryMessage, IconState, category_name, icon_button, language, value_error,
 };
+use crate::dialog_parts;
 use crate::i18n::fl;
 use crate::icons::Icon;
 use crate::shell::Message;
@@ -756,10 +760,19 @@ impl RunbooksPane {
         if let Some(run) = self.run_view(tab, library, has_terminal, warning) {
             return Some(run);
         }
-        Some(match &self.editor {
-            Some(editor) => editor_view(tab, editor, library),
-            None => self.list_view(tab),
-        })
+        // The editor is a dialog over the window (see `dialog_view`), not part of the panel.
+        Some(self.list_view(tab))
+    }
+
+    /// The editor as a dialog over the window, in `height`; `None` while it is closed.
+    pub fn dialog_view<'a>(
+        &'a self,
+        tab: TabId,
+        library: &'a UserLibrary,
+        height: f32,
+    ) -> Option<Element<'a, Message>> {
+        let editor = self.editor.as_ref()?;
+        Some(editor_view(tab, editor, library, height))
     }
 
     /// The list: a header with the title and the icon buttons the C# has (New, Edit, Duplicate,
@@ -1182,16 +1195,10 @@ fn editor_view<'a>(
     tab: TabId,
     editor: &'a Editor,
     library: &'a UserLibrary,
+    height: f32,
 ) -> Element<'a, Message> {
     let send = move |message| send(tab, message);
     let mut form: Column<'a, Message> = column![
-        text(if editor.existing {
-            fl!("ui-tool-cmdlib-runbooks-editor-edit")
-        } else {
-            fl!("ui-tool-cmdlib-runbooks-editor-new")
-        })
-        .size(font_size::BODY_LARGE)
-        .font(styles::SEMIBOLD),
         field(
             fl!("ui-tool-cmdlib-runbooks-field-name"),
             &editor.name,
@@ -1202,16 +1209,22 @@ fn editor_view<'a>(
             &editor.description,
             move |typed| send(RunbookMessage::Description(typed)),
         ),
+        // A combo box, as the C# `ExecutionModeIndex` (`RunbookDialog.xaml:63`), not chips.
         row![
             text(fl!("ui-tool-cmdlib-runbooks-field-mode"))
                 .size(font_size::BODY)
                 .width(LABEL_WIDTH),
-            Row::with_children(FailureMode::ALL.into_iter().map(|mode| action(
-                mode_name(mode),
-                editor.mode == mode,
-                Some(send(RunbookMessage::Mode(mode))),
-            )))
-            .spacing(spacing::SM),
+            pick(
+                FailureMode::ALL
+                    .into_iter()
+                    .map(|value| Pick {
+                        value,
+                        label: mode_name(value),
+                    })
+                    .collect(),
+                &editor.mode,
+                move |mode| send(RunbookMessage::Mode(mode)),
+            ),
         ]
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center),
@@ -1322,31 +1335,25 @@ fn editor_view<'a>(
             .style(text::secondary),
         );
     }
+    let mut notes: Vec<Element<'a, Message>> = Vec::new();
     if let Some(problem) = &editor.problem {
-        form = form.push(
-            text(problem_text(problem))
-                .size(font_size::BODY)
-                .style(styles::error_text),
-        );
+        notes.push(dialog_parts::error(problem_text(problem)).into());
     }
-    form = form.push(
-        row![
-            button(text(fl!("ui-tool-cmdlib-save")).size(font_size::BODY))
-                .padding(super::PRIMARY_PADDING)
-                .style(styles::primary)
-                .on_press(send(RunbookMessage::Save)),
-            button(text(fl!("ui-tool-cmdlib-cancel")).size(font_size::BODY))
-                .padding(super::PRIMARY_PADDING)
-                .style(styles::secondary)
-                .on_press(send(RunbookMessage::Cancel)),
-        ]
-        .spacing(spacing::SM),
-    );
-    container(form)
-        .padding(spacing::MD)
-        .width(Length::Fill)
-        .style(styles::card)
-        .into()
+    frame(
+        if editor.existing {
+            fl!("ui-tool-cmdlib-runbooks-editor-edit")
+        } else {
+            fl!("ui-tool-cmdlib-runbooks-editor-new")
+        },
+        form.into(),
+        notes,
+        send(RunbookMessage::Save),
+        send(RunbookMessage::Cancel),
+        (
+            RUNBOOK_DIALOG_WIDTH,
+            RUNBOOK_DIALOG_HEIGHT.min(height).max(0.0),
+        ),
+    )
 }
 
 /// One step of the editor, number `index` of `count`.

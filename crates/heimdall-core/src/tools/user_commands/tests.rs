@@ -162,6 +162,9 @@ fn a_command_is_made_changed_and_deleted_and_the_file_round_trips() {
     let mut edit = Draft::of(made);
     edit.title = "Ping three".to_owned();
     edit.linux_pattern = "ping -c 3 {host} {extra}".to_owned();
+    // The table is the whole truth, as in the C#: a new value is declared by adding its row.
+    edit.parameters_mut(TemplatePlatform::Linux)
+        .push(row("extra"));
     assert_eq!(loaded.upsert(&edit).as_deref(), Ok(id.as_str()));
     assert_eq!(loaded.commands().len(), 1);
     assert_eq!(
@@ -472,7 +475,11 @@ fn a_parameter_table_is_the_whole_truth_as_in_the_csharp() {
         .and_then(|command| command.template(TemplatePlatform::Linux))
         .expect("a template");
     assert_eq!(template.name, "Netcat");
-    let names: Vec<&str> = template.parameters.iter().map(|p| p.name.as_str()).collect();
+    let names: Vec<&str> = template
+        .parameters
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
     assert_eq!(names, ["port", "mode"]);
     let port = &template.parameters[0];
     assert_eq!(
@@ -495,7 +502,10 @@ fn a_table_draws_the_drift_between_the_pattern_and_its_parameters() {
         (vec!["host".to_owned()], vec!["unused".to_owned()])
     );
     draft.linux_pattern.clear();
-    assert_eq!(draft.drift(TemplatePlatform::Linux), (Vec::new(), Vec::new()));
+    assert_eq!(
+        draft.drift(TemplatePlatform::Linux),
+        (Vec::new(), Vec::new())
+    );
 }
 
 #[test]
@@ -505,7 +515,9 @@ fn two_rows_of_one_name_are_refused_and_the_rows_are_counted() {
         library.upsert(&tabled("ls", vec![row("a"), row("a")])),
         Err(DraftError::ParameterDuplicate)
     );
-    let many = (0..=MAX_PARAMETERS).map(|n| row(&format!("p{n}"))).collect();
+    let many = (0..=MAX_PARAMETERS)
+        .map(|n| row(&format!("p{n}")))
+        .collect();
     assert_eq!(
         library.upsert(&tabled("ls", many)),
         Err(DraftError::TooManyParameters)

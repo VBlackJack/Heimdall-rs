@@ -35,6 +35,7 @@ pub mod catalog;
 mod cert_inspector_tool;
 mod certgen_tool;
 mod chmod_tool;
+mod command_library_dialog;
 mod command_library_runbooks;
 mod command_library_tool;
 mod context;
@@ -117,7 +118,7 @@ pub use certgen_tool::{
 };
 pub use chmod_tool::ChmodMessage;
 pub use command_library_runbooks::RunbookMessage;
-pub use command_library_tool::CommandLibraryMessage;
+pub use command_library_tool::{CommandLibraryMessage, Field as CommandField, ParamField};
 pub use context::{inherited_context, inherited_host, session_message, tab_title, titled};
 pub use cron_job_tool::CronJobMessage;
 pub use crontab_tool::{CronOption, CrontabMessage};
@@ -1177,6 +1178,27 @@ impl ToolPanes {
             }
         }
         Task::batch(tasks)
+    }
+
+    /// The editor dialog of the command library `tab`, in `height`, when one is open.
+    #[must_use]
+    pub fn cmdlib_dialog(
+        &self,
+        tab: TabId,
+        height: f32,
+    ) -> Option<Element<'_, crate::shell::Message>> {
+        match &self.panes.get(&tab)?.pane {
+            Pane::CmdLib(pane) => pane.dialog_view(tab, height),
+            _ => None,
+        }
+    }
+
+    /// Whether command library `tab` has an editor dialog open.
+    #[must_use]
+    pub fn cmdlib_has_dialog(&self, tab: TabId) -> bool {
+        self.panes
+            .get(&tab)
+            .is_some_and(|state| matches!(&state.pane, Pane::CmdLib(pane) if pane.has_dialog()))
     }
 
     /// Whether tool tab `tab` is a command library.
