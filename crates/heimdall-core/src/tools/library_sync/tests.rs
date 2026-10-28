@@ -1106,10 +1106,16 @@ fn a_commit_the_remote_never_got_does_not_block_the_next_pull() {
     )
     .expect("written");
     plain_git(program, &mirror, &["add", "--", REPOSITORY_FILE]);
+    // No hook of the machine's git configuration judges the test's commit: an empty folder
+    // of hooks, as the library's own calls set.
+    let no_hooks = tempfile::tempdir().expect("hooks");
+    let hooks_setting = format!("core.hooksPath={}", no_hooks.path().display());
     plain_git(
         program,
         &mirror,
         &[
+            "-c",
+            &hooks_setting,
             "-c",
             "user.name=T",
             "-c",
