@@ -664,3 +664,32 @@ fn only_the_editor_takes_the_whole_page() {
     send(&mut pane, RunbookMessage::Cancel);
     assert!(pane.is_open() && !pane.is_editing());
 }
+
+#[test]
+fn a_duplicate_is_the_selected_runbook_once_it_is_written() {
+    let folder = tempfile::tempdir().expect("folder");
+    let mut pane = pane_in(folder.path());
+    keep_literal(&mut pane, "Original", "uptime");
+    let original = pane.selected.clone().expect("selected");
+    send(&mut pane, RunbookMessage::Duplicate(original.clone()));
+    let copy = pane.selected.clone().expect("the copy is selected");
+    assert_ne!(copy, original);
+    assert_eq!(
+        pane.selected_runbook().map(|each| each.name.as_str()),
+        Some("Original (copy)")
+    );
+}
+
+#[test]
+fn a_delete_that_could_not_be_made_keeps_the_selection() {
+    let folder = tempfile::tempdir().expect("folder");
+    let mut pane = pane_in(folder.path());
+    keep_literal(&mut pane, "R", "uptime");
+    let id = pane.selected.clone().expect("selected");
+    // The file cannot be read now, so nothing can be deleted or written.
+    std::fs::remove_file(folder.path().join(RUNBOOKS_FILE)).expect("removed");
+    std::fs::create_dir(folder.path().join(RUNBOOKS_FILE)).expect("a folder");
+    send(&mut pane, RunbookMessage::ConfirmDelete(id.clone()));
+    assert_eq!(pane.selected.as_deref(), Some(id.as_str()));
+    assert_eq!(pane.store.runbooks().len(), 1);
+}

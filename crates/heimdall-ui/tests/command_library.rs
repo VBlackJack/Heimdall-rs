@@ -62,7 +62,14 @@ fn simulator(shell: &Shell) -> common::Drawn<'_> {
 
 /// The library opened in a window whose folder keeps one runbook.
 fn opened(dir: &Path) -> (Shell, TabId) {
+    let (shell, tab, _) = opened_with_id(dir);
+    (shell, tab)
+}
+
+/// [`opened`], and the identity of the runbook.
+fn opened_with_id(dir: &Path) -> (Shell, TabId, String) {
     let mut runbook = Runbook::new(RUNBOOK);
+    let id = runbook.public_id.clone();
     runbook.steps = vec![Step::literal(
         "systemctl restart nginx",
         TemplatePlatform::Linux,
@@ -73,7 +80,7 @@ fn opened(dir: &Path) -> (Shell, TabId) {
     let mut shell = Shell::with_app(app(dir));
     let _ = shell.update(Message::OpenTool(ToolId::CmdLib));
     let tab = shell.app().tabs[0].id;
-    (shell, tab)
+    (shell, tab, id)
 }
 
 fn runbooks(tab: TabId, message: RunbookMessage) -> Message {
@@ -128,4 +135,42 @@ fn the_editor_still_has_the_whole_page_until_it_is_a_dialog() {
     let _ = shell.update(runbooks(tab, RunbookMessage::New));
     let mut ui = simulator(&shell);
     assert!(ui.find("Search commands").is_err());
+}
+
+#[test]
+fn a_run_keeps_its_buttons_in_the_window_at_800_by_600() {
+    const SMALL: Size = Size::new(800.0, 600.0);
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, id) = opened_with_id(dir.path());
+    let _ = shell.update(runbooks(tab, RunbookMessage::Toggle));
+    let _ = shell.update(runbooks(tab, RunbookMessage::Run(id)));
+    let _ = shell.update(runbooks(tab, RunbookMessage::RunBegin));
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    let mut ui = common::simulator(settings, SMALL, shell.view());
+    for label in ["Send to terminal", "Insert", "Skip", "Stop"] {
+        let bounds = ui.find(label).expect(label).bounds();
+        assert!(
+            bounds.x >= 0.0
+                && bounds.y >= 0.0
+                && bounds.x + bounds.width <= SMALL.width
+                && bounds.y + bounds.height <= SMALL.height,
+            "{label} is outside the window: {bounds:?}"
+        );
+    }
+}
+
+#[test]
+fn the_list_and_the_panel_share_a_tall_window_without_a_blank_strip() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path());
+    let _ = shell.update(runbooks(tab, RunbookMessage::Toggle));
+    let mut ui = simulator(&shell);
+    let panel = ui.find(RUNBOOK).expect("the row").bounds();
+    let search = ui.find("Search commands").expect("the search").bounds();
+    // The panel's row is in the lower part of the window and the list above it has room.
+    assert!(panel.y > search.y + 128.0, "{panel:?} {search:?}");
+    assert!(panel.y + panel.height <= WINDOW.height, "{panel:?}");
 }

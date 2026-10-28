@@ -113,8 +113,11 @@ const DETAILS_PORTION: u16 = 2;
 
 /// The share of the page the runbooks panel takes under the list, and the height it never
 /// passes, as the C# `CmdLibRunbooksMaxHeight` (`CommandLibraryView.xaml:43`).
-const RUNBOOKS_PORTION: u16 = 2;
 const RUNBOOKS_MAX_HEIGHT: f32 = 420.0;
+
+/// The height the list of commands keeps whatever is docked under it, as the C#
+/// `CmdLibActionListMinHeight` (`CommandLibraryView.xaml:33`).
+const LIST_MIN_HEIGHT: f32 = 128.0;
 
 /// The longest item of the category, tag, platform and level drop-downs, in characters, over
 /// English, French and Spanish ("Toutes les catégories", "Todas las etiquetas", "Toutes les
@@ -1819,7 +1822,7 @@ impl CommandLibraryPane {
 
     /// The tool's page: the platforms and the search, the terminal commands go to, the
     /// editor when open, then the user's commands and the catalog.
-    pub fn view<'a>(&'a self, tab: TabId, state: &ToolPane) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, tab: TabId, state: &'a ToolPane) -> Element<'a, Message> {
         let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
         let search = text_input(&fl!("ui-tool-cmdlib-search-placeholder"), &self.search)
             .size(font_size::BODY)
@@ -1928,6 +1931,47 @@ impl CommandLibraryPane {
         if let Some(row) = self.broadcast_row(tab) {
             page = page.push(row);
         }
+        // The list, the details and the runbooks panel share what the page has left, sized
+        // from it as the C# `RemainingHeightConverter` does (`CommandLibraryView.xaml:970`).
+        let body = iced::widget::responsive(move |size| self.list_body(tab, state, size.height));
+        super::tool_body(page.push(body))
+    }
+
+    /// The list of commands, the details of the one opened and the runbooks panel docked under
+    /// them, in `height`: the panel is as tall as its content up to [`RUNBOOKS_MAX_HEIGHT`] and
+    /// never takes what the list needs ([`LIST_MIN_HEIGHT`]), and the list and the details
+    /// share the rest, so a tall window leaves no blank strip. While a runbook runs, its
+    /// panel has the whole body, the list and the details put away: a run needs about 270 px
+    /// for its title, steps and Send, Insert, Copy and Skip buttons, which the page does not
+    /// have under the list on an 800 by 600 window (measured: the Send row fell 10 px below
+    /// the window with the list cut to 40 px). A run is a mode of the panel, and the list is
+    /// one press of Stop away.
+    fn list_body<'a>(
+        &'a self,
+        tab: TabId,
+        state: &'a ToolPane,
+        height: f32,
+    ) -> Element<'a, Message> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
+        let shown = self.shown();
+        let mine = self.shown_user();
+        let count = shown.len() + mine.len();
+        if self.runbooks.is_running()
+            && let Some(panel) = self.runbooks_panel(tab)
+        {
+            return styles::scroll(panel).height(Length::Fill).into();
+        }
+        let details = self.details(tab, state);
+        let reserve = if details.is_some() {
+            LIST_MIN_HEIGHT * f32::from(LIST_PORTION + DETAILS_PORTION) / f32::from(LIST_PORTION)
+        } else {
+            LIST_MIN_HEIGHT
+        };
+        let dock: Option<Element<'a, Message>> = self.runbooks_panel(tab).map(|panel| {
+            container(styles::scroll(panel))
+                .max_height((height - reserve).clamp(0.0, RUNBOOKS_MAX_HEIGHT))
+                .into()
+        });
         let mut cards: Column<'a, Message> = Column::new().spacing(spacing::MD);
         if self.history_open {
             cards = cards.push(self.history_view(tab, state));
@@ -1935,13 +1979,13 @@ impl CommandLibraryPane {
         if let Some(editor) = &self.editor {
             cards = cards.push(editor_view(tab, editor));
         }
-        let runbooks = self.runbooks_dock(tab);
         if count == 0 && self.editor.is_none() && !self.history_open {
-            page = page.push(super::empty_state(fl!("ui-tool-cmdlib-empty")));
-            if let Some(dock) = runbooks {
+            let mut page: Column<'a, Message> =
+                column![super::empty_state(fl!("ui-tool-cmdlib-empty"))];
+            if let Some(dock) = dock {
                 page = page.push(dock);
             }
-            return super::tool_body(page);
+            return page.into();
         }
         let language = language();
         let mut list: Column<'a, Message> = Column::new();
@@ -1978,18 +2022,18 @@ impl CommandLibraryPane {
             list = list.push(show_more(remaining, send(CommandLibraryMessage::ShowMore)));
         }
         cards = cards.push(list);
-        let mut page = page.push(
+        let mut page: Column<'a, Message> = column![
             styles::scroll(cards)
                 .id(list_id(tab))
-                .height(Length::FillPortion(LIST_PORTION)),
-        );
-        if let Some(details) = self.details(tab, state) {
+                .height(Length::FillPortion(LIST_PORTION))
+        ];
+        if let Some(details) = details {
             page = page.push(details);
         }
-        if let Some(dock) = runbooks {
+        if let Some(dock) = dock {
             page = page.push(dock);
         }
-        super::tool_body(page)
+        page.into()
     }
 
     /// The runbooks panel as it is shown in the page's flow, or only an element to put under
@@ -2003,18 +2047,6 @@ impl CommandLibraryPane {
             self.effective_target().is_some()
         };
         self.runbooks.view(tab, &self.library, can_send, warning)
-    }
-
-    /// The runbooks panel docked under the list and the details, as the C# `RunbooksPanel`
-    /// (`CommandLibraryView.xaml:962-977`): a share of the page, never taller than its cap.
-    fn runbooks_dock<'a>(&'a self, tab: TabId) -> Option<Element<'a, Message>> {
-        let panel = self.runbooks_panel(tab)?;
-        Some(
-            container(styles::scroll(panel))
-                .height(Length::FillPortion(RUNBOOKS_PORTION))
-                .max_height(RUNBOOKS_MAX_HEIGHT)
-                .into(),
-        )
     }
 
     /// The filters under the search, as the C# wrap panel: how many commands of how many are

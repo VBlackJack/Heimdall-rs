@@ -595,21 +595,24 @@ impl RunbooksPane {
                 });
                 if let Some(name) = name
                     && let Some(before) = self.refresh(library)
-                    && self.store.duplicate(&id, &name).is_some()
+                    && let Some(copy) = self.store.duplicate(&id, &name)
+                    && self.persist(before)
                 {
-                    self.persist(before);
+                    // The copy is the selected one, as the C# `SaveRunbookFromDialogAsync`
+                    // (`CommandLibraryViewModel.Runbooks.cs:252`).
+                    self.selected = Some(copy);
                 }
             }
             RunbookMessage::AskDelete(id) if self.can_edit() => self.deleting = Some(id),
             RunbookMessage::ConfirmDelete(id) if self.can_edit() => {
                 self.deleting = None;
-                if self.selected.as_deref() == Some(id.as_str()) {
-                    self.selected = None;
-                }
+                // Only a delete that was written clears the selection, as the C# (`:213`).
                 if let Some(before) = self.refresh(library)
                     && self.store.delete(&id)
+                    && self.persist(before)
+                    && self.selected.as_deref() == Some(id.as_str())
                 {
-                    self.persist(before);
+                    self.selected = None;
                 }
             }
             RunbookMessage::CancelDelete => self.deleting = None,
@@ -877,15 +880,11 @@ impl RunbooksPane {
     fn entry_view<'a>(&'a self, tab: TabId, runbook: &'a Runbook) -> Element<'a, Message> {
         let id = &runbook.public_id;
         let chosen = self.selected.as_deref() == Some(id.as_str());
-        button(
+        let row_button = button(
             row![
-                container(
-                    text(runbook.name.as_str())
-                        .size(font_size::BODY)
-                        .wrapping(text::Wrapping::None),
-                )
-                .width(Length::Fill)
-                .clip(true),
+                crate::ellipsis::text(runbook.name.as_str())
+                    .size(font_size::BODY)
+                    .width(Length::Fill),
                 text(fl!(
                     "ui-tool-cmdlib-runbooks-steps",
                     count = runbook.steps.len()
@@ -899,7 +898,15 @@ impl RunbooksPane {
         .width(Length::Fill)
         .padding(spacing::SM)
         .style(styles::palette_row(chosen))
-        .on_press(send(tab, RunbookMessage::Select(id.clone())))
+        .on_press(send(tab, RunbookMessage::Select(id.clone())));
+        // The whole name in a tooltip, as the row may show it cut.
+        styles::tip(
+            row_button,
+            text(runbook.name.as_str()).size(font_size::CAPTION),
+            iced::widget::tooltip::Position::Top,
+        )
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into()
     }
 }

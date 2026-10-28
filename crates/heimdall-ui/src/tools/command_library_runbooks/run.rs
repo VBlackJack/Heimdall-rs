@@ -204,7 +204,6 @@ impl RunbooksPane {
     }
 
     /// Whether a run is in progress.
-    #[cfg(test)]
     #[must_use]
     pub(in crate::tools) const fn is_running(&self) -> bool {
         self.run.is_some()
