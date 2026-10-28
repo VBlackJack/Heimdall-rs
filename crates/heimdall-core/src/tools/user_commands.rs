@@ -174,6 +174,23 @@ pub const CHOICE_TYPE: &str = "choice";
 /// The type of a parameter nothing else is said of, as the C# default.
 pub const STRING_TYPE: &str = "string";
 
+/// The parameter types the editor offers, in the order it lists them: the C#
+/// `TemplateParameterTypes.Offered` without `bool`, which the generator of this build does
+/// not read (see `generate`).
+pub const OFFERED_PARAMETER_TYPES: [&str; 8] = [
+    STRING_TYPE,
+    "int",
+    "number",
+    "driveletter",
+    "hostname",
+    "ipaddress",
+    "path",
+    CHOICE_TYPE,
+];
+
+/// The separator of the values a choice offers, as the C# editor's line.
+const ALLOWED_VALUES_SEPARATOR: char = ',';
+
 /// The operating system a template is written for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UserPlatform {
@@ -1239,7 +1256,125 @@ pub fn placeholders(pattern: &str) -> Vec<String> {
     names
 }
 
+/// One row of the editor's parameter table, as the C# `ParameterEntryVm`: the fields as they
+/// are typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParameterDraft {
+    /// The name between braces in the pattern.
+    pub name: String,
+    /// What the window calls it.
+    pub label: String,
+    /// Its type, one of [`OFFERED_PARAMETER_TYPES`] (or what an imported file wrote).
+    pub kind: String,
+    /// What it holds until something is typed.
+    pub default_value: String,
+    /// Whether a value must be given.
+    pub required: bool,
+    /// What it is for.
+    pub description: String,
+    /// The values a choice offers, on one line separated by commas.
+    pub allowed_values: String,
+    /// How the value is put in the command; not edited, but kept through a rename, an edit and
+    /// a copy of the command.
+    pub quoting: Option<Quoting>,
+}
+
+impl Default for ParameterDraft {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            label: String::new(),
+            kind: STRING_TYPE.to_owned(),
+            default_value: String::new(),
+            required: false,
+            description: String::new(),
+            allowed_values: String::new(),
+            quoting: None,
+        }
+    }
+}
+
+impl ParameterDraft {
+    /// The row of an existing parameter.
+    #[must_use]
+    pub fn of(parameter: &UserParameter) -> Self {
+        Self {
+            name: parameter.name.clone(),
+            label: parameter.label.clone(),
+            // `Choice` and `choice` are one type: the drop-down lists it once.
+            kind: OFFERED_PARAMETER_TYPES
+                .iter()
+                .find(|offered| offered.eq_ignore_ascii_case(parameter.kind.trim()))
+                .map_or_else(|| parameter.kind.clone(), |offered| (*offered).to_owned()),
+            default_value: parameter.default_value.clone().unwrap_or_default(),
+            required: parameter.required,
+            description: parameter.description.clone().unwrap_or_default(),
+            allowed_values: parameter
+                .allowed_values
+                .as_ref()
+                .map(|values| values.join(", "))
+                .unwrap_or_default(),
+            quoting: parameter.quoting,
+        }
+    }
+
+    /// Whether the row is a choice, which offers a line of values.
+    #[must_use]
+    pub fn is_choice(&self) -> bool {
+        self.kind.trim().eq_ignore_ascii_case(CHOICE_TYPE)
+    }
+
+    /// The parameter the row describes.
+    fn to_parameter(&self) -> UserParameter {
+        let some = |text: &str| {
+            let trimmed = text.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_owned())
+        };
+        // Null rather than an empty list, as the C#: a choice with nothing to offer falls
+        // back to free text.
+        let mut allowed: Vec<String> = Vec::new();
+        for value in self
+            .allowed_values
+            .split(ALLOWED_VALUES_SEPARATOR)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if !allowed
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(value))
+            {
+                allowed.push(value.to_owned());
+            }
+        }
+        UserParameter {
+            name: self.name.trim().to_owned(),
+            label: self.label.trim().to_owned(),
+            kind: self.kind.clone(),
+            default_value: some(&self.default_value),
+            required: self.required,
+            description: some(&self.description),
+            allowed_values: (!allowed.is_empty()).then_some(allowed),
+            quoting: self.quoting,
+        }
+    }
+
+    /// Whether the row says nothing: no name and nothing else typed, which is no parameter.
+    fn is_empty(&self) -> bool {
+        self.name.trim().is_empty()
+            && self.label.trim().is_empty()
+            && self.default_value.trim().is_empty()
+            && self.description.trim().is_empty()
+            && self.allowed_values.trim().is_empty()
+            && !self.required
+    }
+}
+
 /// What the editor holds of a command.
+///
+/// The parameter tables are `None` for a draft that never had one (a command captured from a
+/// terminal, say): the parameters are then the pattern's placeholders, as before the editor
+/// had a table. Once a table is there it is the whole truth, as in the C#: a placeholder it
+/// does not list stays as written.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Draft {
     /// The command edited; `None` for a new one.
@@ -1260,6 +1395,14 @@ pub struct Draft {
     pub linux_pattern: String,
     /// The tags, separated by commas.
     pub tags: String,
+    /// The name of the PowerShell template; read only with its table.
+    pub windows_name: String,
+    /// The name of the POSIX shell template; read only with its table.
+    pub linux_name: String,
+    /// The parameters of the PowerShell template.
+    pub windows_parameters: Option<Vec<ParameterDraft>>,
+    /// The parameters of the POSIX shell template.
+    pub linux_parameters: Option<Vec<ParameterDraft>>,
 }
 
 impl Draft {
@@ -1272,6 +1415,18 @@ impl Draft {
                 .map(|t| t.command_pattern.clone())
                 .unwrap_or_default()
         };
+        let name = |platform| {
+            command
+                .template(platform)
+                .map(|t| t.name.clone())
+                .unwrap_or_default()
+        };
+        let parameters = |platform| {
+            command
+                .template(platform)
+                .map(|t| t.parameters.iter().map(ParameterDraft::of).collect())
+                .unwrap_or_default()
+        };
         Self {
             id: Some(command.id.clone()),
             title: command.title.clone(),
@@ -1282,7 +1437,80 @@ impl Draft {
             windows_pattern: pattern(TemplatePlatform::Windows),
             linux_pattern: pattern(TemplatePlatform::Linux),
             tags: command.tags.join(", "),
+            windows_name: name(TemplatePlatform::Windows),
+            linux_name: name(TemplatePlatform::Linux),
+            windows_parameters: Some(parameters(TemplatePlatform::Windows)),
+            linux_parameters: Some(parameters(TemplatePlatform::Linux)),
         }
+    }
+
+    /// The draft of a new command: no parameter yet, in tables of their own, as the C# dialog
+    /// starts, so a `{name}` typed in a pattern is only said and not declared for the user.
+    #[must_use]
+    pub fn blank() -> Self {
+        Self {
+            windows_parameters: Some(Vec::new()),
+            linux_parameters: Some(Vec::new()),
+            ..Self::default()
+        }
+    }
+
+    /// The parameter table of `platform`, if the draft has one.
+    #[must_use]
+    pub fn parameters(&self, platform: TemplatePlatform) -> Option<&Vec<ParameterDraft>> {
+        match platform {
+            TemplatePlatform::Windows => self.windows_parameters.as_ref(),
+            TemplatePlatform::Linux => self.linux_parameters.as_ref(),
+        }
+    }
+
+    /// The parameter table of `platform`, made from the pattern's placeholders when the draft
+    /// has none yet.
+    pub fn parameters_mut(&mut self, platform: TemplatePlatform) -> &mut Vec<ParameterDraft> {
+        let pattern = match platform {
+            TemplatePlatform::Windows => self.windows_pattern.clone(),
+            TemplatePlatform::Linux => self.linux_pattern.clone(),
+        };
+        let table = match platform {
+            TemplatePlatform::Windows => &mut self.windows_parameters,
+            TemplatePlatform::Linux => &mut self.linux_parameters,
+        };
+        table.get_or_insert_with(|| {
+            placeholders(pattern.trim())
+                .iter()
+                .map(|name| ParameterDraft::of(&UserParameter::new(name)))
+                .collect()
+        })
+    }
+
+    /// What the pattern of `platform` and its parameter table disagree about, as the C#
+    /// `DescribeDrift`: the placeholders the table does not declare, and the names it
+    /// declares that the pattern never writes. Nothing for a pattern left empty.
+    #[must_use]
+    pub fn drift(&self, platform: TemplatePlatform) -> (Vec<String>, Vec<String>) {
+        let pattern = match platform {
+            TemplatePlatform::Windows => &self.windows_pattern,
+            TemplatePlatform::Linux => &self.linux_pattern,
+        };
+        if pattern.trim().is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        let written = placeholders(pattern);
+        let declared: Vec<&str> = self
+            .parameters(platform)
+            .map(|table| table.iter().map(|row| row.name.trim()).collect())
+            .unwrap_or_default();
+        let undeclared = written
+            .iter()
+            .filter(|name| !declared.contains(&name.as_str()))
+            .cloned()
+            .collect();
+        let unused = declared
+            .iter()
+            .filter(|name| !name.is_empty() && !written.iter().any(|each| each == **name))
+            .map(|name| (*name).to_owned())
+            .collect();
+        (undeclared, unused)
     }
 
     /// The draft of a new command that starts as a copy of `command`, as the C#
@@ -1336,6 +1564,10 @@ pub enum DraftError {
     PatternHidden,
     /// A pattern with more than [`MAX_PARAMETERS`] values.
     TooManyParameters,
+    /// Two rows of a parameter table have the same name.
+    ParameterDuplicate,
+    /// A row of a parameter table says something but has no name.
+    ParameterNameMissing,
     /// More than [`MAX_TAGS`] tags.
     TooManyTags,
     /// The command edited is no longer in the library.
@@ -1791,19 +2023,52 @@ fn template_of(
     if pattern.chars().any(crate::invisible::is_invisible) {
         return Err(DraftError::PatternHidden);
     }
-    let names = placeholders(pattern);
-    if names.len() > MAX_PARAMETERS {
+    let old = before.and_then(|command| command.template(platform));
+    let (name, mut parameters) = match draft.parameters(platform) {
+        // The table is the whole truth, as in the C#; a row with no name is not a parameter.
+        Some(table) => {
+            let mut parameters: Vec<UserParameter> = Vec::new();
+            // A row with nothing in it is no parameter; one with something but no name is a
+            // mistake to say, not to drop.
+            for row in table.iter().filter(|row| !row.is_empty()) {
+                let kept = row.name.trim();
+                if kept.is_empty() {
+                    return Err(DraftError::ParameterNameMissing);
+                }
+                if parameters.iter().any(|known| known.name == kept) {
+                    return Err(DraftError::ParameterDuplicate);
+                }
+                parameters.push(row.to_parameter());
+            }
+            // A value written in the pattern and listed nowhere is a text parameter, so a
+            // rename in the pattern never sends a literal `{name}` to a shell. The editor
+            // warns of it beforehand.
+            for name in placeholders(pattern) {
+                if !parameters.iter().any(|known| known.name == name) {
+                    parameters.push(UserParameter::new(&name));
+                }
+            }
+            let name = match platform {
+                TemplatePlatform::Windows => &draft.windows_name,
+                TemplatePlatform::Linux => &draft.linux_name,
+            };
+            (name.trim().to_owned(), parameters)
+        }
+        None => {
+            let parameters = placeholders(pattern)
+                .iter()
+                .map(|name| {
+                    old.and_then(|t| t.parameters.iter().find(|known| &known.name == name))
+                        .cloned()
+                        .unwrap_or_else(|| UserParameter::new(name))
+                })
+                .collect();
+            (old.map(|t| t.name.clone()).unwrap_or_default(), parameters)
+        }
+    };
+    if parameters.len() > MAX_PARAMETERS {
         return Err(DraftError::TooManyParameters);
     }
-    let old = before.and_then(|command| command.template(platform));
-    let mut parameters: Vec<UserParameter> = names
-        .iter()
-        .map(|name| {
-            old.and_then(|t| t.parameters.iter().find(|known| &known.name == name))
-                .cloned()
-                .unwrap_or_else(|| UserParameter::new(name))
-        })
-        .collect();
     for parameter in &mut parameters {
         if parameter.quoting == Some(Quoting::InlineInQuotes)
             && !placeholder_in_single_quotes(pattern, &parameter.name, platform)
@@ -1816,7 +2081,13 @@ fn template_of(
             TemplatePlatform::Windows => UserPlatform::Windows,
             TemplatePlatform::Linux => UserPlatform::Linux,
         },
-        name: old.map(|t| t.name.clone()).unwrap_or_default(),
+        // A template with no name takes the command's title, as the C#
+        // (`CommandActionDialogViewModel.cs:474`).
+        name: if name.is_empty() {
+            draft.title.trim().to_owned()
+        } else {
+            name
+        },
         command_pattern: pattern.to_owned(),
         parameters,
     }))

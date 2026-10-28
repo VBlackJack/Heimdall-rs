@@ -40,9 +40,13 @@ use iced::{Element, Length};
 
 use self::run::{Run, RunSession};
 use super::ToolMessage;
+use super::command_library_dialog::{
+    Discard, Pick, RUNBOOK_DIALOG_HEIGHT, RUNBOOK_DIALOG_WIDTH, fitted, frame, pick,
+};
 use super::command_library_tool::{
     CommandLibraryMessage, IconState, category_name, icon_button, language, value_error,
 };
+use crate::dialog_parts;
 use crate::i18n::fl;
 use crate::icons::Icon;
 use crate::shell::Message;
@@ -128,6 +132,12 @@ pub enum RunbookMessage {
     Platform(usize, TemplatePlatform),
     /// The note typed for step `.0`.
     Note(usize, String),
+    /// Add the first action the search finds as the last step (Enter in its box).
+    PickSubmit,
+    /// Throw the unsaved changes of the editor away, once asked.
+    DiscardEdit,
+    /// Go on editing, once asked.
+    KeepEditing,
     /// Keep the runbook of the editor.
     Save,
     /// Leave the editor.
@@ -199,6 +209,10 @@ struct Editor {
     tags: Vec<String>,
     search: String,
     problem: Option<Problem>,
+    /// The runbook as the editor opened on it, to tell whether the user changed anything.
+    baseline: Option<Runbook>,
+    /// Whether the dialog asks to discard unsaved changes.
+    discarding: bool,
 }
 
 /// The panel's state.
@@ -319,7 +333,21 @@ impl Editor {
             tags: Vec::new(),
             search: String::new(),
             problem: None,
+            baseline: None,
+            discarding: false,
         }
+        .with_baseline()
+    }
+
+    /// The editor, its present content taken as the one to compare changes with.
+    fn with_baseline(mut self) -> Self {
+        self.baseline = self.to_runbook().ok();
+        self
+    }
+
+    /// Whether the user changed something since the editor opened.
+    fn is_changed(&self) -> bool {
+        self.to_runbook().ok() != self.baseline
     }
 
     fn of(runbook: &Runbook, library: &UserLibrary) -> Self {
@@ -369,7 +397,10 @@ impl Editor {
             tags: runbook.tags.clone(),
             search: String::new(),
             problem: None,
+            baseline: None,
+            discarding: false,
         }
+        .with_baseline()
     }
 
     /// The runbook the editor describes.
@@ -495,6 +526,11 @@ impl RunbooksPane {
     #[must_use]
     pub const fn is_open(&self) -> bool {
         self.open
+    }
+
+    /// Whether the dialog asks to discard unsaved changes.
+    pub(in crate::tools) fn is_asking_to_discard(&self) -> bool {
+        self.editor.as_ref().is_some_and(|editor| editor.discarding)
     }
 
     /// Whether the editor is open.
@@ -624,7 +660,19 @@ impl RunbooksPane {
             // Asked of a terminal: the library pane answers, it knows the terminals.
             RunbookMessage::RunSend | RunbookMessage::RunInsert | RunbookMessage::RunCopy => {}
             RunbookMessage::Save => self.save(library),
-            RunbookMessage::Cancel => self.editor = None,
+            // A dialog with changes asks before it goes, as the C# `OnWindowClosing`.
+            RunbookMessage::Cancel => match &mut self.editor {
+                Some(editor) if editor.is_changed() && !editor.discarding => {
+                    editor.discarding = true;
+                }
+                _ => self.editor = None,
+            },
+            RunbookMessage::DiscardEdit => self.editor = None,
+            RunbookMessage::KeepEditing => {
+                if let Some(editor) = self.editor.as_mut() {
+                    editor.discarding = false;
+                }
+            }
             other => {
                 if let Some(editor) = self.editor.as_mut() {
                     edit(editor, other, library);
@@ -756,10 +804,19 @@ impl RunbooksPane {
         if let Some(run) = self.run_view(tab, library, has_terminal, warning) {
             return Some(run);
         }
-        Some(match &self.editor {
-            Some(editor) => editor_view(tab, editor, library),
-            None => self.list_view(tab),
-        })
+        // The editor is a dialog over the window (see `dialog_view`), not part of the panel.
+        Some(self.list_view(tab))
+    }
+
+    /// The editor as a dialog over the window, in `height`; `None` while it is closed.
+    pub fn dialog_view<'a>(
+        &'a self,
+        tab: TabId,
+        library: &'a UserLibrary,
+        room: iced::Size,
+    ) -> Option<Element<'a, Message>> {
+        let editor = self.editor.as_ref()?;
+        Some(editor_view(tab, editor, library, room))
     }
 
     /// The list: a header with the title and the icon buttons the C# has (New, Edit, Duplicate,
@@ -924,6 +981,7 @@ fn edit(editor: &mut Editor, message: RunbookMessage, library: &UserLibrary) {
     // What was refused is said until the user changes something: the field fixed, the reason
     // goes with it instead of staying under a form that is now right.
     editor.problem = None;
+    editor.discarding = false;
     match message {
         RunbookMessage::Name(value) => editor.name = value,
         RunbookMessage::Description(value) => editor.description = value,
@@ -945,6 +1003,20 @@ fn edit(editor: &mut Editor, message: RunbookMessage, library: &UserLibrary) {
             editor.variables.remove(index);
         }
         RunbookMessage::PickSearch(value) => editor.search = value,
+        RunbookMessage::PickSubmit => {
+            if let Some((id, _)) = matches(library, &editor.search).into_iter().next()
+                && editor.steps.len() < MAX_STEPS
+                && let Some(command) = shown_action(library, &id)
+            {
+                editor.steps.push(EditorStep::Action {
+                    action_id: id,
+                    title: command.title.clone(),
+                    found: true,
+                    fields: fields_of(Some(&command), &BTreeMap::new()),
+                    note: String::new(),
+                });
+            }
+        }
         RunbookMessage::AddAction(id) if editor.steps.len() < MAX_STEPS => {
             if let Some(command) = shown_action(library, &id) {
                 let step = EditorStep::Action {
@@ -1023,13 +1095,27 @@ fn field<'a>(
     value: &str,
     on_input: impl Fn(String) -> Message + 'a,
 ) -> Row<'a, Message> {
+    field_with(label, value, on_input, None)
+}
+
+/// [`field`], its box named `id` when given, to be given the keyboard.
+fn field_with<'a>(
+    label: String,
+    value: &str,
+    on_input: impl Fn(String) -> Message + 'a,
+    id: Option<iced::widget::Id>,
+) -> Row<'a, Message> {
+    let input = text_input("", value)
+        .size(font_size::BODY)
+        .padding(super::INPUT_PADDING)
+        .style(styles::text_input)
+        .on_input(on_input);
     row![
         text(label).size(font_size::BODY).width(LABEL_WIDTH),
-        text_input("", value)
-            .size(font_size::BODY)
-            .padding(super::INPUT_PADDING)
-            .style(styles::text_input)
-            .on_input(on_input),
+        match id {
+            Some(id) => input.id(id),
+            None => input,
+        },
     ]
     .spacing(spacing::SM)
     .align_y(iced::Alignment::Center)
@@ -1182,36 +1268,37 @@ fn editor_view<'a>(
     tab: TabId,
     editor: &'a Editor,
     library: &'a UserLibrary,
+    room: iced::Size,
 ) -> Element<'a, Message> {
     let send = move |message| send(tab, message);
     let mut form: Column<'a, Message> = column![
-        text(if editor.existing {
-            fl!("ui-tool-cmdlib-runbooks-editor-edit")
-        } else {
-            fl!("ui-tool-cmdlib-runbooks-editor-new")
-        })
-        .size(font_size::BODY_LARGE)
-        .font(styles::SEMIBOLD),
-        field(
+        field_with(
             fl!("ui-tool-cmdlib-runbooks-field-name"),
             &editor.name,
-            move |typed| { send(RunbookMessage::Name(typed)) }
+            move |typed| { send(RunbookMessage::Name(typed)) },
+            Some(super::command_library_dialog::name_field_id()),
         ),
         field(
             fl!("ui-tool-cmdlib-runbooks-field-description"),
             &editor.description,
             move |typed| send(RunbookMessage::Description(typed)),
         ),
+        // A combo box, as the C# `ExecutionModeIndex` (`RunbookDialog.xaml:63`), not chips.
         row![
             text(fl!("ui-tool-cmdlib-runbooks-field-mode"))
                 .size(font_size::BODY)
                 .width(LABEL_WIDTH),
-            Row::with_children(FailureMode::ALL.into_iter().map(|mode| action(
-                mode_name(mode),
-                editor.mode == mode,
-                Some(send(RunbookMessage::Mode(mode))),
-            )))
-            .spacing(spacing::SM),
+            pick(
+                FailureMode::ALL
+                    .into_iter()
+                    .map(|value| Pick {
+                        value,
+                        label: mode_name(value),
+                    })
+                    .collect(),
+                &editor.mode,
+                move |mode| send(RunbookMessage::Mode(mode)),
+            ),
         ]
         .spacing(spacing::SM)
         .align_y(iced::Alignment::Center),
@@ -1287,7 +1374,9 @@ fn editor_view<'a>(
         .size(font_size::BODY)
         .padding(super::INPUT_PADDING)
         .style(styles::text_input)
-        .on_input(move |typed| send(RunbookMessage::PickSearch(typed))),
+        .on_input(move |typed| send(RunbookMessage::PickSearch(typed)))
+        // Enter adds the first action found, rather than saving the dialog.
+        .on_submit(send(RunbookMessage::PickSubmit)),
     );
     let found = matches(library, &editor.search);
     if found.is_empty() && !editor.search.trim().is_empty() {
@@ -1322,31 +1411,26 @@ fn editor_view<'a>(
             .style(text::secondary),
         );
     }
+    let mut notes: Vec<Element<'a, Message>> = Vec::new();
     if let Some(problem) = &editor.problem {
-        form = form.push(
-            text(problem_text(problem))
-                .size(font_size::BODY)
-                .style(styles::error_text),
-        );
+        notes.push(dialog_parts::error(problem_text(problem)).into());
     }
-    form = form.push(
-        row![
-            button(text(fl!("ui-tool-cmdlib-save")).size(font_size::BODY))
-                .padding(super::PRIMARY_PADDING)
-                .style(styles::primary)
-                .on_press(send(RunbookMessage::Save)),
-            button(text(fl!("ui-tool-cmdlib-cancel")).size(font_size::BODY))
-                .padding(super::PRIMARY_PADDING)
-                .style(styles::secondary)
-                .on_press(send(RunbookMessage::Cancel)),
-        ]
-        .spacing(spacing::SM),
-    );
-    container(form)
-        .padding(spacing::MD)
-        .width(Length::Fill)
-        .style(styles::card)
-        .into()
+    frame(
+        if editor.existing {
+            fl!("ui-tool-cmdlib-runbooks-editor-edit")
+        } else {
+            fl!("ui-tool-cmdlib-runbooks-editor-new")
+        },
+        form.into(),
+        notes,
+        editor.discarding.then(|| Discard {
+            keep: send(RunbookMessage::KeepEditing),
+            discard: send(RunbookMessage::DiscardEdit),
+        }),
+        send(RunbookMessage::Save),
+        send(RunbookMessage::Cancel),
+        fitted((RUNBOOK_DIALOG_WIDTH, RUNBOOK_DIALOG_HEIGHT), room),
+    )
 }
 
 /// One step of the editor, number `index` of `count`.

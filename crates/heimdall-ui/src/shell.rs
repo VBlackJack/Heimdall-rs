@@ -2942,8 +2942,27 @@ impl Shell {
     /// Applies a message, then shows the Sessions page when it showed another tab.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let shown = self.shown_tab_id();
+        let dialog_before = self.cmdlib_dialog_tab();
         let task = self.apply(message);
         self.follow_shown_tab(shown);
+        // The command library's dialog takes the keyboard when it opens (the C#
+        // `TxtTitle.Focus()`), and gives it back to the library's search box when it closes.
+        match (dialog_before, self.cmdlib_dialog_tab()) {
+            (None, Some(tab)) => {
+                if let Some(field) = self.tools.cmdlib_dialog_focus(tab) {
+                    return Task::batch([task, iced::widget::operation::focus(field)]);
+                }
+            }
+            (Some(tab), None) if self.shown_tab_id() == Some(tab) => {
+                return Task::batch([
+                    task,
+                    iced::widget::operation::focus(crate::tools::ToolPanes::cmdlib_search_field(
+                        tab,
+                    )),
+                ]);
+            }
+            _ => {}
+        }
         task
     }
 
@@ -3024,6 +3043,26 @@ impl Shell {
         // Enter and Escape are the welcome tour's while it is shown and nothing over it.
         if let Some(tour) = self.tour_key(&message) {
             return self.update(Message::Tour(tour));
+        }
+        // Enter saves and Escape cancels the command library's editor while it is open as a
+        // dialog over the window, as the C# `IsDefault` and `IsCancel` buttons; a menu, Quick
+        // Connect or the search bar over it takes the Escape first.
+        if let Some(tab) = self.cmdlib_dialog_tab()
+            && self.palette.is_none()
+            && self.finder.is_none()
+            && self.menu.is_none()
+            && let Some(confirm) = match &message {
+                Message::DialogKey { confirm } => Some(*confirm),
+                Message::EscapeUntaken => Some(false),
+                _ => None,
+            }
+        {
+            return self.update(Message::Tool(
+                tab,
+                crate::tools::ToolMessage::CmdLib(crate::tools::CommandLibraryMessage::DialogKey {
+                    confirm,
+                }),
+            ));
         }
         // Enter, Escape and Ctrl+C no field took are the Password Generator's while it is
         // shown, as the C# `PasswordGeneratorView.OnKeyDown`.
@@ -3152,7 +3191,9 @@ impl Shell {
                     // the main window's: an operation reaches every window, and a tab's own
                     // window has fields of its own.
                     use iced::advanced::widget::operation::{focusable, scope};
-                    let area = if self.app.dialog.is_some() && self.inline_rename().is_none() {
+                    let area = if (self.app.dialog.is_some() && self.inline_rename().is_none())
+                        || self.cmdlib_dialog_tab().is_some()
+                    {
                         dialog_area_id()
                     } else {
                         main_area_id()
@@ -4256,7 +4297,10 @@ impl Shell {
             }
             (WindowShortcut::Broadcast, _) => AppMessage::Broadcast(BroadcastMessage::Toggle),
             (WindowShortcut::Find, _) => {
-                self.toggle_finder(active);
+                // Not behind the command library's dialog, which has the keyboard.
+                if self.cmdlib_dialog_tab().is_none() {
+                    self.toggle_finder(active);
+                }
                 return Vec::new();
             }
             // The whole tab, every pane of its split, as the C# Ctrl+W.
@@ -5675,8 +5719,6 @@ impl Shell {
         })
     }
 
-    /// Draws the window.
-    #[must_use]
     /// The open dialog over the window, veiled; none while a name is typed in the tree's
     /// row, or with no dialog.
     fn dialog_layer(&self, locked: bool) -> Option<Element<'_, Message>> {
@@ -5723,6 +5765,42 @@ impl Shell {
         ))
     }
 
+    /// The command library tab shown whose editor is open as a dialog over the window, with
+    /// no other dialog, the tour or a page of the navigation over it.
+    fn cmdlib_dialog_tab(&self) -> Option<TabId> {
+        let free = !self.gated()
+            && !self.settings_shown()
+            && self.page == Page::Tab
+            && self.tour.is_none()
+            && self.app.dialog.is_none();
+        let tab = self.shown_tab_id()?;
+        (free && self.tools.cmdlib_has_dialog(tab)).then_some(tab)
+    }
+
+    /// The editor of the command library over the window, veiled and centred as the C#
+    /// dialogs (`CommandActionDialog`, `RunbookDialog`); none while no editor is open.
+    fn cmdlib_dialog_layer(&self, locked: bool) -> Option<Element<'_, Message>> {
+        if locked {
+            return None;
+        }
+        let tab = self.cmdlib_dialog_tab()?;
+        Some(opaque(
+            container(responsive(move |size| {
+                match self.tools.cmdlib_dialog(tab, size) {
+                    Some(card) => anchored(card, tab).into(),
+                    None => iced::widget::space().into(),
+                }
+            }))
+            .id(dialog_area_id())
+            .style(|theme: &Theme| container::Style {
+                background: Some(styles::scrim(theme).into()),
+                ..container::Style::default()
+            }),
+        ))
+    }
+
+    /// Draws the window.
+    #[must_use]
     pub fn view(&self) -> Element<'_, Message> {
         let locked = self.gated();
         // Locked, the window is not drawn: nothing of it shows, and no hidden field takes
@@ -5790,6 +5868,9 @@ impl Shell {
             layers = layers.push(tour_layer(tour));
         }
         if let Some(layer) = self.dialog_layer(locked) {
+            layers = layers.push(layer);
+        }
+        if let Some(layer) = self.cmdlib_dialog_layer(locked) {
             layers = layers.push(layer);
         }
         if let Some(layer) = self.shared_report_layer().filter(|_| !locked) {

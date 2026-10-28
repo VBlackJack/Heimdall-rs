@@ -162,6 +162,9 @@ fn a_command_is_made_changed_and_deleted_and_the_file_round_trips() {
     let mut edit = Draft::of(made);
     edit.title = "Ping three".to_owned();
     edit.linux_pattern = "ping -c 3 {host} {extra}".to_owned();
+    // The table is the whole truth, as in the C#: a new value is declared by adding its row.
+    edit.parameters_mut(TemplatePlatform::Linux)
+        .push(row("extra"));
     assert_eq!(loaded.upsert(&edit).as_deref(), Ok(id.as_str()));
     assert_eq!(loaded.commands().len(), 1);
     assert_eq!(
@@ -433,4 +436,275 @@ fn an_import_says_the_first_command_left_out_and_refuses_a_file_of_too_many() {
         UserLibrary::default().import(&many),
         Err(LibraryError::TooManyActions)
     ));
+}
+
+/// A draft whose Linux table is `rows`, over the pattern `linux`.
+fn tabled(linux: &str, rows: Vec<ParameterDraft>) -> Draft {
+    Draft {
+        linux_parameters: Some(rows),
+        ..draft("Table", linux)
+    }
+}
+
+fn row(name: &str) -> ParameterDraft {
+    ParameterDraft {
+        name: name.to_owned(),
+        ..ParameterDraft::default()
+    }
+}
+
+#[test]
+fn a_parameter_table_is_the_whole_truth_as_in_the_csharp() {
+    let mut library = UserLibrary::default();
+    let mut port = row(" port ");
+    port.label = " Port ".to_owned();
+    port.kind = "int".to_owned();
+    port.default_value = "22".to_owned();
+    port.required = true;
+    port.description = "The port".to_owned();
+    let mut mode = row("mode");
+    mode.kind = CHOICE_TYPE.to_owned();
+    mode.allowed_values = "fast, slow, FAST, ".to_owned();
+    // A placeholder the table does not list is added as a text parameter, and a row with
+    // nothing in it is not a parameter.
+    let mut draft = tabled("nc {host} {port} {mode}", vec![port, row(""), mode]);
+    draft.linux_name = " Netcat ".to_owned();
+    let id = library.upsert(&draft).expect("kept");
+    let template = library
+        .get(&id)
+        .and_then(|command| command.template(TemplatePlatform::Linux))
+        .expect("a template");
+    assert_eq!(template.name, "Netcat");
+    let names: Vec<&str> = template
+        .parameters
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+    assert_eq!(names, ["port", "mode", "host"]);
+    let port = &template.parameters[0];
+    assert_eq!(
+        (port.label.as_str(), port.kind.as_str(), port.required),
+        ("Port", "int", true)
+    );
+    assert_eq!(port.default_value.as_deref(), Some("22"));
+    assert_eq!(port.description.as_deref(), Some("The port"));
+    assert_eq!(
+        template.parameters[1].allowed_values.as_deref(),
+        Some(&["fast".to_owned(), "slow".to_owned()][..])
+    );
+}
+
+#[test]
+fn a_table_draws_the_drift_between_the_pattern_and_its_parameters() {
+    let mut draft = tabled("ping {host} {count}", vec![row("count"), row("unused")]);
+    assert_eq!(
+        draft.drift(TemplatePlatform::Linux),
+        (vec!["host".to_owned()], vec!["unused".to_owned()])
+    );
+    draft.linux_pattern.clear();
+    assert_eq!(
+        draft.drift(TemplatePlatform::Linux),
+        (Vec::new(), Vec::new())
+    );
+}
+
+#[test]
+fn two_rows_of_one_name_are_refused_and_the_rows_are_counted() {
+    let mut library = UserLibrary::default();
+    assert_eq!(
+        library.upsert(&tabled("ls", vec![row("a"), row("a")])),
+        Err(DraftError::ParameterDuplicate)
+    );
+    let many = (0..=MAX_PARAMETERS)
+        .map(|n| row(&format!("p{n}")))
+        .collect();
+    assert_eq!(
+        library.upsert(&tabled("ls", many)),
+        Err(DraftError::TooManyParameters)
+    );
+    assert!(library.commands().is_empty());
+}
+
+#[test]
+fn editing_through_the_table_keeps_how_a_parameter_is_quoted() {
+    let mut library = UserLibrary::default();
+    let id = library
+        .upsert(&draft("Echo", "echo '{text}'"))
+        .expect("kept");
+    let mut command = library.get(&id).cloned().expect("there");
+    command
+        .linux_command_template
+        .as_mut()
+        .expect("template")
+        .parameters[0]
+        .quoting = Some(Quoting::InlineInQuotes);
+    library.commands[0] = command;
+    let mut edit = Draft::of(library.get(&id).expect("there"));
+    edit.parameters_mut(TemplatePlatform::Linux)[0].label = "Words".to_owned();
+    library.upsert(&edit).expect("kept");
+    let parameter = &library
+        .get(&id)
+        .and_then(|each| each.template(TemplatePlatform::Linux))
+        .expect("template")
+        .parameters[0];
+    assert_eq!(parameter.label, "Words");
+    assert_eq!(parameter.quoting, Some(Quoting::InlineInQuotes));
+}
+
+#[test]
+fn a_draft_with_no_table_declares_the_placeholders_as_before() {
+    let mut library = UserLibrary::default();
+    let id = library.upsert(&draft("Ping", "ping {host}")).expect("kept");
+    let template = library
+        .get(&id)
+        .and_then(|each| each.template(TemplatePlatform::Linux))
+        .expect("template");
+    assert_eq!(template.parameters.len(), 1);
+    assert_eq!(template.parameters[0].name, "host");
+}
+
+#[test]
+fn a_rename_in_the_pattern_never_leaves_a_literal_placeholder() {
+    let mut library = UserLibrary::default();
+    let id = library.upsert(&draft("Ping", "ping {host}")).expect("kept");
+    let mut edit = Draft::of(library.get(&id).expect("there"));
+    // The user types {target} over {host} and leaves the table alone.
+    edit.linux_pattern = "ping {target}".to_owned();
+    library.upsert(&edit).expect("kept");
+    let template = library
+        .get(&id)
+        .and_then(|each| each.template(TemplatePlatform::Linux))
+        .expect("template");
+    let names: Vec<&str> = template
+        .parameters
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+    assert!(names.contains(&"target"), "{names:?}");
+    // And it is asked for, not sent as it is.
+    let rendered = generate(template, TemplatePlatform::Linux, |name| {
+        (name == "target").then_some("web1")
+    });
+    assert_eq!(rendered.as_deref(), Ok("ping web1"));
+}
+
+#[test]
+fn a_duplicate_and_a_rename_keep_how_a_parameter_is_quoted() {
+    let mut library = UserLibrary::default();
+    let id = library
+        .upsert(&draft("Echo", "echo '{text}'"))
+        .expect("kept");
+    let mut command = library.get(&id).cloned().expect("there");
+    command
+        .linux_command_template
+        .as_mut()
+        .expect("template")
+        .parameters[0]
+        .quoting = Some(Quoting::InlineInQuotes);
+    library.commands[0] = command;
+    let copy = Draft::copy_of(library.get(&id).expect("there"), "Echo 2".to_owned());
+    let mut renamed = copy.clone();
+    renamed.parameters_mut(TemplatePlatform::Linux)[0].name = "words".to_owned();
+    renamed.linux_pattern = "echo '{words}'".to_owned();
+    for each in [copy, renamed] {
+        let made = library.upsert(&each).expect("kept");
+        let parameter = &library
+            .get(&made)
+            .and_then(|command| command.template(TemplatePlatform::Linux))
+            .expect("template")
+            .parameters[0];
+        assert_eq!(parameter.quoting, Some(Quoting::InlineInQuotes));
+    }
+}
+
+#[test]
+fn a_row_with_something_but_no_name_is_an_error_and_an_empty_one_is_dropped() {
+    let mut library = UserLibrary::default();
+    let mut nameless = row("");
+    nameless.description = "What for".to_owned();
+    assert_eq!(
+        library.upsert(&tabled("ls", vec![nameless])),
+        Err(DraftError::ParameterNameMissing)
+    );
+    let id = library
+        .upsert(&tabled("ls", vec![row(" ")]))
+        .expect("an empty row is no parameter");
+    assert!(
+        library
+            .get(&id)
+            .and_then(|each| each.template(TemplatePlatform::Linux))
+            .expect("template")
+            .parameters
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_type_is_listed_once_whatever_its_case_and_a_blank_template_is_named_by_the_title() {
+    let mut parameter = UserParameter::new("mode");
+    parameter.kind = "Choice".to_owned();
+    assert_eq!(ParameterDraft::of(&parameter).kind, CHOICE_TYPE);
+    let mut library = UserLibrary::default();
+    let id = library.upsert(&draft(" Ping it ", "ping")).expect("kept");
+    let template = library
+        .get(&id)
+        .and_then(|each| each.template(TemplatePlatform::Linux))
+        .expect("template");
+    assert_eq!(template.name, "Ping it");
+}
+
+#[test]
+fn a_command_of_the_csharp_is_opened_and_saved_unchanged() {
+    let json = r#"{"actions": [{
+        "id": "cs-1", "publicId": "11111111-1111-1111-1111-111111111111",
+        "title": "Probe", "description": "d", "category": "Network", "platform": 2, "level": 1,
+        "tags": ["a", "b"],
+        "notes": "Some notes", "isFavorite": true,
+        "examples": [{"command": "probe x", "description": "one"}],
+        "windowsExamples": [{"command": "probe w", "description": "two"}],
+        "links": [{"title": "Docs", "url": "https://example.com"}],
+        "translations": [{"language": "fr", "title": "Sonde"}],
+        "windowsCommandTemplate": {"platform": 0, "name": "Win probe",
+            "commandPattern": "probe {host}",
+            "parameters": [{"name": "host", "label": "Host", "type": "hostname",
+                "defaultValue": "h", "required": true, "description": "d",
+                "allowedValues": null, "quoting": "ShellQuote"}]},
+        "linuxCommandTemplate": {"platform": 1, "name": "Lin probe",
+            "commandPattern": "probe '{text}'",
+            "parameters": [{"name": "text", "label": "Text", "type": "string",
+                "quoting": "InlineInQuotes"}]}
+    }]}"#;
+    let mut library = UserLibrary::default();
+    library.import(json).expect("imported");
+    let before = library.commands()[0].clone();
+    let edit = Draft::of(&before);
+    library.upsert(&edit).expect("saved unchanged");
+    let after = &library.commands()[0];
+    assert_eq!(
+        after.extra, before.extra,
+        "notes, examples, links and the rest"
+    );
+    assert_eq!(
+        after.windows_command_template,
+        before.windows_command_template
+    );
+    assert_eq!(after.linux_command_template, before.linux_command_template);
+    assert_eq!(
+        (
+            &after.title,
+            &after.description,
+            &after.category,
+            after.platform,
+            after.level
+        ),
+        (
+            &before.title,
+            &before.description,
+            &before.category,
+            before.platform,
+            before.level
+        )
+    );
+    assert_eq!(after.tags, before.tags);
+    assert_eq!(after.public_id, before.public_id);
 }
