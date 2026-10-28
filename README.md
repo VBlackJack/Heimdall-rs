@@ -11,18 +11,53 @@ remote connection manager, in Rust, for Windows and Linux.
 > followed. It does not yet do what the C# Heimdall does, its formats may change without
 > notice, and it is not released. Use [Heimdall](https://github.com/VBlackJack/Heimdall).
 
-Early development. The first milestone is done: an SSH terminal tab opened from a saved
-profile, with profiles imported from the C# Heimdall, host key checks, password, key file
-(OpenSSH and PuTTY), agent and keyboard-interactive authentication, and a terminal with
-scrollback, selection, copy and paste, and mouse reporting. It is tested automatically on
-Linux and Windows and was walked through by hand on both on 2026-09-26. Under way: SFTP.
+State on 2026-10-28. What follows is in place and tested automatically on Linux and
+Windows; none of it is in an official release yet.
 
-Known limitations: characters the embedded Source Code Pro font lacks (CJK, Braille) are
-drawn with whatever the system provides; no screen reader support, as iced has none yet.
+- **Protocols:** SSH (terminal, tunnels, jump hosts, agents including Pageant and the
+  Windows OpenSSH agent, X11 forwarding); SFTP and FTP/FTPS file panes with transfers, edits
+  and a sudo mode; RDP (a built-in client with clipboard, drives and audio, and an
+  `mstsc.exe` fallback on Windows for the options it lacks); VNC; Telnet; WinRM (PowerShell
+  remoting in a local ConPTY); local shell; Citrix (launched in Citrix Workspace, not
+  embedded); web consoles (opened in the system's browser, through the gateway's tunnel when
+  one is set).
+- **Credentials:** the credential vault (`sealvault`), the system credential store (Windows
+  Credential Manager, Secret Service), Windows Hello, external credential provider commands
+  (KeePassXC, Bitwarden, 1Password and pass presets), PIN and lockout, folder ACLs.
+- **Built-in tools:** 57; the C# Heimdall has 58, its Privilege Launcher is not ported.
+- **Command Library:** the 527 shipped actions, runbooks, history, capture from a terminal,
+  import and export, Git synchronization.
+- **Imports:** the C# Heimdall's data, MobaXterm, mRemoteNG, RDCMan, PuTTY sessions, OpenSSH
+  config, `.rdp` files, `known_hosts`; shared MobaXterm session sources with an offline copy
+  and an import report.
+- **Sessions:** a tree with folders, colours, drag and drop, search and filters, favourites
+  and reachability; split panes, floating windows, tab drag; macros with expect steps;
+  scheduled connections; session logs and transcripts; masked copy; screenshot; quick connect
+  (Ctrl+K); an HTTP file share.
+- **Appearance and languages:** 17 themes with accent colours, terminal colour schemes and a
+  font choice, high contrast, reduced motion; English, French and Spanish.
+- **Separate instance:** `--data-dir` runs one beside the user's own.
 
-The target is feature parity with the C# Heimdall: SSH, SFTP, FTP/FTPS, RDP, VNC, Telnet,
-Citrix, WinRM, local shell, credential vault, command library, diagram editor, updater,
-and English, French and Spanish localisation.
+Not in place yet:
+
+- Signed release artifacts and a first official release (#454, #514).
+- Citrix window embedding (#449).
+- In the built-in RDP client: smart cards, RD Gateway, microphone, printers (#443 to #446).
+- TFTP in the file share (#494).
+- In-tab elevation with gsudo (#448).
+- OCSP and CRL revocation checks (#447).
+- Detection of Sysinternals, NirSoft and NanaRun (#450).
+- WYSIWYG notes and a diagram canvas (#451, #452), by design: they would need an embedded
+  web engine.
+- Projects (#498).
+- The C# Heimdall's timing settings (#499).
+- Screen reader support: iced has no AccessKit integration yet.
+
+Known limitation: characters the embedded Source Code Pro font lacks (CJK, Braille) are
+drawn with whatever the system provides.
+
+The application's visible name is Heimdall-rs, never Heimdall alone, so it runs side by side
+with the C# Heimdall.
 
 The user interface is native, built with [iced](https://iced.rs), with no
 embedded web engine.
@@ -44,7 +79,7 @@ Stripping a personal Windows workstation? See [Windows workstation debloat pack]
 | `heimdall-sftp` | SFTP, FTP and FTPS |
 | `heimdall-term` | Terminal emulation and local pseudo-terminals |
 | `heimdall-rdp` | RDP sessions |
-| `heimdall-twinshell` | Command library |
+| `heimdall-twinshell` | Placeholder, empty; the command library lives in `heimdall-core` |
 | `heimdall-remote` | VNC, Telnet, serial |
 | `heimdall-tls` | Server certificate check of FTPS and VNC over TLS |
 | `heimdall-dragout` | Local files dragged out to Explorer; unsafe code, an approved exception (Windows shell calls) |
@@ -57,23 +92,25 @@ Only `heimdall-ui` depends on iced. Protocol crates depend on `heimdall-core` an
 
 ## Built-in Tools
 
-Heimdall embeds 30 sysadmin and security assessment tools. Not all of them are
-offline: the network tools, such as the SSL/TLS Auditor, DNS Security Checker, SMB
-Enumerator and SecNumCloud Auditor, connect to the hosts you give them; the others
-run fully offline.
+Heimdall-rs embeds 57 sysadmin and security assessment tools, in the five categories
+of the C# Heimdall (which has 58: its Privilege Launcher is not ported). Not all of them
+are offline: the network tools, such as the TLS Auditor, DNS Security Checker, SMB
+Enumerator and SecNumCloud Audit, connect to the hosts you give them; the others run
+fully offline. The network tools can route through an SSH gateway.
 
 The CVE Lookup uses an embedded, hand-curated database of 68 entries (63 distinct
 CVEs) for common infrastructure software, spanning 2015 to 2024. It carries no
 CISA KEV (Known Exploited Vulnerabilities) data and is not a live feed.
 
-The Default Credentials Scanner lists the known vendor default credentials for a
+The Default Credential Scanner lists the known vendor default credentials for a
 product or service; unlike the upstream C# tool, it never attempts a login, to avoid
 account lockouts and unauthorized login attempts.
 
-- **Security & Compliance:** SSH Key Auditor, SSL/TLS Auditor, DNS Security Checker (DNSSEC/DANE), ANSSI SecNumCloud v3.2 Auditor, SMB Enumerator, Default Credentials Scanner, Offline CVE Lookup, Password Auditor, Password Generator, SSH Key Generator, Certificate Generator.
-- **Network:** Subnet Calculator, IP Converter, Network Calculator.
-- **System:** Chmod Calculator, Date & Time Converter, Crontab Builder, SSH Config Generator.
-- **Encoding & Tokens:** Hash Computer, HMAC Generator, JWT Debugger, TOTP Generator, Base64 Encoder/Decoder, URL Encoder/Decoder, JSON Formatter, Regex Tester, Text Diff, Text Case Converter, UUID Generator, ULID Generator.
+- **Network (17):** Ping Monitor, DNS Lookup, Certificate Inspector, Port Scanner, Subnet Calculator, IP Address Converter, HTTP Status Codes, WHOIS Lookup, HTTP Header Analyzer, Banner Grabber, Traceroute, SNMP Walker, ARP Monitor, Firewall Tester, Network Cartography, Network Calculator, TCP Ping.
+- **Security (15):** Hash Generator, HMAC Generator, Password Generator, SSH Key Generator, Certificate Generator, JWT Parser, TOTP Generator, Password Auditor, SSH Key Auditor, TLS Auditor, DNS Security Checker (DNSSEC/DANE), SMB Enumerator, Default Credential Scanner, CVE Lookup, SecNumCloud Audit (ANSSI v3.2).
+- **Encoding (6):** Base64 Encoder / Decoder, URL Encoder / Decoder, JSON Formatter, Regex Tester, Text Diff, Text Case Converter.
+- **System (13):** Chmod Calculator, DateTime Converter, UUID Generator, ULID Generator, Crontab Builder, SSH Config Generator, Hosts File Editor, Service Status Dashboard, Log Viewer, Cron Job Manager, Notes, Diagram Editor, Command Library.
+- **External (6):** Wake-on-LAN, DNS Batch Resolver, Open Ports, Network Interfaces, Route Table, WiFi Networks.
 
 ## Build
 
@@ -117,6 +154,11 @@ a newer one. A build without it, such as `cargo run` or the two scripts, never c
 ```bash
 cargo test --workspace
 ```
+
+`cargo xtask catalogue-diff <path to a C# Heimdall checkout>` measures how far the shipped
+command catalogue and the debloat pack have drifted from the C# seed: it compares each file
+as JSON, prints those that differ or exist on one side only with a count, and exits with an
+error when there is any.
 
 ## Localisation
 

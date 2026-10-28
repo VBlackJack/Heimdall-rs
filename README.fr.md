@@ -12,20 +12,56 @@ gestionnaire de connexions distantes multi-protocoles, pour Windows et Linux.
 > changer sans préavis, et elle n'est pas publiée en version. Utilisez
 > [Heimdall](https://github.com/VBlackJack/Heimdall).
 
-Développement en cours. Le premier jalon est atteint : un onglet de terminal SSH ouvert
-depuis un profil enregistré, avec les profils importés depuis Heimdall en C#, la
-vérification des clés d'hôte, l'authentification par mot de passe, fichier de clé (OpenSSH
-et PuTTY), agent et keyboard-interactive, et un terminal avec historique, sélection,
-copier-coller et remontée de la souris. Il est testé automatiquement sous Linux et Windows,
-et a été parcouru à la main sur les deux le 2026-09-26. En cours : SFTP.
+État au 2026-10-28. Ce qui suit est en place et testé automatiquement sous Linux et
+Windows ; rien de cela n'est encore dans une version officielle.
 
-Limites connues : les caractères absents de la police embarquée Source Code Pro (CJK,
-Braille) sont dessinés avec ce que fournit le système ; pas de prise en charge des lecteurs
-d'écran, iced n'en a pas encore.
+- **Protocoles :** SSH (terminal, tunnels, rebonds, agents dont Pageant et l'agent OpenSSH de
+  Windows, redirection X11) ; volets de fichiers SFTP et FTP/FTPS avec transferts, édition et
+  mode sudo ; RDP (un client intégré avec presse-papiers, lecteurs et son, et un repli sur
+  `mstsc.exe` sous Windows pour les options qui lui manquent) ; VNC ; Telnet ; WinRM
+  (PowerShell à distance dans un ConPTY local) ; shell local ; Citrix (lancé dans Citrix
+  Workspace, pas intégré) ; consoles web (ouvertes dans le navigateur du système, par le
+  tunnel de la passerelle quand il y en a une).
+- **Identifiants :** le coffre d'identifiants (`sealvault`), le magasin d'identifiants du
+  système (Gestionnaire d'identification Windows, Secret Service), Windows Hello, les
+  commandes de fournisseurs d'identifiants externes (préréglages KeePassXC, Bitwarden,
+  1Password et pass), code PIN et verrouillage, ACL de dossiers.
+- **Outils intégrés :** 57 ; Heimdall en C# en a 58, son Privilege Launcher n'est pas porté.
+- **Bibliothèque de commandes :** les 527 actions livrées, les runbooks, l'historique, la
+  capture depuis un terminal, l'import et l'export, la synchronisation Git.
+- **Imports :** les données de Heimdall en C#, MobaXterm, mRemoteNG, RDCMan, les sessions
+  PuTTY, la configuration OpenSSH, les fichiers `.rdp`, `known_hosts` ; les sources de
+  sessions partagées MobaXterm, avec copie hors-ligne et rapport d'import.
+- **Sessions :** une arborescence avec dossiers, couleurs, glisser-déposer, recherche et
+  filtres, favoris et joignabilité ; volets partagés, fenêtres flottantes, onglets déplaçables ;
+  macros avec étapes d'attente (expect) ; connexions planifiées ; journaux et transcriptions
+  de session ; copie masquée ; capture d'écran ; connexion rapide (Ctrl+K) ; un partage de
+  fichiers HTTP.
+- **Apparence et langues :** 17 thèmes avec couleurs d'accent, jeux de couleurs du terminal et
+  choix de la police, contraste élevé, animations réduites ; anglais, français et espagnol.
+- **Instance séparée :** `--data-dir` en lance une à côté de celle de l'utilisateur.
 
-La cible est la parité fonctionnelle avec Heimdall en C# : SSH, SFTP, FTP/FTPS, RDP, VNC,
-Telnet, Citrix, WinRM, shell local, coffre d'identifiants, bibliothèque de commandes,
-éditeur de diagrammes, mise à jour, et localisation en anglais, français et espagnol.
+Pas encore en place :
+
+- Des artefacts de version signés et une première version officielle (#454, #514).
+- L'intégration de la fenêtre Citrix (#449).
+- Dans le client RDP intégré : cartes à puce, passerelle RD Gateway, microphone, imprimantes
+  (#443 à #446).
+- TFTP dans le partage de fichiers (#494).
+- L'élévation dans l'onglet avec gsudo (#448).
+- Les contrôles de révocation OCSP et CRL (#447).
+- La détection de Sysinternals, NirSoft et NanaRun (#450).
+- Les notes WYSIWYG et un canevas de diagrammes (#451, #452), par choix : il leur faudrait un
+  moteur web embarqué.
+- Les projets (#498).
+- Les réglages de délais de Heimdall en C# (#499).
+- La prise en charge des lecteurs d'écran : iced n'a pas encore d'intégration AccessKit.
+
+Limite connue : les caractères absents de la police embarquée Source Code Pro (CJK, Braille)
+sont dessinés avec ce que fournit le système.
+
+Le nom visible de l'application est Heimdall-rs, jamais Heimdall seul, pour qu'elle tourne à
+côté de Heimdall en C#.
 
 L'interface est native, construite avec [iced](https://iced.rs), sans moteur web
 embarqué.
@@ -47,7 +83,7 @@ Alléger un poste Windows personnel ? Voir [Pack de nettoyage d'un poste Windows
 | `heimdall-sftp` | SFTP, FTP et FTPS |
 | `heimdall-term` | Émulation de terminal et pseudo-terminaux locaux |
 | `heimdall-rdp` | Sessions RDP |
-| `heimdall-twinshell` | Bibliothèque de commandes |
+| `heimdall-twinshell` | Réservé, vide ; la bibliothèque de commandes est dans `heimdall-core` |
 | `heimdall-remote` | VNC, Telnet, série |
 | `heimdall-tls` | Vérification du certificat serveur de FTPS et de VNC sur TLS |
 | `heimdall-dragout` | Fichiers locaux glissés vers l'Explorateur ; code unsafe, exception approuvée (appels au shell Windows) |
@@ -60,11 +96,12 @@ Seul `heimdall-ui` dépend d'iced. Les crates de protocole ne dépendent que de
 
 ## Outils intégrés
 
-Heimdall intègre 30 outils d'administration système et d'audit de sécurité. Tous
-ne sont pas hors-ligne : les outils réseau, comme l'Auditeur SSL/TLS, le
-Vérificateur de sécurité DNS, l'Énumérateur SMB et l'Auditeur SecNumCloud, se
-connectent aux hôtes que vous indiquez ; les autres fonctionnent entièrement
-hors-ligne.
+Heimdall-rs intègre 57 outils d'administration système et d'audit de sécurité, dans
+les cinq catégories de Heimdall en C# (qui en a 58 : son Privilege Launcher n'est pas
+porté). Tous ne sont pas hors-ligne : les outils réseau, comme l'Auditeur TLS, le
+Vérificateur de sécurité DNS, l'Énumérateur SMB et l'Audit SecNumCloud, se connectent
+aux hôtes que vous indiquez ; les autres fonctionnent entièrement hors-ligne. Les
+outils réseau peuvent passer par une passerelle SSH.
 
 La Recherche CVE utilise une base embarquée et constituée à la main de 68 entrées
 (63 CVE distinctes) pour des logiciels d'infrastructure courants, couvrant 2015 à
@@ -76,10 +113,11 @@ fournisseurs pour un produit ou un service ; contrairement à l'outil C# d'origi
 il ne tente jamais de connexion, pour éviter les verrouillages de compte et les
 tentatives de connexion non autorisées.
 
-- **Sécurité & Conformité :** Auditeur de clés SSH, Auditeur SSL/TLS, Vérificateur de sécurité DNS (DNSSEC/DANE), Audit de conformité ANSSI SecNumCloud v3.2, Énumérateur SMB & NetBIOS, Scanner d'identifiants par défaut, Recherche hors-ligne CVE, Auditeur de mots de passe, Générateur de mots de passe, Générateur de clés SSH, Générateur de certificats.
-- **Réseau :** Calculateur de sous-réseau, Convertisseur IP, Calculateur réseau.
-- **Système :** Calculateur Chmod, Convertisseur date et heure, Générateur Crontab, Générateur de configuration SSH.
-- **Encodage & Jetons :** Calculateur de hachage, Générateur HMAC, Débogueur JWT, Générateur TOTP, Encodeur/Décodeur Base64, Encodeur/Décodeur URL, Formateur JSON, Testeur d'expressions régulières, Comparateur de texte (Diff), Convertisseur de casse, Générateur UUID, Générateur ULID.
+- **Réseau (17) :** Moniteur Ping, Recherche DNS, Inspecteur de certificat, Scanneur de ports, Calculateur de sous-réseau, Convertisseur d'adresses IP, Codes de statut HTTP, Recherche WHOIS, Analyseur d'en-têtes HTTP, Capture de bannières, Traceroute, SNMP Walker, Moniteur ARP, Testeur de pare-feu, Cartographie réseau, Calculateur réseau, TCP Ping.
+- **Sécurité (15) :** Générateur de hachage, Générateur HMAC, Générateur de mots de passe, Générateur de clé SSH, Générateur de certificats, Analyseur JWT, Générateur TOTP, Auditeur de mot de passe, Auditeur de clé SSH, Auditeur TLS, Vérificateur de sécurité DNS (DNSSEC/DANE), Énumérateur SMB, Scanner d'identifiants par défaut, Recherche CVE, Audit SecNumCloud (ANSSI v3.2).
+- **Encodage (6) :** Encodeur / Décodeur Base64, Encodeur / Décodeur URL, Formateur JSON, Testeur Regex, Comparaison de texte, Convertisseur de casse.
+- **Système (13) :** Calculateur Chmod, Convertisseur Date/Heure, Générateur UUID, Générateur d'ULID, Constructeur Crontab, Générateur de config SSH, Éditeur du fichier hosts, Tableau de bord des services, Visionneuse de logs, Gestionnaire de tâches cron, Notes, Éditeur de diagrammes, Bibliothèque de commandes.
+- **Externe (6) :** Wake-on-LAN, Résolution DNS en lot, Ports ouverts, Interfaces réseau, Table de routage, Réseaux WiFi.
 
 ## Compilation
 
@@ -131,6 +169,11 @@ sur GitHub et propose une version plus récente. Une compilation sans elle, comm
 ```bash
 cargo test --workspace
 ```
+
+`cargo xtask catalogue-diff <chemin d'un dépôt Heimdall C#>` mesure l'écart entre le
+catalogue de commandes livré, le pack de nettoyage et les actions d'origine du C# : il compare
+chaque fichier en JSON, affiche ceux qui diffèrent ou n'existent que d'un côté avec leur
+nombre, et se termine en erreur s'il y en a.
 
 ## Localisation
 
