@@ -224,6 +224,23 @@ where
         .into()
 }
 
+/// [`choices`] as wide as its column: the C# Appearance card's three lists each fill a third
+/// of the card.
+fn wide_choices<'a, T>(
+    options: Vec<T>,
+    selected: Option<T>,
+    on_select: impl Fn(T) -> Message + 'a,
+) -> Element<'a, Message>
+where
+    T: ToString + PartialEq + Clone + 'a,
+{
+    pick_list(options, selected, on_select)
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
+        .width(Length::Fill)
+        .into()
+}
+
 /// `label` above `control`, as the C# Settings tab lays out its lists and fields: a
 /// caption in the secondary text.
 fn labelled<'a>(label: String, control: impl Into<Element<'a, Message>>) -> Column<'a, Message> {
@@ -283,7 +300,8 @@ fn applies_glyph<'a>(applies: Applies) -> Element<'a, Message> {
 }
 
 /// What the glyph means, once, at the foot of the rail, under a line that says every setting
-/// applies as it is changed.
+/// applies as it is changed: one line for each of the two things it can mean, as the C#
+/// legend's glyph lines (`MainWindow.xaml`, the rail's foot).
 fn apply_legend<'a>() -> Element<'a, Message> {
     container(
         column![
@@ -293,6 +311,13 @@ fn apply_legend<'a>() -> Element<'a, Message> {
             row![
                 icons::icon(Icon::NewWindow, Tint::Accent, APPLY_GLYPH_SIDE),
                 text(applies_text(Applies::NewConnections))
+                    .size(font_size::CAPTION)
+                    .style(text::secondary),
+            ]
+            .spacing(spacing::SM),
+            row![
+                icons::icon(Icon::NewWindow, Tint::Accent, APPLY_GLYPH_SIDE),
+                text(applies_text(Applies::NewSessions))
                     .size(font_size::CAPTION)
                     .style(text::secondary),
             ]
@@ -522,6 +547,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::Accent => fl!("ui-settings-accent"),
         SettingRow::CollapseTunnelsPanel => fl!("ui-settings-collapse-tunnels-panel"),
         SettingRow::ShowPropertiesPanel => fl!("ui-settings-show-properties-panel"),
+        SettingRow::ShowGatewayBadge => fl!("ui-settings-show-gateway-badge"),
         SettingRow::PreventSleep => fl!("ui-settings-prevent-sleep"),
         SettingRow::MaxSessions => fl!("ui-settings-max-sessions"),
         SettingRow::UpdateChecks => fl!("ui-settings-updates-enabled"),
@@ -1167,6 +1193,9 @@ impl Shell {
 
     /// `rows` of `card` under its heading, in its card as the C#'s.
     fn card_view(&self, card: SettingsCard, rows: &[SettingRow]) -> Element<'_, Message> {
+        if card == SettingsCard::Appearance {
+            return self.appearance_card(rows);
+        }
         let mut body = Column::new().spacing(spacing::SM);
         if let Some(description) = card_description(card) {
             body = body.push(text(description).size(font_size::CAPTION));
@@ -1199,6 +1228,30 @@ impl Shell {
         } else {
             shown.into()
         }
+    }
+
+    /// The Appearance card, its language, theme and accent side by side in three columns of
+    /// equal width, as the C# card's grid, under the card's heading.
+    fn appearance_card(&self, rows: &[SettingRow]) -> Element<'_, Message> {
+        let columns = iced::widget::Row::with_children(rows.iter().map(|&row| {
+            container(self.setting_row(row))
+                .width(Length::FillPortion(1))
+                .into()
+        }))
+        .spacing(spacing::LG);
+        container(
+            column![
+                text(fl!("ui-settings-appearance"))
+                    .size(font_size::SUBTITLE)
+                    .font(styles::SEMIBOLD),
+                columns,
+            ]
+            .spacing(spacing::MD),
+        )
+        .padding(spacing::LG)
+        .width(Length::Fill)
+        .style(styles::card)
+        .into()
     }
 
     /// `row`, with its "Modified" marker when its value is not the default, outlined when a
@@ -1574,7 +1627,7 @@ impl Shell {
         let line = match row {
             SettingRow::Language => labelled(
                 label,
-                choices(
+                wide_choices(
                     Language::ALL.map(LanguageChoice).to_vec(),
                     Some(LanguageChoice(
                         settings.language.unwrap_or_else(crate::i18n::current),
@@ -1584,7 +1637,7 @@ impl Shell {
             ),
             SettingRow::Theme => labelled(
                 label,
-                choices(
+                wide_choices(
                     AppTheme::ALL.map(ThemeChoice).to_vec(),
                     Some(ThemeChoice(settings.theme)),
                     |ThemeChoice(theme)| send(SettingsMessage::Theme(theme)),
@@ -1592,7 +1645,7 @@ impl Shell {
             ),
             SettingRow::Accent => labelled(
                 label,
-                choices(
+                wide_choices(
                     Accent::ALL.map(AccentChoice).to_vec(),
                     Some(AccentChoice(settings.accent)),
                     |AccentChoice(accent)| send(SettingsMessage::Accent(accent)),

@@ -1097,11 +1097,11 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
     // The last rows added, the welcome tour's button, the RDP keep-alive interval, the
     // built-in client's compression, the properties panel's box, the SSH reconnect waits,
     // the RDP disconnect confirmation and redirection indicators, the terminal minimum contrast
-    // choice, hold no path; the external
+    // choice, and the gateway badge's box, hold no path; the external
     // tools' card holds the Browse buttons of the tool chosen, which its own tests cover, and
     // the MobaXterm variables' card holds none; the shared sources' card holds one per source,
     // which its own test covers; the Citrix store prefix is a name, not a path.
-    assert_eq!(SettingRow::ALL.len(), 80, "no row added");
+    assert_eq!(SettingRow::ALL.len(), 81, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(
@@ -1901,17 +1901,13 @@ fn the_glyph_is_explained_once_at_the_foot_of_the_rail_and_every_setting_applies
     for said in [
         "Settings apply as you change them",
         "Applies to connections opened after the change",
+        "Applies to sessions opened after the change",
     ] {
         ui.find(said).expect(said);
     }
     // Nothing says "Save" or "saved immediately": there is no Save here.
     assert!(ui.find("Saved immediately").is_err());
     assert!(ui.find("Applies immediately").is_err());
-    // The glyph is per setting: the sessions' wording is in its tooltip, not on the page.
-    assert!(
-        ui.find("Applies to sessions opened after the change")
-            .is_err()
-    );
 }
 
 #[test]
@@ -1956,7 +1952,7 @@ fn section_name(section: SettingsSection, language: Language) -> &'static str {
         S::Appearance => ("Apparence", "Apariencia"),
         S::Behavior | S::RdpBehavior => ("Comportement", "Comportamiento"),
         S::Updates => ("Mises à jour", "Actualizaciones"),
-        S::Import => ("Import", "Importación"),
+        S::Import => ("Fichier et import", "Archivo e importación"),
         S::SharedSources => ("Sources partagées", "Orígenes compartidos"),
         S::Tools => ("Outils et intégrations", "Herramientas e integraciones"),
         S::Onboarding => ("Visite guidée", "Recorrido de bienvenida"),
@@ -2087,4 +2083,81 @@ fn the_search_finds_a_row_of_a_section_that_is_not_open() {
     assert!(!shows(&shell, "Require Credential Guard"));
     let _ = shell.update(Message::SettingsSearch("credential guard".to_owned()));
     assert!(shows(&shell, "Require Credential Guard"));
+}
+
+#[test]
+fn the_appearance_card_lays_its_three_lists_side_by_side_as_the_csharps_grid() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = shell(dir.path());
+    let mut ui = simulator(&shell);
+    // The caption of each list: the rail and the status bar say "Theme" or "Language" in
+    // no other place of the page's body, so the last text is the card's.
+    let language = common::last_bounds(&mut ui, "Language");
+    let theme = common::last_bounds(&mut ui, "Theme");
+    let accent = common::last_bounds(&mut ui, "Accent");
+    assert!(
+        (language.y - theme.y).abs() < 1.0 && (theme.y - accent.y).abs() < 1.0,
+        "one line: {language:?} {theme:?} {accent:?}"
+    );
+    assert!(
+        language.x < theme.x && theme.x < accent.x,
+        "language, theme, accent from the left: {language:?} {theme:?} {accent:?}"
+    );
+    // Three columns of the same width: the gaps between their left edges are equal.
+    let first = theme.x - language.x;
+    let second = accent.x - theme.x;
+    assert!((first - second).abs() < 1.0, "{first} against {second}");
+}
+
+#[test]
+fn the_gateway_badge_is_ticked_in_the_session_tree_card_and_is_the_filter_menus_setting() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    assert!(
+        shell.app().shows_gateway_badge(),
+        "shown, as the C# default"
+    );
+    assert_eq!(
+        SettingRow::ShowGatewayBadge.card(),
+        SettingsCard::SessionTree
+    );
+    assert_eq!(
+        shell.settings_found("gateway badge"),
+        [SettingRow::ShowGatewayBadge],
+        "found by its name"
+    );
+    let messages: Vec<Message> = {
+        let mut ui = simulator(&shell);
+        ui.click("Show gateway badge").expect("the box");
+        ui.into_messages().collect()
+    };
+    for message in messages {
+        let _ = shell.update(message);
+    }
+    assert!(!shell.app().shows_gateway_badge(), "off, as the menu's");
+    assert!(
+        SettingRow::ShowGatewayBadge.is_modified(shell.app().settings()),
+        "marked once off its default"
+    );
+    let _ = shell.update(Message::ResetSetting(SettingRow::ShowGatewayBadge));
+    assert!(shell.app().shows_gateway_badge(), "reset");
+}
+
+#[test]
+fn the_rail_names_the_files_section_as_the_csharp_does_and_its_legend_names_both_glyph_meanings() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = shell(dir.path());
+    let mut ui = simulator(&shell);
+    for said in [
+        "Settings file & import",
+        "Settings apply as you change them",
+        "Applies to connections opened after the change",
+        "Applies to sessions opened after the change",
+    ] {
+        ui.find(said).expect(said);
+    }
+    assert!(ui.find("Import").is_err(), "no longer the bare word");
 }

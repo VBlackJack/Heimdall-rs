@@ -17,7 +17,8 @@
 //! The About page of the window's navigation, laid out as the C# About page
 //! (`MainWindow.xaml:4684-4848`): one centred column of cards as wide as each other, the
 //! application's card first, its icon, name and version above its author and licence, then
-//! the System, Data and Quick access cards. Heimdall-rs's own cards follow in the same
+//! the System, Data and Quick access cards. The version is followed by the commit it was
+//! built from, as the C#'s, and there is no tagline under it, as in the C#. Heimdall-rs's own cards follow in the same
 //! column: the settings file's export and import, and the diagnostics log switch. What it
 //! says of the application comes from its package, never written twice.
 
@@ -35,9 +36,11 @@ use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, icon_size, spacing};
 
-/// Width of the column of cards, as the C# page's `MaxWidth` (`MainWindow.xaml:4686`): the
-/// column narrows with a narrower window, never widens.
-pub const COLUMN_WIDTH: f32 = 560.0;
+/// Width of the column of cards: the C# page's `MaxWidth` of 560 less its margin of
+/// `SpacingXl` on each side (`MainWindow.xaml:5793`), which is what its cards measure
+/// (504); the margin is the page's padding here. The column narrows with a narrower
+/// window, never widens.
+pub const COLUMN_WIDTH: f32 = 504.0;
 
 /// Width of a label before its value, as the C# grids' first column
 /// (`MainWindow.xaml:4719`, `:4749`, `:4794`).
@@ -106,6 +109,26 @@ pub fn build_date() -> Option<String> {
         // The variable `crate::build_date::BUILD_DATE_VARIABLE` names: `option_env!` takes a
         // literal only.
         .or_else(|| option_env!("HEIMDALL_BUILD_DATE").map(str::to_owned))
+}
+
+/// The abbreviated hash of the commit this build was made from, as the build script found
+/// it; `None` when git was not there to ask.
+#[must_use]
+pub fn commit() -> Option<&'static str> {
+    // The variable `crate::build_date::COMMIT_VARIABLE` names: `option_env!` takes a
+    // literal only.
+    option_env!("HEIMDALL_COMMIT")
+}
+
+/// The version as the C# About page writes it, its informational version
+/// (`MainWindow.xaml.cs:629`): the release, then a plus sign and the commit, `2026.102301+bbcc0b1`;
+/// the release alone when the commit is not known.
+#[must_use]
+pub fn version_with_commit() -> String {
+    match commit() {
+        Some(commit) => format!("{}+{commit}", display_version()),
+        None => display_version(),
+    }
 }
 
 /// The components the System card names with the version this build holds, as the C#
@@ -202,11 +225,8 @@ fn header<'a>() -> Element<'a, Message> {
             .size(font_size::HEADLINE)
             .font(crate::detail_view::BOLD),
         space().height(spacing::XS),
-        text(fl!("ui-about-version", version = display_version()))
+        text(fl!("ui-about-version", version = version_with_commit()))
             .size(font_size::BODY_LARGE)
-            .style(text::secondary),
-        text(fl!("ui-about-tagline"))
-            .size(font_size::BODY)
             .style(text::secondary),
     ]
     .align_x(Alignment::Center)

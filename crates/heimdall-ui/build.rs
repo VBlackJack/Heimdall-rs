@@ -51,6 +51,9 @@ fn main() {
         .ok()
         .and_then(|value| value.trim().parse::<i64>().ok())
         .or_else(commit_time);
+    if let Some(commit) = short_commit() {
+        println!("cargo::rustc-env={}={commit}", build_date::COMMIT_VARIABLE);
+    }
     if let Some(date) = seconds.and_then(build_date::civil_date) {
         println!(
             "cargo::rustc-env={}={date}",
@@ -86,9 +89,9 @@ fn lock_file() -> Option<PathBuf> {
         .find(|lock| lock.is_file())
 }
 
-/// The time of the commit checked out, in seconds since 1970; `None` without git or
-/// outside a repository. The build runs again when that commit changes.
-fn commit_time() -> Option<i64> {
+/// Asks cargo to run the build again when the commit checked out changes; `None` without
+/// git or outside a repository.
+fn watch_head() -> Option<()> {
     let git_dir = PathBuf::from(git(&["rev-parse", "--absolute-git-dir"])?);
     for file in HEAD_FILES {
         let path = git_dir.join(file);
@@ -96,7 +99,23 @@ fn commit_time() -> Option<i64> {
             println!("cargo::rerun-if-changed={}", path.display());
         }
     }
+    Some(())
+}
+
+/// The time of the commit checked out, in seconds since 1970; `None` without git or
+/// outside a repository. The build runs again when that commit changes.
+fn commit_time() -> Option<i64> {
+    watch_head()?;
     git(&["log", "-1", "--format=%ct"])?.parse().ok()
+}
+
+/// The abbreviated hash of the commit checked out, as the C# version carries its commit
+/// after a plus sign; `None` without git, outside a repository, or when git answers
+/// something that is not a hash. The build runs again when that commit changes
+/// (`commit_time` registers the git files).
+fn short_commit() -> Option<String> {
+    watch_head()?;
+    git(&["rev-parse", "--short", "HEAD"]).filter(|hash| build_date::is_commit_hash(hash))
 }
 
 /// What git says to `arguments`, run in this package's folder; `None` when it fails.
