@@ -18,7 +18,7 @@
 //! and its quick setup presets, the unlock secret, the database, the key file and the Test
 //! button.
 
-use heimdall_app::credential_provider::{ProviderFailure, ProviderTest};
+use heimdall_app::credential_provider::{ProviderFailure, ProviderTest, milliseconds};
 use heimdall_app::{App, Message as AppMessage, ProviderMessage};
 use std::time::Duration;
 
@@ -88,7 +88,7 @@ struct Preset(usize);
 impl std::fmt::Display for Preset {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // The tools' own names, as the C# list shows them in every language.
-        f.write_str(PRESETS.get(self.0).map_or("", |(name, _)| name))
+        f.write_str(PRESETS.get(self.0).map_or("", |preset| preset.name))
     }
 }
 
@@ -201,21 +201,8 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
             ),
             Some(fl!("ui-settings-provider-key-file-hint")),
         ));
-    let running = app.provider_test() == Some(&ProviderTest::Running);
-    let mut test = row![
-        button(text(fl!("ui-settings-provider-test")))
-            .padding(crate::tokens::BUTTON_PADDING)
-            .style(styles::secondary)
-            .on_press_maybe((!running).then(|| provider(ProviderMessage::Test))),
-    ]
-    .spacing(spacing::SM)
-    .align_y(Alignment::Center);
-    if let Some(outcome) = app.provider_test() {
-        let seconds = settings.timeout.as_secs();
-        test = test.push(text(test_text(outcome, seconds)).size(font_size::CAPTION));
-    }
+    card = card.push(entry_field(app)).push(test_row(app));
     card = card
-        .push(test)
         .push(
             checkbox(settings.first_line_only)
                 .style(styles::checkbox)
@@ -226,6 +213,40 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
         .push(timeout_choice(settings.timeout))
         .push(text(fl!("ui-settings-provider-keepass2-hint")).size(font_size::CAPTION));
     boxed(card)
+}
+
+/// The vault entry the Test button looks up, as the C# "Vault entry to look up" field: a test
+/// with a made-up entry reported a failure for every working setup.
+fn entry_field(app: &App) -> Element<'_, Message> {
+    let running = app.provider_test() == Some(&ProviderTest::Running);
+    field(
+        fl!("ui-settings-provider-test-entry"),
+        styles::field(
+            &fl!("ui-settings-provider-test-entry-placeholder"),
+            app.provider_test_entry(),
+        )
+        .style(styles::text_input)
+        .on_input(|value| provider(ProviderMessage::TestEntry(value)))
+        .on_submit_maybe((!running).then(|| provider(ProviderMessage::Test))),
+        None,
+    )
+}
+
+/// The Test button, and what the last test found beside it.
+fn test_row<'a>(app: &App) -> Element<'a, Message> {
+    let running = app.provider_test() == Some(&ProviderTest::Running);
+    let mut test = row![
+        button(text(fl!("ui-settings-provider-test")))
+            .padding(crate::tokens::BUTTON_PADDING)
+            .style(styles::secondary)
+            .on_press_maybe((!running).then(|| provider(ProviderMessage::Test))),
+    ]
+    .spacing(spacing::SM)
+    .align_y(Alignment::Center);
+    if let Some(outcome) = app.provider_test() {
+        test = test.push(text(test_text(outcome)).size(font_size::CAPTION));
+    }
+    test.into()
 }
 
 /// Where the password comes from, as the C# radio buttons choose it.
@@ -300,28 +321,85 @@ fn unlock_field<'a>(app: &App, unlock: &'a str) -> Element<'a, Message> {
     )
 }
 
-/// What the Test button found, in the C# words; the password is never shown.
-fn test_text(outcome: &ProviderTest, seconds: u64) -> String {
+/// What the Test button found, in the C# words; the password is never shown, only the user
+/// name and the shape of the value.
+pub fn test_text(outcome: &ProviderTest) -> String {
     match outcome {
         ProviderTest::Running => fl!("ui-settings-provider-test-running"),
-        ProviderTest::Success => fl!("ui-settings-provider-test-success"),
-        ProviderTest::TimedOut => fl!("ui-settings-provider-test-timeout", seconds = seconds),
-        ProviderTest::Failed(ProviderFailure::Template(TemplateProblem::Empty)) => {
+        ProviderTest::NoEntry => fl!("ui-settings-provider-test-no-entry"),
+        ProviderTest::Success {
+            entry,
+            username,
+            shape,
+        } => {
+            let said = match username {
+                Some(username) => fl!(
+                    "ui-settings-provider-test-success-user",
+                    entry = entry.as_str(),
+                    username = username.as_str()
+                ),
+                None => fl!("ui-settings-provider-test-success", entry = entry.as_str()),
+            };
+            // A value over several lines, or with a blank at an edge, looked like a plain
+            // success and failed only at the next login (C# `DescribeTestValueShape`).
+            if shape.lines > 1 {
+                let lines = u64::try_from(shape.lines).unwrap_or(u64::MAX);
+                let warning = fl!("ui-settings-provider-test-shape-multiline", lines = lines);
+                format!("{said} {warning}")
+            } else if shape.edge_space {
+                format!(
+                    "{said} {}",
+                    fl!("ui-settings-provider-test-shape-edge-space")
+                )
+            } else {
+                said
+            }
+        }
+        ProviderTest::NoResult { entry } => {
+            fl!(
+                "ui-settings-provider-test-no-result",
+                entry = entry.as_str()
+            )
+        }
+        ProviderTest::TimedOut { program, timeout } => fl!(
+            "ui-settings-provider-test-timeout",
+            program = program.as_str(),
+            milliseconds = milliseconds(*timeout)
+        ),
+        ProviderTest::Failed(failure) => failure_text(failure),
+    }
+}
+
+/// What a command that could not run is said to have done.
+fn failure_text(failure: &ProviderFailure) -> String {
+    match failure {
+        ProviderFailure::Template(TemplateProblem::Empty) => {
             fl!("ui-settings-provider-test-no-command")
         }
-        ProviderTest::Failed(ProviderFailure::Template(TemplateProblem::NoKeyFile)) => {
+        ProviderFailure::Template(TemplateProblem::NoKeyFile) => {
             fl!("ui-settings-provider-test-no-key-file")
         }
-        ProviderTest::Failed(ProviderFailure::Template(TemplateProblem::UnclosedQuote)) => {
+        ProviderFailure::Template(TemplateProblem::UnclosedQuote) => {
             fl!("ui-settings-provider-test-unclosed-quote")
         }
-        ProviderTest::Failed(ProviderFailure::Launch(detail)) => {
+        ProviderFailure::Template(TemplateProblem::OptionLikeValue(placeholder)) => {
+            let placeholder: &str = placeholder;
+            fl!(
+                "ui-settings-provider-test-option-like-value",
+                placeholder = placeholder
+            )
+        }
+        ProviderFailure::Launch(detail) => {
             fl!("ui-settings-provider-test-error", detail = detail.as_str())
         }
-        // A failure of the command is no result, as the test itself sorts it.
-        ProviderTest::NoResult
-        | ProviderTest::Failed(
-            ProviderFailure::Exit(_) | ProviderFailure::Empty | ProviderFailure::TimedOut,
-        ) => fl!("ui-settings-provider-test-no-result"),
+        // Sorted by the test itself already; said as a failure all the same if one comes here.
+        ProviderFailure::Exit(_) | ProviderFailure::Empty => {
+            fl!("ui-settings-provider-test-no-result", entry = "")
+        }
+        ProviderFailure::TimedOut { program, timeout } => fl!(
+            "ui-settings-provider-test-timeout",
+            program = program.as_str(),
+            milliseconds = milliseconds(*timeout)
+        ),
     }
 }

@@ -5628,8 +5628,12 @@ impl Shell {
             Effect::AskCredentialProvider(request) => Task::perform(request.run(), |answer| {
                 Message::App(AppMessage::CredentialProvided(Box::new(answer)))
             }),
-            Effect::TestCredentialProvider { settings, unlock } => Task::perform(
-                heimdall_app::credential_provider::test(settings, unlock),
+            Effect::TestCredentialProvider {
+                settings,
+                entry,
+                unlock,
+            } => Task::perform(
+                heimdall_app::credential_provider::test(settings, entry, unlock),
                 |outcome| {
                     Message::App(AppMessage::CredentialProvider(ProviderMessage::Tested(
                         outcome,

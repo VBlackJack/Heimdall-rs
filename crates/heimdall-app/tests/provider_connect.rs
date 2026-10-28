@@ -209,7 +209,25 @@ fn nothing_given_the_user_is_asked_and_told_why() {
             ProviderFailure::Launch("not found".to_owned()),
             Notice::ProviderFailed("not found".to_owned()),
         ),
-        (ProviderFailure::TimedOut, Notice::ProviderTimedOut),
+        (
+            ProviderFailure::TimedOut {
+                program: "vault".to_owned(),
+                timeout: std::time::Duration::from_secs(5),
+            },
+            Notice::ProviderTimedOut {
+                program: "vault".to_owned(),
+                milliseconds: 5000,
+            },
+        ),
+        (
+            ProviderFailure::Template(
+                heimdall_core::credential_provider::TemplateProblem::OptionLikeValue("{Title}"),
+            ),
+            Notice::ProviderOptionLikeValue {
+                placeholder: "{Title}".to_owned(),
+                name: "Web server".to_owned(),
+            },
+        ),
     ] {
         let (tab, attempt) = open(&mut app);
         let (question, request) = ask(&mut app, tab, attempt, password("a.lab", 1));

@@ -103,27 +103,64 @@ impl Default for ProviderSettings {
     }
 }
 
-/// The command templates offered, as the C# quick setup lists them: name, then template.
-pub const PRESETS: [(&str, &str); 7] = [
-    (
-        "KeePassXC",
-        r#"keepassxc-cli show -s -q -a Password "{Database}" "{Title}""#,
-    ),
-    (
-        "KeePassXC (key file)",
-        r#"keepassxc-cli show -s -q -k "{KeyFile}" -a Password "{Database}" "{Title}""#,
-    ),
-    (
-        "KeePassXC (key file only)",
-        r#"keepassxc-cli show -s -q --no-password -k "{KeyFile}" -a Password "{Database}" "{Title}""#,
-    ),
-    (
-        "KeePass2 (KPScript)",
-        r#"KPScript.exe -c:GetEntryString "{Database}" -Field:Password -ref-Title:"{Title}""#,
-    ),
-    ("Bitwarden CLI", r#"bw get password "{Title}""#),
-    ("1Password CLI", r#"op read "op://{Title}/password""#),
-    ("pass (GPG)", r#"pass show "{Title}""#),
+/// A quick setup preset, as the C# `CredentialProviderPresetService` lists it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Preset {
+    /// The tool's own name, shown in every language.
+    pub name: &'static str,
+    /// The command template.
+    pub command: &'static str,
+    /// Whether the tool prints more than the value, so that only the first line is read:
+    /// picking the preset sets the "first line only" option to this.
+    pub first_line_only: bool,
+}
+
+/// The command templates offered, as the C# quick setup lists them.
+///
+/// Where a tool reads `--` as the end of its options, the entry names follow it, so that a
+/// name starting with `-` is never read as a flag. The others (`KPScript`, `op`) cannot have it
+/// there (`KPScript` has no such marker, and `op item get` takes its flags after the name, as the
+/// C# preset writes it): a value starting with `-` is refused for them, see [`command_line`].
+///
+/// `KPScript` prints an `OK: ...` status line after the value and `pass` prints the notes after
+/// the password, so both turn "first line only" on; `KPScript` also takes `-FailIfNoEntry`, so
+/// that a missing entry is an error and not a status line left on line 1.
+pub const PRESETS: [Preset; 7] = [
+    Preset {
+        name: "KeePassXC",
+        command: r#"keepassxc-cli show -s -q -a Password -- "{Database}" "{Title}""#,
+        first_line_only: false,
+    },
+    Preset {
+        name: "KeePassXC (key file)",
+        command: r#"keepassxc-cli show -s -q -k "{KeyFile}" -a Password -- "{Database}" "{Title}""#,
+        first_line_only: false,
+    },
+    Preset {
+        name: "KeePassXC (key file only)",
+        command: r#"keepassxc-cli show -s -q --no-password -k "{KeyFile}" -a Password -- "{Database}" "{Title}""#,
+        first_line_only: false,
+    },
+    Preset {
+        name: "KeePass2 (KPScript)",
+        command: r#"KPScript.exe -c:GetEntryString "{Database}" -Field:Password -ref-Title:"{Title}" -FailIfNoEntry"#,
+        first_line_only: true,
+    },
+    Preset {
+        name: "Bitwarden CLI",
+        command: r#"bw get password -- "{Title}""#,
+        first_line_only: false,
+    },
+    Preset {
+        name: "1Password CLI",
+        command: r#"op item get "{Title}" --fields label=password --reveal"#,
+        first_line_only: false,
+    },
+    Preset {
+        name: "pass (GPG)",
+        command: r#"pass show -- "{Title}""#,
+        first_line_only: true,
+    },
 ];
 
 /// The server a password is asked for, as the placeholders name it.
@@ -139,6 +176,24 @@ pub struct Lookup {
     pub title: String,
 }
 
+/// The port the Test button asks with, the C# `DefaultPorts.Ssh`.
+pub const TEST_PORT: u16 = 22;
+
+impl Lookup {
+    /// What the Test button asks with, as the C# one: the entry typed stands in for the host
+    /// too, so that a template keyed on `{Host}` is tested with the name typed, and no user
+    /// name is given, so that the user name command runs when there is one.
+    #[must_use]
+    pub fn for_test(entry: &str) -> Self {
+        Self {
+            host: entry.to_owned(),
+            port: TEST_PORT,
+            user: None,
+            title: entry.to_owned(),
+        }
+    }
+}
+
 /// Why a command template cannot run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TemplateProblem {
@@ -148,14 +203,24 @@ pub enum TemplateProblem {
     UnclosedQuote,
     /// The template uses `{KeyFile}` and no key file is chosen.
     NoKeyFile,
+    /// The value of this placeholder starts with `-` and would stand where the tool reads an
+    /// option, with no `--` before it to end them. Refused: it could be a flag of the tool.
+    OptionLikeValue(&'static str),
 }
 
 /// The program and arguments `template` runs for `lookup`, placeholders filled.
 ///
+/// The placeholders are filled in one pass, so that a value holding another placeholder's name
+/// (`{KeyFile}` in an entry name) is kept as it is, as the C# `ArgumentTemplate.Expand`.
+///
+/// A value starting with `-` that would open an argument is refused unless a `--` argument of
+/// the template comes before it: the tool would read it as an option, and a vault entry named
+/// `--output=x` must not be able to change what the tool does.
+///
 /// # Errors
 ///
-/// [`TemplateProblem`] when there is nothing to run, a quote is not closed, or a key file is
-/// asked for and none is chosen.
+/// [`TemplateProblem`] when there is nothing to run, a quote is not closed, a key file is
+/// asked for and none is chosen, or a value would be read as an option.
 pub fn command_line(
     template: &str,
     lookup: &Lookup,
@@ -189,19 +254,51 @@ pub fn command_line(
         ("{Database}", clean(settings.database.trim())),
         ("{KeyFile}", clean(settings.key_file.trim())),
     ];
-    Ok(words
-        .iter()
-        .enumerate()
-        .map(|(index, word)| {
-            // The program itself is the template's, never a value's.
-            if index == 0 {
-                return word.clone();
+    let mut line = Vec::with_capacity(words.len());
+    let mut options_ended = false;
+    for (index, word) in words.iter().enumerate() {
+        // The program itself is the template's, never a value's.
+        if index == 0 {
+            line.push(word.clone());
+            continue;
+        }
+        let expanded = expand(word, &values, options_ended)?;
+        // Only a `--` the template wrote ends the options, never a value.
+        options_ended |= word == END_OF_OPTIONS;
+        line.push(expanded);
+    }
+    Ok(line)
+}
+
+/// The argument that ends a tool's options.
+const END_OF_OPTIONS: &str = "--";
+
+/// `word` with each placeholder of `values`, whatever its case, replaced by its value in one
+/// pass over `word`: what is put in is never scanned again.
+fn expand(
+    word: &str,
+    values: &[(&'static str, String)],
+    options_ended: bool,
+) -> Result<String, TemplateProblem> {
+    let mut out = String::with_capacity(word.len());
+    let mut at = 0;
+    while let Some(rest) = word.get(at..).filter(|rest| !rest.is_empty()) {
+        let found = values.iter().find(|(name, _)| {
+            rest.get(..name.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(name))
+        });
+        if let Some((name, value)) = found {
+            if out.is_empty() && !options_ended && value.starts_with('-') {
+                return Err(TemplateProblem::OptionLikeValue(name));
             }
-            values.iter().fold(word.clone(), |word, (name, value)| {
-                replace(&word, name, value)
-            })
-        })
-        .collect())
+            out.push_str(value);
+            at += name.len();
+        } else if let Some(c) = rest.chars().next() {
+            out.push(c);
+            at += c.len_utf8();
+        }
+    }
+    Ok(out)
 }
 
 /// `template` cut into words: spaces part them, double quotes group them and are dropped.
@@ -235,21 +332,6 @@ fn split(template: &str) -> Result<Vec<String>, TemplateProblem> {
         words.push(word);
     }
     Ok(words)
-}
-
-/// `text` with every `name`, whatever its case, as C# replaces them, turned into `value`.
-fn replace(text: &str, name: &str, value: &str) -> String {
-    let lower = text.to_ascii_lowercase();
-    let needle = name.to_ascii_lowercase();
-    let mut out = String::with_capacity(text.len());
-    let mut rest = 0;
-    for (at, _) in lower.match_indices(&needle) {
-        out.push_str(&text[rest..at]);
-        out.push_str(value);
-        rest = at + needle.len();
-    }
-    out.push_str(&text[rest..]);
-    out
 }
 
 fn contains_placeholder(template: &str, name: &str) -> bool {
@@ -307,31 +389,61 @@ fn strip_for_shell(value: &str) -> String {
         .collect()
 }
 
-/// The password in a command's `output`: the first line not empty when `first_line_only`,
-/// else all of it, trimmed; `None` when nothing is left.
+/// The prefixes of `KPScript`'s status lines, printed after the value.
+const KPSCRIPT_OK_PREFIX: &str = "OK: ";
+const KPSCRIPT_ERROR_PREFIX: &str = "E: ";
+
+/// The password in a command's `output`, as the C# `CommandCredentialProvider` reads it: only
+/// the line breaks around the value are removed, never a space or a tab (a password may begin or
+/// end with one, and `keepassxc-cli` prints it so); with `first_line_only`, the first line that
+/// is not blank, unless it is a `KPScript` status line. `None` when nothing but blanks is left.
 #[must_use]
 pub fn password_in(output: &str, first_line_only: bool) -> Option<String> {
-    let password = if first_line_only {
-        output
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .unwrap_or_default()
+    let value = if first_line_only {
+        first_value_line(output)
     } else {
-        output.trim()
+        output.trim_matches(['\r', '\n'])
     };
-    (!password.is_empty()).then(|| password.to_owned())
+    (!value.trim().is_empty()).then(|| value.to_owned())
 }
 
-/// The values the Test button asks with, as the C# one.
+/// The first line of `text` that is not blank, without its `\r`; empty when it is a `KPScript`
+/// status line, which is no value: for an entry whose field is empty `KPScript` prints a blank
+/// line and then `OK: ...`, and the status line must not be handed over as the password.
+fn first_value_line(text: &str) -> &str {
+    text.split('\n')
+        .map(|line| line.trim_end_matches('\r'))
+        .find(|line| !line.trim().is_empty())
+        .filter(|line| {
+            !line.starts_with(KPSCRIPT_OK_PREFIX) && !line.starts_with(KPSCRIPT_ERROR_PREFIX)
+        })
+        .unwrap_or_default()
+}
+
+/// What the Test button says of the shape of the value it read, never the value itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValueShape {
+    /// How many lines the value spans.
+    pub lines: usize,
+    /// It begins or ends with a space (or any blank): it is sent as is.
+    pub edge_space: bool,
+}
+
+/// The shape of `value`, as the C# Test button describes it.
 #[must_use]
-pub fn test_lookup() -> Lookup {
-    Lookup {
-        host: "test.example.com".to_owned(),
-        port: 22,
-        user: Some("testuser".to_owned()),
-        title: "TestEntry".to_owned(),
+pub fn value_shape(value: &str) -> ValueShape {
+    ValueShape {
+        lines: value.split('\n').count(),
+        edge_space: value.chars().next().is_some_and(char::is_whitespace)
+            || value.chars().next_back().is_some_and(char::is_whitespace),
     }
+}
+
+/// The file name of `program`, as the template wrote it: what can be said of a command without
+/// its arguments, which may hold a token.
+#[must_use]
+pub fn program_file_name(program: &str) -> &str {
+    program.rsplit(['/', '\\']).next().unwrap_or(program)
 }
 
 #[cfg(test)]
@@ -444,36 +556,271 @@ mod tests {
 
     #[test]
     fn every_preset_runs_with_its_values() {
-        for (name, template) in PRESETS {
-            let line = command_line(template, &lookup("Web server"), &settings())
-                .unwrap_or_else(|problem| panic!("{name}: {problem:?}"));
+        for preset in PRESETS {
+            let line = command_line(preset.command, &lookup("Web server"), &settings())
+                .unwrap_or_else(|problem| panic!("{}: {problem:?}", preset.name));
             assert!(
                 line.iter().any(|word| word.contains("Web server")),
-                "{name}: {line:?}"
+                "{}: {line:?}",
+                preset.name
             );
             assert!(
                 !line.iter().any(|word| word.contains('{')),
-                "{name}: {line:?}"
+                "{}: {line:?}",
+                preset.name
             );
         }
     }
 
+    /// The preset table of the C# `CredentialProviderPresetService`, command and "first line
+    /// only" side by side, less the `--` this port adds where the tool reads it.
     #[test]
-    fn the_password_is_the_output_trimmed_or_its_first_line() {
+    fn the_presets_are_the_csharp_ones() {
+        let csharp = [
+            (
+                "KeePassXC",
+                r#"keepassxc-cli show -s -q -a Password "{Database}" "{Title}""#,
+                false,
+            ),
+            (
+                "KeePassXC (key file)",
+                r#"keepassxc-cli show -s -q -k "{KeyFile}" -a Password "{Database}" "{Title}""#,
+                false,
+            ),
+            (
+                "KeePassXC (key file only)",
+                r#"keepassxc-cli show -s -q --no-password -k "{KeyFile}" -a Password "{Database}" "{Title}""#,
+                false,
+            ),
+            (
+                "KeePass2 (KPScript)",
+                r#"KPScript.exe -c:GetEntryString "{Database}" -Field:Password -ref-Title:"{Title}" -FailIfNoEntry"#,
+                true,
+            ),
+            ("Bitwarden CLI", r#"bw get password "{Title}""#, false),
+            (
+                "1Password CLI",
+                r#"op item get "{Title}" --fields label=password --reveal"#,
+                false,
+            ),
+            ("pass (GPG)", r#"pass show "{Title}""#, true),
+        ];
+        assert_eq!(PRESETS.len(), csharp.len());
+        for (preset, (name, command, first_line)) in PRESETS.iter().zip(csharp) {
+            assert_eq!(preset.name, name);
+            assert_eq!(
+                preset.first_line_only, first_line,
+                "{name}: first line only"
+            );
+            // Dropping the `--` this port adds gives the C# text back.
+            assert_eq!(preset.command.replace(" -- ", " "), command, "{name}");
+        }
+    }
+
+    /// The argv tail from the first argument holding `needle`.
+    fn position(line: &[String], needle: &str) -> Option<usize> {
+        line.iter().position(|word| word.contains(needle))
+    }
+
+    #[test]
+    fn a_title_starting_with_a_dash_never_becomes_a_flag_in_any_preset() {
+        let flag = "--output=/tmp/x";
+        for preset in PRESETS {
+            match command_line(preset.command, &lookup(flag), &settings()) {
+                Ok(line) => {
+                    let at = position(&line, flag).expect(preset.name);
+                    // Either after the `--` that ends the options, or inside a longer
+                    // argument (`-ref-Title:...`), never an argument of its own.
+                    let after_dashes = line[..at].iter().any(|word| word == "--");
+                    let inside = !line[at].starts_with(flag);
+                    assert!(after_dashes || inside, "{}: {line:?}", preset.name);
+                }
+                Err(problem) => assert_eq!(
+                    problem,
+                    TemplateProblem::OptionLikeValue("{Title}"),
+                    "{}",
+                    preset.name
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn each_preset_takes_a_dashed_title_the_way_its_tool_allows() {
+        let by_name = |name: &str| PRESETS.iter().find(|p| p.name == name).expect(name).command;
+        let dashed = lookup("-weird");
+        for name in [
+            "KeePassXC",
+            "KeePassXC (key file)",
+            "KeePassXC (key file only)",
+            "Bitwarden CLI",
+            "pass (GPG)",
+        ] {
+            let line = command_line(by_name(name), &dashed, &settings()).expect(name);
+            let end_marker = line.iter().position(|word| word == "--").expect(name);
+            assert_eq!(line.last().map(String::as_str), Some("-weird"), "{name}");
+            assert!(end_marker < line.len() - 1, "{name}: {line:?}");
+        }
+        // KPScript: the title is inside `-ref-Title:`, a flag of its own already.
+        let line = command_line(by_name("KeePass2 (KPScript)"), &dashed, &settings()).expect("ok");
+        assert!(line.contains(&"-ref-Title:-weird".to_owned()), "{line:?}");
+        // `op` has no `--` in the C# preset: refused, named.
         assert_eq!(
-            password_in("  s3cret \r\n", false),
-            Some("s3cret".to_owned())
+            command_line(by_name("1Password CLI"), &dashed, &settings()),
+            Err(TemplateProblem::OptionLikeValue("{Title}"))
+        );
+    }
+
+    #[test]
+    fn a_dashed_database_or_key_file_is_refused_where_no_dashes_end_the_options() {
+        let by_name = |name: &str| PRESETS.iter().find(|p| p.name == name).expect(name).command;
+        let dashed_database = ProviderSettings {
+            database: "-db.kdbx".to_owned(),
+            ..settings()
+        };
+        // KPScript's database is its first positional, with nothing to end the options.
+        assert_eq!(
+            command_line(
+                by_name("KeePass2 (KPScript)"),
+                &lookup("t"),
+                &dashed_database
+            ),
+            Err(TemplateProblem::OptionLikeValue("{Database}"))
+        );
+        // keepassxc-cli: after its `--`.
+        let line = command_line(by_name("KeePassXC"), &lookup("t"), &dashed_database).expect("ok");
+        assert_eq!(line[line.len() - 2], "-db.kdbx");
+        // The key file stands before the `--`, as the value of `-k`: refused.
+        let dashed_key = ProviderSettings {
+            key_file: "-k.keyx".to_owned(),
+            ..settings()
+        };
+        assert_eq!(
+            command_line(by_name("KeePassXC (key file)"), &lookup("t"), &dashed_key),
+            Err(TemplateProblem::OptionLikeValue("{KeyFile}"))
+        );
+    }
+
+    #[test]
+    fn a_dash_inside_an_argument_or_a_value_that_is_not_first_is_no_flag() {
+        let line = command_line("tool -u{User} --title={Title}", &lookup("-x"), &settings())
+            .expect("runs");
+        assert_eq!(line, ["tool", "-uadmin", "--title=-x"]);
+        // A `--` the template wrote ends the options for the arguments after it only.
+        assert_eq!(
+            command_line("tool {Title} -- {Title}", &lookup("-x"), &settings()),
+            Err(TemplateProblem::OptionLikeValue("{Title}"))
+        );
+        let line = command_line("tool -- {Title}", &lookup("-x"), &settings()).expect("runs");
+        assert_eq!(line, ["tool", "--", "-x"]);
+        // A value of "--" is a value, not the end of the options.
+        assert_eq!(
+            command_line("tool {Title} {Title}", &lookup("--"), &settings()),
+            Err(TemplateProblem::OptionLikeValue("{Title}"))
+        );
+    }
+
+    #[test]
+    fn placeholders_are_filled_in_one_pass() {
+        // An entry name that holds a placeholder is kept as it is, not expanded again.
+        let tricky = lookup("{KeyFile}|{Database}|{HOST}");
+        let line = command_line("tool {Title} {Database}", &tricky, &settings()).expect("runs");
+        assert_eq!(
+            line,
+            [
+                "tool",
+                "{KeyFile}|{Database}|{HOST}",
+                r"C:\Vaults\Team Vault.kdbx"
+            ]
+        );
+        // A path that holds one too.
+        let odd = ProviderSettings {
+            database: "/v/{Title}.kdbx".to_owned(),
+            ..settings()
+        };
+        let line = command_line("tool {Database}", &lookup("t"), &odd).expect("runs");
+        assert_eq!(line, ["tool", "/v/{Title}.kdbx"]);
+        // Several in one argument, whatever the case, and non-ASCII text around them.
+        let line = command_line("tool \u{e9}{host}:{PORT}\u{e9}", &lookup("t"), &settings())
+            .expect("runs");
+        assert_eq!(line, ["tool", "\u{e9}web.lab:2222\u{e9}"]);
+    }
+
+    #[test]
+    fn the_password_is_the_output_with_its_line_breaks_off_and_nothing_else() {
+        assert_eq!(password_in("s3cret\r\n", false), Some("s3cret".to_owned()));
+        // The C# rule: Trim('\r', '\n'), never a space or a tab.
+        assert_eq!(
+            password_in("\r\n\n  s3cret \t\r\n\r\n", false),
+            Some("  s3cret \t".to_owned())
         );
         assert_eq!(
-            password_in("\n  s3cret\nOK: done\n", true),
-            Some("s3cret".to_owned())
-        );
-        assert_eq!(
-            password_in("s3cret\nnotes", false),
+            password_in("s3cret\nnotes\n", false),
             Some("s3cret\nnotes".to_owned())
         );
-        assert_eq!(password_in(" \n \n", true), None);
+        // Blanks only is nothing.
+        assert_eq!(password_in("  \n \t \n", false), None);
+        assert_eq!(password_in("\r\n", false), None);
         assert_eq!(password_in("", false), None);
+    }
+
+    #[test]
+    fn the_first_line_keeps_its_spaces_and_refuses_status_lines() {
+        assert_eq!(
+            password_in("\n\n  pw with spaces \r\nnotes", true),
+            Some("  pw with spaces ".to_owned())
+        );
+        // KPScript: the value, then the status line.
+        assert_eq!(
+            password_in("hunter2\nOK: Operation completed successfully.\n", true),
+            Some("hunter2".to_owned())
+        );
+        // An empty field: a blank line, then the status line, which is no password.
+        assert_eq!(password_in("\nOK: Operation completed.\n", true), None);
+        assert_eq!(password_in("E: Entry not found.\n", true), None);
+        // The prefixes are exact: no leading space, case matters.
+        assert_eq!(password_in(" OK: pw\n", true), Some(" OK: pw".to_owned()));
+        assert_eq!(password_in("ok: pw\n", true), Some("ok: pw".to_owned()));
+        assert_eq!(password_in(" \n \n", true), None);
+        // A status line is refused in the whole-output mode only by its content, as C#.
+        assert_eq!(
+            password_in("pw\nOK: done", false),
+            Some("pw\nOK: done".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_shape_of_a_value_is_told_without_the_value() {
+        assert_eq!(
+            value_shape("plain"),
+            ValueShape {
+                lines: 1,
+                edge_space: false
+            }
+        );
+        assert!(value_shape(" lead").edge_space);
+        assert!(value_shape("trail ").edge_space);
+        assert!(value_shape("tab\t").edge_space);
+        assert!(!value_shape("in side").edge_space);
+        assert_eq!(value_shape("a\nb\nc").lines, 3);
+        assert_eq!(value_shape("").lines, 1);
+        assert!(!value_shape("").edge_space);
+    }
+
+    #[test]
+    fn the_test_lookup_stands_the_entry_in_for_the_host_and_title() {
+        let lookup = Lookup::for_test("srv-01");
+        assert_eq!(lookup.host, "srv-01");
+        assert_eq!(lookup.title, "srv-01");
+        assert_eq!(lookup.port, 22);
+        assert_eq!(lookup.user, None);
+    }
+
+    #[test]
+    fn a_program_is_named_by_its_file_only() {
+        assert_eq!(program_file_name("keepassxc-cli"), "keepassxc-cli");
+        assert_eq!(program_file_name(r"C:\Tools\KPScript.exe"), "KPScript.exe");
+        assert_eq!(program_file_name("/usr/bin/pass"), "pass");
     }
 
     #[test]

@@ -20,7 +20,7 @@ use std::path::Path;
 
 use heimdall_app::credential_provider::ProviderTest;
 use heimdall_app::{App, AppConfig, Dialog, Effect, Message, ProviderMessage, SystemCredentials};
-use heimdall_core::credential_provider::{PRESETS, ProviderKind};
+use heimdall_core::credential_provider::{PRESETS, ProviderKind, ValueShape};
 use heimdall_core::settings::{SETTINGS_FILE_NAME, Settings};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::GridSize;
@@ -94,14 +94,28 @@ fn a_preset_writes_its_command() {
     let dir = tempfile::tempdir().expect("dir");
     let system = SystemCredentials::memory();
     let mut app = app(dir.path(), &system);
-    for (index, (_, template)) in PRESETS.iter().enumerate() {
+    for (index, preset) in PRESETS.iter().enumerate() {
+        // Whatever the option was, the preset sets it: KPScript's status line and pass's notes
+        // are read past, and the other tools print the value alone.
+        send(
+            &mut app,
+            ProviderMessage::FirstLineOnly(!preset.first_line_only),
+        );
         send(&mut app, ProviderMessage::Preset(index));
-        assert_eq!(saved(dir.path()).credential_provider.command, *template);
+        let provider = saved(dir.path()).credential_provider;
+        assert_eq!(provider.command, preset.command, "{}", preset.name);
+        assert_eq!(
+            provider.first_line_only, preset.first_line_only,
+            "{}: first line only",
+            preset.name
+        );
     }
     send(&mut app, ProviderMessage::Preset(PRESETS.len()));
+    let last = PRESETS[PRESETS.len() - 1];
+    let provider = saved(dir.path()).credential_provider;
     assert_eq!(
-        saved(dir.path()).credential_provider.command,
-        PRESETS[PRESETS.len() - 1].1,
+        (provider.command.as_str(), provider.first_line_only),
+        (last.command, last.first_line_only),
         "no preset there: nothing changes"
     );
 }
@@ -172,19 +186,53 @@ fn test_runs_the_settings_as_they_are_with_the_unlock_secret() {
         &mut app,
         ProviderMessage::SaveUnlockSecret(Secret::new("db-pass".to_owned())),
     );
+    send(&mut app, ProviderMessage::TestEntry("srv-01".to_owned()));
+    assert_eq!(app.provider_test_entry(), "srv-01");
     let effects = send(&mut app, ProviderMessage::Test);
-    let [Effect::TestCredentialProvider { settings, unlock }] = effects.as_slice() else {
+    let [
+        Effect::TestCredentialProvider {
+            settings,
+            entry,
+            unlock,
+        },
+    ] = effects.as_slice()
+    else {
         panic!("{effects:?}");
     };
     assert_eq!(settings.command, "get {Title}");
+    assert_eq!(entry, "srv-01");
     assert_eq!(unlock.as_ref().map(Secret::expose), Some("db-pass"));
     assert_eq!(app.provider_test(), Some(&ProviderTest::Running));
     assert!(
         send(&mut app, ProviderMessage::Test).is_empty(),
         "one test at a time"
     );
-    send(&mut app, ProviderMessage::Tested(ProviderTest::Success));
-    assert_eq!(app.provider_test(), Some(&ProviderTest::Success));
+    send(&mut app, ProviderMessage::Tested(found()));
+    assert_eq!(app.provider_test(), Some(&found()));
+    // The entry typed is no setting: it is not saved, and a log of the message hides it.
+    let text = std::fs::read_to_string(dir.path().join(SETTINGS_FILE_NAME)).unwrap_or_default();
+    assert!(!text.contains("srv-01"), "{text}");
+    let logged = format!(
+        "{:?} {:?}",
+        ProviderMessage::TestEntry("srv-01".to_owned()),
+        ProviderMessage::Tested(found())
+    );
+    assert!(
+        !logged.contains("srv-01") && !logged.contains("deploy"),
+        "{logged}"
+    );
+}
+
+/// A test that read a password, the way the page gets it from the core.
+fn found() -> ProviderTest {
+    ProviderTest::Success {
+        entry: "srv-01".to_owned(),
+        username: Some("deploy".to_owned()),
+        shape: ValueShape {
+            lines: 1,
+            edge_space: false,
+        },
+    }
 }
 
 #[test]
@@ -195,7 +243,7 @@ fn a_change_clears_the_test_and_a_late_result_is_dropped() {
     send(&mut app, ProviderMessage::Test);
     send(&mut app, ProviderMessage::Command("other".to_owned()));
     assert_eq!(app.provider_test(), None);
-    send(&mut app, ProviderMessage::Tested(ProviderTest::Success));
+    send(&mut app, ProviderMessage::Tested(found()));
     assert_eq!(
         app.provider_test(),
         None,
@@ -203,9 +251,9 @@ fn a_change_clears_the_test_and_a_late_result_is_dropped() {
     );
     // The same value again changes nothing, the result stays.
     send(&mut app, ProviderMessage::Test);
-    send(&mut app, ProviderMessage::Tested(ProviderTest::NoResult));
+    send(&mut app, ProviderMessage::Tested(ProviderTest::NoEntry));
     send(&mut app, ProviderMessage::Command("other".to_owned()));
-    assert_eq!(app.provider_test(), Some(&ProviderTest::NoResult));
+    assert_eq!(app.provider_test(), Some(&ProviderTest::NoEntry));
 }
 
 #[test]
