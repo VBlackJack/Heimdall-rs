@@ -159,3 +159,28 @@ fn every_english_key_is_named_by_the_code() {
         .collect();
     assert!(unnamed.is_empty(), "keys no code names: {unnamed:#?}");
 }
+
+/// Longest Quick Connect footer hint, in characters. A proxy for width: the French one
+/// wrapped "Echap = fermer" onto a second line at 12 px and 113 characters (2026-10-25); at
+/// the small caption size (11 px) the 98-character hints measure about 447 px of the 522 px
+/// usable.
+const PALETTE_HINTS_MAX_CHARS: usize = 100;
+
+/// The palette's footer hint stays on one line in every language.
+#[test]
+fn the_palette_hint_is_short_enough_for_one_line_in_every_language() {
+    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for language in heimdall_i18n::SUPPORTED_LANGUAGES {
+        let path = heimdall_i18n::ftl_path(crate_root, language, env!("CARGO_PKG_NAME"));
+        let source = std::fs::read_to_string(&path).expect("readable");
+        let hint = source
+            .lines()
+            .find_map(|line| line.strip_prefix("ui-palette-hints = "))
+            .expect("the hint is there");
+        assert!(
+            hint.chars().count() <= PALETTE_HINTS_MAX_CHARS,
+            "{language}: {} characters",
+            hint.chars().count()
+        );
+    }
+}

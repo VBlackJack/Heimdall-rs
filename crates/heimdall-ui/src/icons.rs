@@ -264,11 +264,13 @@ pub enum Icon {
     /// The `NewWindow` glyph (`E8A7`): a window with an arrow, a setting that applies to the next
     /// connection.
     NewWindow,
+    /// The `Key` glyph (`E8D7`): a key, the empty state of the hash, HMAC and JWT pages.
+    Key,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 101] = [
+    pub const ALL: [Self; 102] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -370,6 +372,7 @@ impl Icon {
         Self::FullScreen,
         Self::Lock,
         Self::NewWindow,
+        Self::Key,
     ];
 
     /// The icon of `kind`, as the C# `ConnectionTypeToGeometryConverter` picks it.
@@ -703,6 +706,9 @@ impl Icon {
             Self::Lock => {
                 "M3.5,7.5 L12.5,7.5 L12.5,14 L3.5,14 Z M5.5,7.5 L5.5,5 A2.5,2.5 0 0 1 10.5,5 L10.5,7.5"
             }
+            Self::Key => {
+                "M2,11 A3,3 0 1 1 8,11 A3,3 0 1 1 2,11 Z M7.5,9 L13.5,3 M11,5.5 L12.5,7 M12.5,4 L14,5.5"
+            }
             Self::NewWindow => {
                 "M2.5,4.5 L13.5,4.5 L13.5,13.5 L2.5,13.5 Z M2.5,7 L13.5,7 M6.5,2 L9,2 M9,2 L9,4.5 M9,2 L6,5"
             }
@@ -713,7 +719,7 @@ impl Icon {
     /// glyphs; `None` when it is filled, as every geometry of the C#, tool icons included
     /// (`Path.Fill` only, never a stroke: their open lines draw nothing, as in the C#), the
     /// dots of More and the favourite's star.
-    const fn stroke(self) -> Option<f32> {
+    pub(crate) const fn stroke(self) -> Option<f32> {
         match self {
             Self::ChevronRight | Self::ChevronDown => Some(STROKE_WIDTH),
             Self::Lightning
@@ -751,6 +757,7 @@ impl Icon {
             | Self::Keyboard
             | Self::FullScreen
             | Self::Lock
+            | Self::Key
             | Self::NewWindow => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }

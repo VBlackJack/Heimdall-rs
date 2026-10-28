@@ -148,6 +148,10 @@ pub const BUTTON_PADDING: [f32; 2] = [8.0, 16.0];
 /// token (`10,4`): the caption-sized buttons of a toolbar or an editor.
 pub const BUTTON_COMPACT_PADDING: [f32; 2] = [4.0, 10.0];
 
+/// Space inside the small buttons of a page's header, as the C# `Padding="8,3"` of the Tunnels
+/// and Scheduled pages' buttons (`MainWindow.xaml:2430-2450`, `2601-2615`), in a caption size.
+pub const PAGE_ACTION_PADDING: [f32; 2] = [3.0, 8.0];
+
 /// Height of a text field, as measured in the C# window (`ThemedTextBoxStyle`, 13 px text):
 /// about 33 px.
 pub const INPUT_HEIGHT: f32 = 33.0;

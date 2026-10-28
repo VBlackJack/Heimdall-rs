@@ -656,6 +656,25 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
     fl!("ui-status-state", name = name.as_str(), state = state)
 }
 
+/// [`status_text`], led by `tool`, the name of the tool whose tab is shown, when the bar says
+/// nothing but that it is ready: the C# bar's "Hash Generator: Ready. ...". A notice or the
+/// state of a session is said as it is.
+#[must_use]
+pub fn status_text_in(
+    tool: Option<&str>,
+    status: &SessionStatus,
+    notice: Option<&Notice>,
+    targets: usize,
+) -> String {
+    let said = status_text(status, notice, targets);
+    match tool {
+        Some(tool) if notice.is_none() && *status == SessionStatus::Ready => {
+            fl!("ui-status-state", name = tool, state = said)
+        }
+        _ => said,
+    }
+}
+
 /// What the bar said with `what`: a state of the session shown, or a notice.
 #[must_use]
 pub fn announcement_text(what: &Announcement, targets: usize) -> String {
@@ -721,9 +740,8 @@ pub fn view(
     sessions: String,
     tunnels: String,
 ) -> Element<'_, Message> {
-    // The counter is a pill too, as the C# `StatusBarPillBorderStyle`'s border. Its words are
-    // the primary text, not the C#'s `TextSecondaryBrush`: that is about 3:1 on the card in
-    // Dracula, below the 4.5:1 small text needs.
+    // The counter is plain dim text, as the C#'s (`TextSecondaryBrush`, no fill, no border),
+    // not a pill like the buttons beside it.
     let counts = container(
         row![
             text(sessions).size(font_size::CAPTION),
@@ -734,7 +752,7 @@ pub fn view(
     )
     .padding(STATUS_PILL_PADDING)
     .center_y(Length::Fixed(STATUS_PILL_HEIGHT))
-    .style(styles::status_pill_box);
+    .style(styles::status_counter);
     // The C# status bar: the window's background, its edge above it.
     let bar = container(
         row![
@@ -1060,10 +1078,40 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_tab_leads_the_ready_line_with_its_name() {
+        let ready = status_text(&SessionStatus::Ready, None, 0);
+        assert_eq!(
+            status_text_in(Some("Hash Generator"), &SessionStatus::Ready, None, 0),
+            format!("Hash Generator: {ready}"),
+            "as the C# bar's prefix"
+        );
+        assert_eq!(
+            status_text_in(None, &SessionStatus::Ready, None, 0),
+            ready,
+            "no tool, no prefix"
+        );
+        let said = status_text(
+            &SessionStatus::Ready,
+            Some(&Notice::Copied("x".to_owned())),
+            0,
+        );
+        assert_eq!(
+            status_text_in(
+                Some("Hash Generator"),
+                &SessionStatus::Ready,
+                Some(&Notice::Copied("x".to_owned())),
+                0
+            ),
+            said,
+            "a notice is said as it is"
+        );
+    }
+
+    #[test]
     fn the_left_says_the_csharp_sentences() {
         assert_eq!(
             status_text(&SessionStatus::Ready, None, 0),
-            "Ready. Select a session to get started."
+            "Ready. Select a session or open a tool to get started."
         );
         assert_eq!(
             status_text(&SessionStatus::Connected(named("web")), None, 0),

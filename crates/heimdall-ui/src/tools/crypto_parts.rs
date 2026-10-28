@@ -49,6 +49,10 @@ const EMPTY_ICON_OPACITY: f32 = 0.5;
 /// Room under the key, as the C# `ToolEmptyStateIconStyle`'s margin.
 const EMPTY_ICON_GAP: f32 = 8.0;
 
+/// The glyph over the hint: the C# `E8D7` key, stroked like the chrome's glyphs. Never a
+/// `Tool*` icon: those are filled, and a key's open stem draws nothing under a fill.
+const EMPTY_ICON: Icon = Icon::Key;
+
 /// What a tool shows before it has a result, as the C# `ToolEmptyStateStyle`: a key over its
 /// hint, centred across (the C# hash, HMAC and JWT pages' `E8D7` glyph). These tools' pages
 /// scroll, which [`super::empty_state`], filling the height left, cannot be part of.
@@ -65,7 +69,7 @@ fn framed<'a>(hint: Option<String>, key: bool) -> Element<'a, Message> {
     let mut lines = column![].spacing(EMPTY_ICON_GAP).align_x(Alignment::Center);
     if key {
         lines = lines.push(icons::faded(
-            Icon::ToolSshKeyGenerator,
+            EMPTY_ICON,
             Tint::Secondary,
             EMPTY_ICON_SIDE,
             EMPTY_ICON_OPACITY,
@@ -164,5 +168,16 @@ pub fn tinted(color: fn(&Theme) -> Color) -> impl Fn(&Theme) -> container::Style
             text_color: Some(color),
             ..container::Style::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_empty_state_key_is_a_stroked_glyph_not_a_filled_tool_icon() {
+        assert!(!format!("{EMPTY_ICON:?}").starts_with("Tool"));
+        assert!(EMPTY_ICON.stroke().is_some(), "drawn as a line");
     }
 }

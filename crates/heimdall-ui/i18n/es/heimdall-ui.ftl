@@ -20,7 +20,6 @@ ui-data-dir-error-test-build = Una compilación de prueba toma sus carpetas de s
 
 ui-sidebar-title = Sesiones
 ui-sidebar-tools-tab = Herramientas
-ui-sidebar-empty = Aún no hay perfiles guardados.
 ui-desktop-send-keys = Enviar teclas
 ui-desktop-send-keys-tooltip = Enviar teclas al remoto
 ui-vnc-clipboard = Portapapeles
@@ -367,12 +366,13 @@ ui-vault-save-failed-title = No se pudo guardar la contraseña.
 ui-sidebar-group-none = (Sin carpeta)
 
 ui-home-welcome = Bienvenido a Heimdall-rs.
-ui-home-subtitle = Añade una sesión o importa tus conexiones existentes para empezar.
+ui-home-subtitle = Añade una sesión, importa tus conexiones existentes o explora las herramientas integradas para empezar.
 ui-home-add-button = Añadir sesión
 ui-home-import-button = Importar conexiones
 ui-home-explore-tools-button = Explorar herramientas
-ui-home-shortcuts = Ctrl+N para añadir una sesión, Ctrl+K para conexión rápida
-ui-home-select = Selecciona una sesión o pulsa Ctrl+K para conectarte
+ui-home-shortcuts = Ctrl+N para añadir una sesión · Ctrl+K para conexión rápida · F1 para todos los atajos
+ui-home-select = Selecciona una sesión en el panel lateral para ver sus detalles.
+ui-home-select-hint = Ctrl+K: conexión rápida a un host o apertura de una herramienta.
 
 ui-tab-close-button = ✕
 ui-tab-bell-badge = campana
@@ -1357,7 +1357,7 @@ ui-palette-rdp-to = [RDP] Conectar a { $target }
 ui-palette-quick-connect = Conexión rápida
 ui-palette-nothing = No se encontraron resultados. Prueba con un host, ssh usuario@host o tools.
 ui-palette-mode-split = Modo dividido
-ui-palette-hints = Intro = abrir · Ctrl+Intro = dividir · tools = todas las herramientas · ping 1.1.1.1 = iniciar una herramienta · Esc = cerrar
+ui-palette-hints = Intro = abrir · Ctrl+Intro = dividir · tools = herramientas · ping 1.1.1.1 = lanzar · Esc = cerrar
 ui-palette-servers = Servidores
 ui-palette-active-sessions = Sesiones activas
 ui-palette-recent-tools = Herramientas recientes
@@ -1367,7 +1367,7 @@ ui-palette-merge-detail = Sesión activa: fusionar sin reconectar
 ui-palette-account = · { $account }
 ui-palette-tool-badge = TOOL
 
-ui-status-ready = Listo. Selecciona una sesión para empezar.
+ui-status-ready = Listo. Selecciona una sesión o abre una herramienta para empezar.
 ui-status-connected = Conectado a: { $name }
 ui-status-connected-short = Conectado
 ui-status-state = { $name }: { $state }
@@ -3695,7 +3695,7 @@ ui-tree-expand-all = Expandir todo
 ui-tree-collapse-all = Contraer todo
 ui-sidebar-hide-tooltip = Ocultar barra lateral (Ctrl+B)
 ui-sidebar-show-tooltip = Mostrar barra lateral (Ctrl+B)
-ui-nav-quick-connect = Conexión rápida
+ui-nav-quick-connect = Conexión rápida (Ctrl+K)
 ui-nav-quick-connect-tooltip = Conexión rápida (Ctrl+K)
 ui-hostkey-algorithm = Algoritmo: { $algorithm }
 ui-tunnels-column-started = Iniciado

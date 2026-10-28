@@ -478,8 +478,11 @@ pub fn view<'a>(palette: &Palette, rows: &[QuickRow], theme: &Theme) -> Element<
             body,
             rule(),
             container(
+                // One line at the palette's width in every language: the small caption size,
+                // never wrapped (the French hint wrapped "Echap = fermer" at 12 px).
                 text(fl!("ui-palette-hints"))
-                    .size(font_size::CAPTION)
+                    .size(font_size::SMALL_CAPTION)
+                    .wrapping(iced::widget::text::Wrapping::None)
                     .style(text::secondary),
             )
             .padding(HINTS_PADDING),

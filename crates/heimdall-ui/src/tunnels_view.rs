@@ -303,16 +303,21 @@ pub fn page<'a>(
     routes: &[SessionRoute],
     selected: Option<TunnelId>,
 ) -> Element<'a, Message> {
+    // As the C# page header (`MainWindow.xaml:2424-2450`): a 15 px semi-bold title, the buttons
+    // small (caption size, `8,3`), New one of them and no louder than the others.
+    let small = |label: String| text(label).size(font_size::CAPTION);
     let header = row![
-        text(fl!("ui-tunnels-page-title")).size(font_size::TITLE),
+        text(fl!("ui-tunnels-page-title"))
+            .size(font_size::SUBTITLE)
+            .font(styles::SEMIBOLD),
         space::horizontal(),
-        button(text(fl!("ui-tunnels-new")))
-            .padding(crate::tokens::BUTTON_PADDING)
-            .style(styles::primary)
+        button(small(fl!("ui-tunnels-new")))
+            .padding(crate::tokens::PAGE_ACTION_PADDING)
+            .style(styles::secondary)
             .on_press(tunnel(TunnelMessage::New)),
         styles::tip(
-            button(text(fl!("ui-tunnels-close-selected")))
-                .padding(crate::tokens::BUTTON_PADDING)
+            button(small(fl!("ui-tunnels-close-selected")))
+                .padding(crate::tokens::PAGE_ACTION_PADDING)
                 .style(styles::secondary)
                 .on_press_maybe(selected.map(|_| tunnel(TunnelMessage::CloseSelected))),
             text(fl!("ui-tunnels-close-selected-tooltip")).size(font_size::CAPTION),
@@ -321,26 +326,30 @@ pub fn page<'a>(
         .padding(styles::TOOLTIP_PADDING)
         .style(styles::tooltip),
         close_all(
-            button(text(fl!("ui-tunnels-close-all")))
-                .padding(crate::tokens::BUTTON_PADDING)
+            button(small(fl!("ui-tunnels-close-all")))
+                .padding(crate::tokens::PAGE_ACTION_PADDING)
                 .style(styles::danger)
                 .on_press_maybe((!tunnels.is_empty()).then(|| tunnel(TunnelMessage::CloseAll)))
         ),
     ]
-    .spacing(spacing::SM)
+    .spacing(spacing::XS)
     .align_y(Alignment::Center);
     let manage = || {
         button(text(fl!("ui-tunnels-manage-gateways")))
             .style(styles::subtle)
             .on_press(Message::ManageGateways)
     };
+    // The column titles and their line are always there, as the C# grid's, over the rows or
+    // over the empty state's card.
     let content: Element<'a, Message> = if page_is_empty(tunnels, routes) {
         // As the C# page (`5b97e7b7`): the shared card, the gateways link as its hint, New as
-        // its action; no header row over nothing.
+        // its action.
         column![
             header,
+            columns(true),
+            rule::horizontal(1),
             launchpad::tab_empty(
-                Icon::Lightning,
+                Icon::Link,
                 fl!("ui-tunnels-empty"),
                 Some(manage().into()),
                 button(text(fl!("ui-tunnels-new")))

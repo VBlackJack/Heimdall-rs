@@ -664,7 +664,10 @@ fn the_toolbar_ends_with_the_share_icon_then_quick_connect_and_the_title_has_no_
         .find(toolbar_share_id())
         .expect("the share icon")
         .bounds();
-    let quick = ui.find("Quick connect").expect("Quick connect").bounds();
+    let quick = ui
+        .find("Quick Connect (Ctrl+K)")
+        .expect("Quick connect")
+        .bounds();
     let title = ui.find("Heimdall-rs").expect("the title").bounds();
     assert_eq!(
         (share.width, share.height),
@@ -1989,19 +1992,30 @@ fn with_no_session_saved_the_window_welcomes_and_offers_to_add_one() {
     snapshot(&shell, "home-empty.png");
     let mut ui = simulator(&shell);
     ui.find("Welcome to Heimdall-rs").expect("welcomes");
-    ui.find("Ctrl+N to add a session, Ctrl+K to quick connect")
+    ui.find("Ctrl+N to add a session · Ctrl+K to quick connect · F1 for all shortcuts")
         .expect("the shortcuts");
     assert!(
-        ui.find("Select a session or press Ctrl+K to connect")
+        ui.find("Select a session in the sidebar to see its details.")
             .is_err(),
         "no session to select"
     );
-    ui.click("Import Connections").expect("shown");
     ui.click("Add Session").expect("its button");
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(
         matches!(messages.as_slice(), [Message::App(AppMessage::NewProfile)]),
-        "nothing to import from here: {messages:?}"
+        "{messages:?}"
+    );
+
+    // As the C# button, the import is always on: with nothing of the C# Heimdall's beside
+    // it, it opens the file import.
+    let mut ui = simulator(&shell);
+    ui.click("Import Connections").expect("its button");
+    assert!(
+        ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Sessions(heimdall_app::SessionsMessage::File))
+        )),
+        "the file import"
     );
 
     // With the C# Heimdall's sessions beside it, they are offered.
@@ -2031,7 +2045,7 @@ fn with_no_session_saved_the_window_welcomes_and_offers_to_add_one() {
 
 /// The welcome is the C# Launchpad card (`MainWindow.xaml:2120-2178`): the title over the
 /// subtitle, the three actions in a row in the C# order, the shortcuts last, all centred in
-/// the page, and no action but the import off.
+/// the page.
 #[test]
 fn the_welcome_is_a_card_of_a_title_three_actions_in_order_and_the_shortcuts() {
     let dir = tempfile::tempdir().expect("dir");
@@ -2050,7 +2064,7 @@ fn the_welcome_is_a_card_of_a_title_three_actions_in_order_and_the_shortcuts() {
     let import = ui.find("Import Connections").expect("import").bounds();
     let tools = ui.find("Explore Tools").expect("tools").bounds();
     let shortcuts = ui
-        .find("Ctrl+N to add a session, Ctrl+K to quick connect")
+        .find("Ctrl+N to add a session · Ctrl+K to quick connect · F1 for all shortcuts")
         .expect("shortcuts")
         .bounds();
     assert!(
@@ -2071,11 +2085,13 @@ fn the_welcome_is_a_card_of_a_title_three_actions_in_order_and_the_shortcuts() {
         (title.center_x() - shortcuts.center_x()).abs() < 1.0,
         "centred on one axis"
     );
-    let messages: Vec<Message> = {
-        ui.click("Import Connections").expect("shown");
-        ui.into_messages().collect()
-    };
-    assert!(messages.is_empty(), "nothing to import: {messages:?}");
+    // The C# welcome's subtitle names the built-in tools too.
+    ui.find("Add a session, import your existing connections, or explore the built-in tools to get started.")
+        .expect("the subtitle says the tools");
+    assert!(
+        ui.find("No saved profile yet.").is_err(),
+        "the sidebar says nothing of an empty inventory, as the C# tree"
+    );
 }
 
 /// With sessions saved and none selected, the C#'s second card: how to open one, and the
@@ -2085,11 +2101,13 @@ fn with_sessions_saved_and_none_selected_the_card_offers_quick_connect() {
     let dir = tempfile::tempdir().expect("dir");
     let shell = Shell::with_app(app(dir.path()));
     let mut ui = simulator(&shell);
-    ui.find("Select a session or press Ctrl+K to connect")
+    ui.find("Select a session in the sidebar to see its details.")
         .expect("title");
-    let buttons = common::all_bounds(&mut ui, "Quick connect");
+    ui.find("Ctrl+K connects to a host or opens a tool.")
+        .expect("the hint under it");
+    let buttons = common::all_bounds(&mut ui, "Quick Connect (Ctrl+K)");
     assert_eq!(buttons.len(), 2, "the toolbar's and the card's");
-    ui.click("Quick connect").expect("shown");
+    ui.click("Quick Connect (Ctrl+K)").expect("shown");
 }
 
 #[test]
@@ -2097,7 +2115,7 @@ fn with_sessions_saved_the_window_says_how_to_open_one() {
     let dir = tempfile::tempdir().expect("dir");
     let shell = Shell::with_app(app(dir.path()));
     let mut ui = simulator(&shell);
-    ui.find("Select a session or press Ctrl+K to connect")
+    ui.find("Select a session in the sidebar to see its details.")
         .expect("how to open one");
     assert!(ui.find("Welcome to Heimdall-rs").is_err());
     assert!(ui.find("Add Session").is_err());
@@ -2109,10 +2127,15 @@ fn the_status_bar_says_the_session_shown_and_counts_the_sessions() {
     let mut shell = Shell::with_app(app(dir.path()));
     {
         let mut ui = simulator(&shell);
-        ui.find("Ready. Select a session to get started.")
+        ui.find("Ready. Select a session or open a tool to get started.")
             .expect("ready");
         ui.find("3 sessions").expect("counted");
     }
+    // A tool's tab says it first, as the C# bar's "Hash Generator: Ready...".
+    let _ = shell.update(Message::OpenTool(heimdall_app::tools::ToolId::Hash));
+    simulator(&shell)
+        .find("Hash Generator: Ready. Select a session or open a tool to get started.")
+        .expect("the tool's name leads");
     let _ = shell.update(Message::Search("b.lab".to_owned()));
     simulator(&shell)
         .find("1 of 3 sessions")
@@ -4532,7 +4555,8 @@ fn the_tree_folds_at_once_hides_and_shows_its_sidebar_and_quick_connect_is_a_but
     let _ = shell.update(Message::DialogKey { confirm: false });
     {
         let mut ui = simulator(&shell);
-        ui.click("Quick connect").expect("the navigation's button");
+        ui.click("Quick Connect (Ctrl+K)")
+            .expect("the navigation's button");
         assert!(
             ui.into_messages().any(|message| matches!(
                 message,

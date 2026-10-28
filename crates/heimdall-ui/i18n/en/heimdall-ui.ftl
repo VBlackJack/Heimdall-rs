@@ -20,7 +20,6 @@ ui-data-dir-error-test-build = A test build takes its folders from its test data
 
 ui-sidebar-title = Sessions
 ui-sidebar-tools-tab = Tools
-ui-sidebar-empty = No saved profile yet.
 ui-desktop-send-keys = Send keys
 ui-desktop-send-keys-tooltip = Send keys to remote
 ui-desktop-anti-idle = Anti-idle
@@ -441,12 +440,13 @@ ui-vault-save-failed-title = The password could not be saved.
 ui-sidebar-group-none = (No Folder)
 
 ui-home-welcome = Welcome to Heimdall-rs
-ui-home-subtitle = Add a session or import your existing connections to get started.
+ui-home-subtitle = Add a session, import your existing connections, or explore the built-in tools to get started.
 ui-home-add-button = Add Session
 ui-home-import-button = Import Connections
 ui-home-explore-tools-button = Explore Tools
-ui-home-shortcuts = Ctrl+N to add a session, Ctrl+K to quick connect
-ui-home-select = Select a session or press Ctrl+K to connect
+ui-home-shortcuts = Ctrl+N to add a session · Ctrl+K to quick connect · F1 for all shortcuts
+ui-home-select = Select a session in the sidebar to see its details.
+ui-home-select-hint = Ctrl+K connects to a host or opens a tool.
 
 ui-tab-close-button = ✕
 ui-tab-bell-badge = bell
@@ -1509,7 +1509,7 @@ ui-palette-account = · { $account }
 ui-palette-tool-badge = TOOL
 
 ## The status bar, as the C# one.
-ui-status-ready = Ready. Select a session to get started.
+ui-status-ready = Ready. Select a session or open a tool to get started.
 ui-status-connected = Connected to: { $name }
 ui-status-connected-short = Connected
 ui-status-state = { $name }: { $state }
@@ -3829,8 +3829,8 @@ ui-tree-expand-all = Expand all
 ui-tree-collapse-all = Collapse all
 ui-sidebar-hide-tooltip = Hide sidebar (Ctrl+B)
 ui-sidebar-show-tooltip = Show sidebar (Ctrl+B)
-ui-nav-quick-connect = Quick connect
-ui-nav-quick-connect-tooltip = Quick connect (Ctrl+K)
+ui-nav-quick-connect = Quick Connect (Ctrl+K)
+ui-nav-quick-connect-tooltip = Quick Connect (Ctrl+K)
 ui-profile-toggle-strict-server-auth = Require server identity validation
 ui-error-rdp-server-not-authenticated = The server's identity could not be validated: this computer's certificate authorities do not vouch for its certificate. Strict server authentication refuses it, even when it was trusted before.
 ui-certificate-subject = Subject: { $subject }

@@ -71,25 +71,32 @@ pub fn schedule_text(schedule: &Schedule) -> String {
 #[must_use]
 pub fn page(app: &App) -> Element<'_, Message> {
     let selected = app.selected_scheduled();
+    // As the C# page header (`MainWindow.xaml:2597-2617`): a 15 px semi-bold title, the buttons
+    // small (caption size, `8,3`).
+    let small = |label: String| text(label).size(font_size::CAPTION);
     let header = row![
-        text(fl!("ui-scheduled-title")).size(font_size::TITLE),
+        text(fl!("ui-scheduled-title"))
+            .size(font_size::SUBTITLE)
+            .font(styles::SEMIBOLD),
         space::horizontal(),
-        button(text(fl!("ui-scheduled-add")))
-            .padding(crate::tokens::BUTTON_PADDING)
+        button(small(fl!("ui-scheduled-add")))
+            .padding(crate::tokens::PAGE_ACTION_PADDING)
             .style(styles::primary)
             .on_press(scheduled(ScheduledMessage::Add)),
-        button(text(fl!("ui-scheduled-edit")))
-            .padding(crate::tokens::BUTTON_PADDING)
+        button(small(fl!("ui-scheduled-edit")))
+            .padding(crate::tokens::PAGE_ACTION_PADDING)
             .style(styles::secondary)
             .on_press_maybe(selected.map(|_| scheduled(ScheduledMessage::EditSelected))),
-        button(text(fl!("ui-scheduled-delete")))
-            .padding(crate::tokens::BUTTON_PADDING)
+        button(small(fl!("ui-scheduled-delete")))
+            .padding(crate::tokens::PAGE_ACTION_PADDING)
             .style(styles::secondary)
             .on_press_maybe(selected.map(|_| scheduled(ScheduledMessage::DeleteSelected))),
     ]
-    .spacing(spacing::SM)
+    .spacing(spacing::XS)
     .align_y(Alignment::Center);
     let tasks = app.scheduled_tasks();
+    // The column titles and their line are always there, as the C# grid's, over the rows or
+    // over the empty state's card.
     let body: Element<'_, Message> = if tasks.is_empty() {
         // As the C# empty state (`5b97e7b7`): the shared card, its icon, its title, its Add.
         launchpad::tab_empty(
@@ -106,17 +113,10 @@ pub fn page(app: &App) -> Element<'_, Message> {
         let rows = Column::new()
             .spacing(spacing::XS)
             .extend(tasks.iter().map(|task| task_row(task, selected)));
-        column![
-            columns(),
-            rule::horizontal(1),
-            styles::scroll(rows).height(Length::Fill)
-        ]
-        .spacing(spacing::SM)
-        .height(Length::Fill)
-        .into()
+        styles::scroll(rows).height(Length::Fill).into()
     };
     container(
-        column![header, body]
+        column![header, columns(), rule::horizontal(1), body]
             .spacing(spacing::SM)
             .width(Length::Fill)
             .height(Length::Fill),
