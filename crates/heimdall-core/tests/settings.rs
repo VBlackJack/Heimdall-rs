@@ -985,9 +985,20 @@ fn the_terminal_font_family_is_the_csharp_default_until_chosen_and_kept_as_named
         Settings::default().terminal_font_family,
         TERMINAL_FONT_FAMILY_DEFAULT
     );
-    // A file written before the family could be chosen.
+    // A file written before the family could be chosen keeps the embedded font, whatever the
+    // platform default: an upgrade does not change the font under the user.
     let older = written(dir.path(), "version = 1\n[terminal]\nfont_size = 15\n");
-    assert_eq!(older.terminal_font_family, TERMINAL_FONT_FAMILY_DEFAULT);
+    assert_eq!(older.terminal_font_family, TERMINAL_FONT_FAMILY_EMBEDDED);
+    // A file that stores the embedded family explicitly keeps it too.
+    let explicit = written(
+        dir.path(),
+        "version = 1\n[terminal]\nfont_family = \"Source Code Pro\"\n",
+    );
+    assert_eq!(explicit.terminal_font_family, TERMINAL_FONT_FAMILY_EMBEDDED);
+    // A new installation, with no file at all, gets the platform default.
+    let fresh = tempfile::tempdir().expect("dir");
+    let loaded = Settings::load(&fresh.path().join(SETTINGS_FILE_NAME)).expect("no file");
+    assert_eq!(loaded.terminal_font_family, TERMINAL_FONT_FAMILY_DEFAULT);
     for (named, read) in [
         ("Consolas", "Consolas"),
         ("  Cascadia Mono ", "Cascadia Mono"),

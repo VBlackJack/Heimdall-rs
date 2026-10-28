@@ -154,7 +154,7 @@ fn a_docked_local_browser_shows_this_computers_files_alone() {
 #[test]
 fn a_docked_local_browser_has_no_header_of_its_own_and_the_c_sharp_toolbar() {
     let dir = tempfile::tempdir().expect("dir");
-    let (core, _) = docked(dir.path());
+    let (core, pane) = docked(dir.path());
     let shell = Shell::with_app(core);
     let mut ui = common::simulator(settings(), WINDOW, shell.view());
     // The C# browser is part of the shell's pane: one header, so one Disconnect, and no
@@ -172,6 +172,15 @@ fn a_docked_local_browser_has_no_header_of_its_own_and_the_c_sharp_toolbar() {
         "no New folder button"
     );
     ui.find("cwd").expect("its follow toggle stays");
+    assert!(
+        ui.find(heimdall_ui::floating_view::tool_id(
+            pane,
+            Side::Local,
+            heimdall_ui::floating_view::PaneTool::Go
+        ))
+        .is_err(),
+        "no Go button"
+    );
 }
 
 #[test]

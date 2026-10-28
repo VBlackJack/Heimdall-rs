@@ -2735,9 +2735,9 @@ fn the_font_family_chosen_draws_every_terminal_and_one_missing_falls_back_visibl
         ui.find("Font family")
             .expect("beside the size, as the C# label");
         assert!(
-            ui.find(
-                "Source Code Pro is not installed on this computer: the terminal uses Source                  Code Pro."
-            )
+            ui.find(format!(
+                "{TERMINAL_FONT_FAMILY_DEFAULT} is not installed on this computer: the terminal uses Source Code Pro."
+            ))
             .is_err(),
             "the embedded font is always there"
         );

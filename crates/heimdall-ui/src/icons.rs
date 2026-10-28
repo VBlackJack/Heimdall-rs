@@ -270,8 +270,35 @@ pub enum Icon {
 
 /// A key as a solid shape in the 16 by 16 box, for the tool icons whose C# geometry is open
 /// lines: a ring of 3.5 around a hole of 1.5, a shaft of 2 from the ring to the far edge,
-/// and two teeth of 1.5 by 3 hanging from it. Non-zero, the hole drawn against the ring.
-const KEY_SHAPE: &str = "F1 M4.5,4.5 A3.5,3.5 0 1 1 4.5,11.5 A3.5,3.5 0 1 1 4.5,4.5 Z      M4.5,6.5 A1.5,1.5 0 1 0 4.5,9.5 A1.5,1.5 0 1 0 4.5,6.5 Z      M7,7 L14.5,7 L14.5,9 L7,9 Z M10.5,9 L12,9 L12,12 L10.5,12 Z M13,9 L14.5,9 L14.5,12 L13,12 Z";
+/// and two teeth of 1.5 by 3 hanging from it, then `$badge`, closed figures in the free
+/// corner above the shaft that tell the tool apart. Non-zero, the hole drawn against the
+/// ring.
+macro_rules! key_with {
+    ($badge:literal) => {
+        concat!(
+            "F1 M4.5,4.5 A3.5,3.5 0 1 1 4.5,11.5 A3.5,3.5 0 1 1 4.5,4.5 Z ",
+            "M4.5,6.5 A1.5,1.5 0 1 0 4.5,9.5 A1.5,1.5 0 1 0 4.5,6.5 Z ",
+            "M7,7 L14.5,7 L14.5,9 L7,9 Z M10.5,9 L12,9 L12,12 L10.5,12 Z ",
+            "M13,9 L14.5,9 L14.5,12 L13,12 Z ",
+            $badge
+        )
+    };
+}
+
+/// The SSH key generator: the key and a plus, a key made (its C# geometry adds a dot in the
+/// ring, which the hole shows here).
+const KEY_GENERATOR: &str = key_with!(
+    "M11.5,1 L12.5,1 L12.5,3 L14.5,3 L14.5,4 L12.5,4 L12.5,6 L11.5,6 L11.5,4 L9.5,4 L9.5,3 L11.5,3 Z"
+);
+
+/// The SSH key audit: the key and a check mark, a key checked. Its C# geometry is the same
+/// as the default credentials', so the badge is ours.
+const KEY_AUDIT: &str = key_with!("M9,3.5 L10,2.5 L11.5,4 L14,1 L15,2 L11.5,6 Z");
+
+/// The default credentials: the key and an exclamation mark, a key to change.
+const KEY_DEFAULT_CREDS: &str = key_with!(
+    "M11.25,0.5 L12.75,0.5 L12.75,3.5 L11.25,3.5 Z M11.25,4.3 L12.75,4.3 L12.75,5.8 L11.25,5.8 Z"
+);
 
 impl Icon {
     /// Every icon.
@@ -607,7 +634,9 @@ impl Icon {
             // draws as nothing: at 16 px they read as a ring and a dot. One solid key instead,
             // a ring with its hole, a shaft and two teeth, all closed, so the fill shows them
             // (non-zero: the shaft runs into the ring, and the hole turns the other way).
-            Self::ToolSshKeyGenerator | Self::ToolSshAudit | Self::ToolDefaultCreds => KEY_SHAPE,
+            Self::ToolSshKeyGenerator => KEY_GENERATOR,
+            Self::ToolSshAudit => KEY_AUDIT,
+            Self::ToolDefaultCreds => KEY_DEFAULT_CREDS,
             Self::ToolTlsAudit => {
                 "M5,7 L5,5 A3,3 0 1,1 11,5 L11,7 M4,7 L12,7 L12,14 L4,14 Z M8,10 L8,12"
             }
@@ -1587,7 +1616,6 @@ mod tests {
             Icon::ToolSshAudit,
             Icon::ToolDefaultCreds,
         ] {
-            assert_eq!(icon.data(), KEY_SHAPE, "{icon:?}");
             let outline = parse(icon.data()).expect("parses");
             // Every figure closes, so the fill draws all of it: an open line draws nothing.
             let mut open = false;
@@ -1606,14 +1634,26 @@ mod tests {
                 }
             }
             assert!(!open, "{icon:?}: a figure left open");
-            // The ring, its hole, the shaft and two teeth.
-            assert_eq!(closed, 5, "{icon:?}");
+            // The ring, its hole, the shaft and two teeth, then the tool's badge.
+            assert!(closed >= 6, "{icon:?}: {closed}");
             // As wide as the box allows and a good part of its height, not a dot.
             let bounds = outline.bounds();
             assert!(bounds.width >= 12.0, "{icon:?}: {bounds:?}");
             assert!(bounds.height >= 7.0, "{icon:?}: {bounds:?}");
             assert_eq!(outline.rule, Rule::NonZero, "{icon:?}");
         }
+    }
+
+    #[test]
+    fn the_three_key_tools_stay_distinguishable() {
+        let paths = [
+            Icon::ToolSshKeyGenerator.data(),
+            Icon::ToolSshAudit.data(),
+            Icon::ToolDefaultCreds.data(),
+        ];
+        assert_ne!(paths[0], paths[1]);
+        assert_ne!(paths[0], paths[2]);
+        assert_ne!(paths[1], paths[2]);
     }
 
     #[test]

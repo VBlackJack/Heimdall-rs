@@ -1154,10 +1154,15 @@ pub const TERMINAL_FONT_SIZE_MIN: u16 = 8;
 /// lacks.
 pub const TERMINAL_FONT_FAMILY_EMBEDDED: &str = "Source Code Pro";
 
-/// Family of the terminals' text unless chosen, as the C# `DefaultTerminalFontFamily`
+/// Family of the terminals' text on a new installation, as the C# `DefaultTerminalFontFamily`
 /// (`AppSettings.cs:210`, "Consolas"): the system font of Windows, where the C# runs; the
-/// embedded family elsewhere, no other system having Consolas and the font being no one
-/// this application may carry.
+/// embedded family elsewhere, no other system having Consolas and the font being none this
+/// application may carry. A settings file that never wrote a family keeps the embedded one
+/// (see `Settings::load`), so an upgrade does not change the font under the user.
+///
+/// A family the computer lacks is handled differently from the C#: the C# falls back to
+/// Courier New with no warning, while here the embedded font draws the terminal and the
+/// Settings page says so.
 pub const TERMINAL_FONT_FAMILY_DEFAULT: &str = if cfg!(windows) {
     "Consolas"
 } else {
@@ -2362,9 +2367,11 @@ impl Settings {
                 // Out of the range, as the C# load warns and keeps the default.
                 Some(_) => TERMINAL_FONT_SIZE_DEFAULT,
             },
-            terminal_font_family: terminal_font_family(
-                file.terminal.font_family.as_deref().unwrap_or_default(),
-            ),
+            // Never written: the font the file's terminals were drawn in, not the new default.
+            terminal_font_family: match file.terminal.font_family.as_deref() {
+                None => TERMINAL_FONT_FAMILY_EMBEDDED.to_owned(),
+                Some(family) => terminal_font_family(family),
+            },
             vault_unlock: Lockout::restored(
                 file.vault_unlock.failures,
                 file.vault_unlock
