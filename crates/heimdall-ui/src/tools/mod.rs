@@ -1927,7 +1927,7 @@ fn header(
     title: String,
     actions: Option<Element<'_, Message>>,
 ) -> Element<'_, Message> {
-    container(
+    let band: Element<'_, Message> = container(
         row![
             text(title)
                 .size(font_size::SUBTITLE)
@@ -1961,8 +1961,12 @@ fn header(
     )
     .padding(HEADER_PADDING)
     .width(Length::Fill)
-    .style(styles::strip)
-    .into()
+    .style(styles::bar)
+    .into();
+    // The C# header is the window's background with a strong rule under it only
+    // (`HashGeneratorView.xaml:31-35`: `SurfaceBrush`, `BorderThickness="0,0,0,1"`), not a
+    // card-coloured band.
+    column![band, styles::edge_line()].into()
 }
 
 /// Why the last export failed, under the header, as the C# `StatusExportFailed` line.
@@ -2131,13 +2135,20 @@ fn text_box(
 
 /// A tool's content, as the C# tool views': at most [`CONTENT_MAX_WIDTH`] wide, scrolled.
 fn content_column(content: Column<'_, Message>) -> Element<'_, Message> {
-    styles::scroll(
-        container(content.max_width(CONTENT_MAX_WIDTH))
-            .padding(spacing::LG)
-            .width(Length::Fill),
-    )
-    .height(Length::Fill)
-    .into()
+    styles::scroll(centred(content, CONTENT_MAX_WIDTH))
+        .height(Length::Fill)
+        .into()
+}
+
+/// `content` at most `max_width` wide and centred in the room, inside the page's padding:
+/// the C# `StackPanel MaxWidth="{StaticResource ToolContentMaxWidth}"` in a `ScrollViewer`,
+/// which WPF stretches to the width it is given, then centres when that is wider than its
+/// maximum (`HashGeneratorView.xaml:89`).
+fn centred(content: Column<'_, Message>, max_width: f32) -> Element<'_, Message> {
+    container(container(content.width(Length::Fill).max_width(max_width)).center_x(Length::Fill))
+        .padding(spacing::LG)
+        .width(Length::Fill)
+        .into()
 }
 
 /// A label over a tool's box, as the C# labels in the secondary text.
@@ -2180,13 +2191,9 @@ fn status_line<'a>(said: Option<(String, bool)>) -> Element<'a, Message> {
 /// A tool's content holding a table of many columns: as [`content_column`], at most
 /// [`TABLE_MAX_WIDTH`] wide.
 fn table_column(content: Column<'_, Message>) -> Element<'_, Message> {
-    styles::scroll(
-        container(content.max_width(TABLE_MAX_WIDTH))
-            .padding(spacing::LG)
-            .width(Length::Fill),
-    )
-    .height(Length::Fill)
-    .into()
+    styles::scroll(centred(content, TABLE_MAX_WIDTH))
+        .height(Length::Fill)
+        .into()
 }
 
 /// A tool's content that fills its tab, as the C# tool grids under the header.

@@ -34,7 +34,7 @@ use iced::advanced::mouse::click::Kind;
 use iced::advanced::widget::{Id, Operation, Tree, tree};
 use iced::advanced::{Clipboard, Shell, Widget, overlay, renderer};
 use iced::keyboard::key::Named;
-use iced::widget::{button, column, container, mouse_area, row, text, tooltip};
+use iced::widget::{Column, button, column, container, mouse_area, row, text, tooltip};
 use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Theme, Vector, keyboard, mouse};
 
 use crate::ellipsis;
@@ -863,7 +863,25 @@ pub fn pane<'a>(
     focused: bool,
 ) -> Element<'a, Message> {
     let header = header(heading);
-    container(column![header, container(content).height(Length::Fill)])
+    ringed(
+        column![header, container(content).height(Length::Fill)],
+        focused,
+    )
+}
+
+/// A pane of a split tab with no header of its own: the C# local file browser docked beside
+/// a local shell is no session of its own, so the shell's header is the only one
+/// (`EmbeddedSessionManager.cs:367`, the browser is attached to the shell's pane). The
+/// accent border still marks it while it has the keyboard.
+#[must_use]
+pub fn headerless_pane(content: Element<'_, Message>, focused: bool) -> Element<'_, Message> {
+    ringed(column![container(content).height(Length::Fill)], focused)
+}
+
+/// `body` inside the pane's keyboard ring: [`FOCUS_EDGE`] wide, in the accent while
+/// `focused`, transparent otherwise so the pane does not move when focus does.
+fn ringed(body: Column<'_, Message>, focused: bool) -> Element<'_, Message> {
+    container(body)
         .padding(FOCUS_EDGE)
         .width(Length::Fill)
         .height(Length::Fill)

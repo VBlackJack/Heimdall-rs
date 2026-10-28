@@ -152,6 +152,38 @@ fn a_docked_local_browser_shows_this_computers_files_alone() {
 }
 
 #[test]
+fn a_docked_local_browser_has_no_header_of_its_own_and_the_c_sharp_toolbar() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, pane) = docked(dir.path());
+    let shell = Shell::with_app(core);
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    // The C# browser is part of the shell's pane: one header, so one Disconnect, and no
+    // "(files)" title.
+    assert!(ui.find("Shell (files)").is_err(), "no pane header");
+    assert_eq!(
+        common::all_bounds(&mut ui, "Disconnect").len(),
+        1,
+        "the shell's header alone"
+    );
+    // Its toolbar has no New folder button (the entries' menu has the entry), and its path
+    // is a plain field, with no Go button beside it.
+    assert!(
+        common::all_bounds(&mut ui, "New folder").is_empty(),
+        "no New folder button"
+    );
+    ui.find("cwd").expect("its follow toggle stays");
+    assert!(
+        ui.find(heimdall_ui::floating_view::tool_id(
+            pane,
+            Side::Local,
+            heimdall_ui::floating_view::PaneTool::Go
+        ))
+        .is_err(),
+        "no Go button"
+    );
+}
+
+#[test]
 fn the_browsers_entry_menu_opens_in_explorer_and_sends_nothing() {
     let dir = tempfile::tempdir().expect("dir");
     let (_core, pane) = docked(dir.path());

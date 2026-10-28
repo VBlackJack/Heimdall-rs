@@ -948,6 +948,7 @@ fn pane_toolbar<'a>(
     (moves, pending): (Moves, bool),
     toggles: PaneToggles,
     (filter, show_hidden): (&str, bool),
+    plain: bool,
 ) -> Element<'a, Message> {
     let tool =
         |icon, tip, which, message| glyph_button(icon, tip, tool_id(tab, side, which), message);
@@ -976,28 +977,33 @@ fn pane_toolbar<'a>(
             PaneTool::Refresh,
             Some(files(FilesMessage::Refresh { tab, side })),
         ),
-        tool_separator(),
-        styles::tip(
-            button(glyph_label(
-                Icon::NewFolder,
-                fl!("ui-files-new-folder-button")
-            ))
-            .padding(crate::tokens::BUTTON_PADDING)
-            .style(styles::secondary)
-            .on_press_maybe((!pending).then(|| files(FilesMessage::AskNewFolder { tab, side }))),
-            text(if pending {
-                fl!("ui-files-listing-in-progress-tooltip")
-            } else {
-                fl!("ui-files-new-folder-tooltip")
-            })
-            .size(font_size::CAPTION),
-            tooltip::Position::Bottom,
-        )
-        .padding(styles::TOOLTIP_PADDING)
-        .style(styles::tooltip),
     ]
     .spacing(spacing::XS)
     .align_y(Alignment::Center);
+    if !plain {
+        tools = tools.push(tool_separator()).push(
+            styles::tip(
+                button(glyph_label(
+                    Icon::NewFolder,
+                    fl!("ui-files-new-folder-button"),
+                ))
+                .padding(crate::tokens::BUTTON_PADDING)
+                .style(styles::secondary)
+                .on_press_maybe(
+                    (!pending).then(|| files(FilesMessage::AskNewFolder { tab, side })),
+                ),
+                text(if pending {
+                    fl!("ui-files-listing-in-progress-tooltip")
+                } else {
+                    fl!("ui-files-new-folder-tooltip")
+                })
+                .size(font_size::CAPTION),
+                tooltip::Position::Bottom,
+            )
+            .padding(styles::TOOLTIP_PADDING)
+            .style(styles::tooltip),
+        );
+    }
     if toggles.sudo.is_some() || toggles.follow.is_some() {
         tools = tools.push(tool_separator());
     }
@@ -1226,6 +1232,10 @@ struct PaneParts<'p, E> {
     drop: Option<DropHere>,
     /// The pane's own toggles: the server's, and the local file browser's "cwd".
     toggles: PaneToggles,
+    /// It is the local file browser docked beside a local shell, whose C# toolbar has no New
+    /// folder button (its menu has the entry) and whose path box is a plain monospaced field
+    /// with no breadcrumb and no Go button (`LocalFileBrowserView.xaml:42-135`).
+    plain: bool,
 }
 
 /// The toggles of a pane: the server's, as the C# SFTP toolbar's, and the "cwd" toggle of
@@ -1413,8 +1423,9 @@ fn path_bar<'a>(
     location: &str,
     breadcrumb: Option<Vec<String>>,
     typed: Option<&str>,
+    plain: bool,
 ) -> Element<'a, Message> {
-    let field = match breadcrumb.filter(|_| typed.is_none()) {
+    let field = match breadcrumb.filter(|_| typed.is_none() && !plain) {
         Some(segments) => breadcrumb_bar(tab, side, segments),
         None => styles::field(location, typed.unwrap_or(location))
             .style(styles::text_input)
@@ -1425,6 +1436,9 @@ fn path_bar<'a>(
             .width(Length::Fill)
             .into(),
     };
+    if plain {
+        return field;
+    }
     row![
         field,
         glyph_button(
@@ -1500,6 +1514,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         batch,
         drop,
         toggles,
+        plain,
     } = parts;
     let chosen = marked.len() + usize::from(selected.is_some());
     let failed = error.is_some();
@@ -1548,9 +1563,10 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
             (moves, folder_pending),
             toggles,
             (filter, show_hidden),
+            plain,
         ))
         .push(pane_rule())
-        .push(path_bar((tab, side), &location, breadcrumb, typed))
+        .push(path_bar((tab, side), &location, breadcrumb, typed, plain))
         .push(pane_rule());
     let footer = pane_footer(
         entries.len(),
@@ -1966,6 +1982,7 @@ pub fn view(
             .filter(|batch| batch.side == Side::Local),
         drop: drop_in(Side::Local),
         toggles: PaneToggles::local(files_pane),
+        plain: files_pane.local_only,
     });
     let remote = pane(PaneParts {
         tab,
@@ -2000,6 +2017,7 @@ pub fn view(
             .filter(|batch| batch.side == Side::Remote),
         drop: drop_in(Side::Remote),
         toggles: PaneToggles::server(files_pane),
+        plain: false,
     });
     let mut content = column![panes(tab, files_pane, local, remote)]
         .spacing(spacing::SM)
