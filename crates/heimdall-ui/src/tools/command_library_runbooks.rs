@@ -41,7 +41,7 @@ use iced::{Element, Length};
 use self::run::{Run, RunSession};
 use super::ToolMessage;
 use super::command_library_dialog::{
-    Pick, RUNBOOK_DIALOG_HEIGHT, RUNBOOK_DIALOG_WIDTH, frame, pick,
+    Discard, Pick, RUNBOOK_DIALOG_HEIGHT, RUNBOOK_DIALOG_WIDTH, fitted, frame, pick,
 };
 use super::command_library_tool::{
     CommandLibraryMessage, IconState, category_name, icon_button, language, value_error,
@@ -132,6 +132,12 @@ pub enum RunbookMessage {
     Platform(usize, TemplatePlatform),
     /// The note typed for step `.0`.
     Note(usize, String),
+    /// Add the first action the search finds as the last step (Enter in its box).
+    PickSubmit,
+    /// Throw the unsaved changes of the editor away, once asked.
+    DiscardEdit,
+    /// Go on editing, once asked.
+    KeepEditing,
     /// Keep the runbook of the editor.
     Save,
     /// Leave the editor.
@@ -203,6 +209,10 @@ struct Editor {
     tags: Vec<String>,
     search: String,
     problem: Option<Problem>,
+    /// The runbook as the editor opened on it, to tell whether the user changed anything.
+    baseline: Option<Runbook>,
+    /// Whether the dialog asks to discard unsaved changes.
+    discarding: bool,
 }
 
 /// The panel's state.
@@ -323,7 +333,21 @@ impl Editor {
             tags: Vec::new(),
             search: String::new(),
             problem: None,
+            baseline: None,
+            discarding: false,
         }
+        .with_baseline()
+    }
+
+    /// The editor, its present content taken as the one to compare changes with.
+    fn with_baseline(mut self) -> Self {
+        self.baseline = self.to_runbook().ok();
+        self
+    }
+
+    /// Whether the user changed something since the editor opened.
+    fn is_changed(&self) -> bool {
+        self.to_runbook().ok() != self.baseline
     }
 
     fn of(runbook: &Runbook, library: &UserLibrary) -> Self {
@@ -373,7 +397,10 @@ impl Editor {
             tags: runbook.tags.clone(),
             search: String::new(),
             problem: None,
+            baseline: None,
+            discarding: false,
         }
+        .with_baseline()
     }
 
     /// The runbook the editor describes.
@@ -499,6 +526,11 @@ impl RunbooksPane {
     #[must_use]
     pub const fn is_open(&self) -> bool {
         self.open
+    }
+
+    /// Whether the dialog asks to discard unsaved changes.
+    pub(in crate::tools) fn is_asking_to_discard(&self) -> bool {
+        self.editor.as_ref().is_some_and(|editor| editor.discarding)
     }
 
     /// Whether the editor is open.
@@ -628,7 +660,19 @@ impl RunbooksPane {
             // Asked of a terminal: the library pane answers, it knows the terminals.
             RunbookMessage::RunSend | RunbookMessage::RunInsert | RunbookMessage::RunCopy => {}
             RunbookMessage::Save => self.save(library),
-            RunbookMessage::Cancel => self.editor = None,
+            // A dialog with changes asks before it goes, as the C# `OnWindowClosing`.
+            RunbookMessage::Cancel => match &mut self.editor {
+                Some(editor) if editor.is_changed() && !editor.discarding => {
+                    editor.discarding = true;
+                }
+                _ => self.editor = None,
+            },
+            RunbookMessage::DiscardEdit => self.editor = None,
+            RunbookMessage::KeepEditing => {
+                if let Some(editor) = self.editor.as_mut() {
+                    editor.discarding = false;
+                }
+            }
             other => {
                 if let Some(editor) = self.editor.as_mut() {
                     edit(editor, other, library);
@@ -769,10 +813,10 @@ impl RunbooksPane {
         &'a self,
         tab: TabId,
         library: &'a UserLibrary,
-        height: f32,
+        room: iced::Size,
     ) -> Option<Element<'a, Message>> {
         let editor = self.editor.as_ref()?;
-        Some(editor_view(tab, editor, library, height))
+        Some(editor_view(tab, editor, library, room))
     }
 
     /// The list: a header with the title and the icon buttons the C# has (New, Edit, Duplicate,
@@ -937,6 +981,7 @@ fn edit(editor: &mut Editor, message: RunbookMessage, library: &UserLibrary) {
     // What was refused is said until the user changes something: the field fixed, the reason
     // goes with it instead of staying under a form that is now right.
     editor.problem = None;
+    editor.discarding = false;
     match message {
         RunbookMessage::Name(value) => editor.name = value,
         RunbookMessage::Description(value) => editor.description = value,
@@ -958,6 +1003,20 @@ fn edit(editor: &mut Editor, message: RunbookMessage, library: &UserLibrary) {
             editor.variables.remove(index);
         }
         RunbookMessage::PickSearch(value) => editor.search = value,
+        RunbookMessage::PickSubmit => {
+            if let Some((id, _)) = matches(library, &editor.search).into_iter().next()
+                && editor.steps.len() < MAX_STEPS
+                && let Some(command) = shown_action(library, &id)
+            {
+                editor.steps.push(EditorStep::Action {
+                    action_id: id,
+                    title: command.title.clone(),
+                    found: true,
+                    fields: fields_of(Some(&command), &BTreeMap::new()),
+                    note: String::new(),
+                });
+            }
+        }
         RunbookMessage::AddAction(id) if editor.steps.len() < MAX_STEPS => {
             if let Some(command) = shown_action(library, &id) {
                 let step = EditorStep::Action {
@@ -1036,13 +1095,27 @@ fn field<'a>(
     value: &str,
     on_input: impl Fn(String) -> Message + 'a,
 ) -> Row<'a, Message> {
+    field_with(label, value, on_input, None)
+}
+
+/// [`field`], its box named `id` when given, to be given the keyboard.
+fn field_with<'a>(
+    label: String,
+    value: &str,
+    on_input: impl Fn(String) -> Message + 'a,
+    id: Option<iced::widget::Id>,
+) -> Row<'a, Message> {
+    let input = text_input("", value)
+        .size(font_size::BODY)
+        .padding(super::INPUT_PADDING)
+        .style(styles::text_input)
+        .on_input(on_input);
     row![
         text(label).size(font_size::BODY).width(LABEL_WIDTH),
-        text_input("", value)
-            .size(font_size::BODY)
-            .padding(super::INPUT_PADDING)
-            .style(styles::text_input)
-            .on_input(on_input),
+        match id {
+            Some(id) => input.id(id),
+            None => input,
+        },
     ]
     .spacing(spacing::SM)
     .align_y(iced::Alignment::Center)
@@ -1195,14 +1268,15 @@ fn editor_view<'a>(
     tab: TabId,
     editor: &'a Editor,
     library: &'a UserLibrary,
-    height: f32,
+    room: iced::Size,
 ) -> Element<'a, Message> {
     let send = move |message| send(tab, message);
     let mut form: Column<'a, Message> = column![
-        field(
+        field_with(
             fl!("ui-tool-cmdlib-runbooks-field-name"),
             &editor.name,
-            move |typed| { send(RunbookMessage::Name(typed)) }
+            move |typed| { send(RunbookMessage::Name(typed)) },
+            Some(super::command_library_dialog::name_field_id()),
         ),
         field(
             fl!("ui-tool-cmdlib-runbooks-field-description"),
@@ -1300,7 +1374,9 @@ fn editor_view<'a>(
         .size(font_size::BODY)
         .padding(super::INPUT_PADDING)
         .style(styles::text_input)
-        .on_input(move |typed| send(RunbookMessage::PickSearch(typed))),
+        .on_input(move |typed| send(RunbookMessage::PickSearch(typed)))
+        // Enter adds the first action found, rather than saving the dialog.
+        .on_submit(send(RunbookMessage::PickSubmit)),
     );
     let found = matches(library, &editor.search);
     if found.is_empty() && !editor.search.trim().is_empty() {
@@ -1347,12 +1423,13 @@ fn editor_view<'a>(
         },
         form.into(),
         notes,
+        editor.discarding.then(|| Discard {
+            keep: send(RunbookMessage::KeepEditing),
+            discard: send(RunbookMessage::DiscardEdit),
+        }),
         send(RunbookMessage::Save),
         send(RunbookMessage::Cancel),
-        (
-            RUNBOOK_DIALOG_WIDTH,
-            RUNBOOK_DIALOG_HEIGHT.min(height).max(0.0),
-        ),
+        fitted((RUNBOOK_DIALOG_WIDTH, RUNBOOK_DIALOG_HEIGHT), room),
     )
 }
 

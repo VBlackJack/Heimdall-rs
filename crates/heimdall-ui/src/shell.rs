@@ -2942,8 +2942,27 @@ impl Shell {
     /// Applies a message, then shows the Sessions page when it showed another tab.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let shown = self.shown_tab_id();
+        let dialog_before = self.cmdlib_dialog_tab();
         let task = self.apply(message);
         self.follow_shown_tab(shown);
+        // The command library's dialog takes the keyboard when it opens (the C#
+        // `TxtTitle.Focus()`), and gives it back to the library's search box when it closes.
+        match (dialog_before, self.cmdlib_dialog_tab()) {
+            (None, Some(tab)) => {
+                if let Some(field) = self.tools.cmdlib_dialog_focus(tab) {
+                    return Task::batch([task, iced::widget::operation::focus(field)]);
+                }
+            }
+            (Some(tab), None) if self.shown_tab_id() == Some(tab) => {
+                return Task::batch([
+                    task,
+                    iced::widget::operation::focus(crate::tools::ToolPanes::cmdlib_search_field(
+                        tab,
+                    )),
+                ]);
+            }
+            _ => {}
+        }
         task
     }
 
@@ -4278,7 +4297,10 @@ impl Shell {
             }
             (WindowShortcut::Broadcast, _) => AppMessage::Broadcast(BroadcastMessage::Toggle),
             (WindowShortcut::Find, _) => {
-                self.toggle_finder(active);
+                // Not behind the command library's dialog, which has the keyboard.
+                if self.cmdlib_dialog_tab().is_none() {
+                    self.toggle_finder(active);
+                }
                 return Vec::new();
             }
             // The whole tab, every pane of its split, as the C# Ctrl+W.
@@ -5697,8 +5719,6 @@ impl Shell {
         })
     }
 
-    /// Draws the window.
-    #[must_use]
     /// The open dialog over the window, veiled; none while a name is typed in the tree's
     /// row, or with no dialog.
     fn dialog_layer(&self, locked: bool) -> Option<Element<'_, Message>> {
@@ -5766,9 +5786,7 @@ impl Shell {
         let tab = self.cmdlib_dialog_tab()?;
         Some(opaque(
             container(responsive(move |size| {
-                // A margin of a spacing above and below it, as the profile form.
-                let height = size.height - 2.0 * spacing::LG;
-                match self.tools.cmdlib_dialog(tab, height) {
+                match self.tools.cmdlib_dialog(tab, size) {
                     Some(card) => anchored(card, tab).into(),
                     None => iced::widget::space().into(),
                 }
@@ -5781,6 +5799,8 @@ impl Shell {
         ))
     }
 
+    /// Draws the window.
+    #[must_use]
     pub fn view(&self) -> Element<'_, Message> {
         let locked = self.gated();
         // Locked, the window is not drawn: nothing of it shows, and no hidden field takes

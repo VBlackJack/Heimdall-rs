@@ -176,7 +176,7 @@ pub const STRING_TYPE: &str = "string";
 
 /// The parameter types the editor offers, in the order it lists them: the C#
 /// `TemplateParameterTypes.Offered` without `bool`, which the generator of this build does
-/// not read (`SUPPORTED_PARAMETER_TYPES` refuses it on import).
+/// not read (see `generate`).
 pub const OFFERED_PARAMETER_TYPES: [&str; 8] = [
     STRING_TYPE,
     "int",
@@ -1274,6 +1274,9 @@ pub struct ParameterDraft {
     pub description: String,
     /// The values a choice offers, on one line separated by commas.
     pub allowed_values: String,
+    /// How the value is put in the command; not edited, but kept through a rename, an edit and
+    /// a copy of the command.
+    pub quoting: Option<Quoting>,
 }
 
 impl Default for ParameterDraft {
@@ -1286,6 +1289,7 @@ impl Default for ParameterDraft {
             required: false,
             description: String::new(),
             allowed_values: String::new(),
+            quoting: None,
         }
     }
 }
@@ -1297,7 +1301,11 @@ impl ParameterDraft {
         Self {
             name: parameter.name.clone(),
             label: parameter.label.clone(),
-            kind: parameter.kind.clone(),
+            // `Choice` and `choice` are one type: the drop-down lists it once.
+            kind: OFFERED_PARAMETER_TYPES
+                .iter()
+                .find(|offered| offered.eq_ignore_ascii_case(parameter.kind.trim()))
+                .map_or_else(|| parameter.kind.clone(), |offered| (*offered).to_owned()),
             default_value: parameter.default_value.clone().unwrap_or_default(),
             required: parameter.required,
             description: parameter.description.clone().unwrap_or_default(),
@@ -1306,6 +1314,7 @@ impl ParameterDraft {
                 .as_ref()
                 .map(|values| values.join(", "))
                 .unwrap_or_default(),
+            quoting: parameter.quoting,
         }
     }
 
@@ -1315,9 +1324,8 @@ impl ParameterDraft {
         self.kind.trim().eq_ignore_ascii_case(CHOICE_TYPE)
     }
 
-    /// The parameter the row describes, keeping how `old` (the parameter of that name the
-    /// command had) is quoted, which the editor does not show.
-    fn to_parameter(&self, old: Option<&UserParameter>) -> UserParameter {
+    /// The parameter the row describes.
+    fn to_parameter(&self) -> UserParameter {
         let some = |text: &str| {
             let trimmed = text.trim();
             (!trimmed.is_empty()).then(|| trimmed.to_owned())
@@ -1346,8 +1354,18 @@ impl ParameterDraft {
             required: self.required,
             description: some(&self.description),
             allowed_values: (!allowed.is_empty()).then_some(allowed),
-            quoting: old.and_then(|each| each.quoting),
+            quoting: self.quoting,
         }
+    }
+
+    /// Whether the row says nothing: no name and nothing else typed, which is no parameter.
+    fn is_empty(&self) -> bool {
+        self.name.trim().is_empty()
+            && self.label.trim().is_empty()
+            && self.default_value.trim().is_empty()
+            && self.description.trim().is_empty()
+            && self.allowed_values.trim().is_empty()
+            && !self.required
     }
 }
 
@@ -1548,6 +1566,8 @@ pub enum DraftError {
     TooManyParameters,
     /// Two rows of a parameter table have the same name.
     ParameterDuplicate,
+    /// A row of a parameter table says something but has no name.
+    ParameterNameMissing,
     /// More than [`MAX_TAGS`] tags.
     TooManyTags,
     /// The command edited is no longer in the library.
@@ -2008,13 +2028,25 @@ fn template_of(
         // The table is the whole truth, as in the C#; a row with no name is not a parameter.
         Some(table) => {
             let mut parameters: Vec<UserParameter> = Vec::new();
-            for row in table.iter().filter(|row| !row.name.trim().is_empty()) {
+            // A row with nothing in it is no parameter; one with something but no name is a
+            // mistake to say, not to drop.
+            for row in table.iter().filter(|row| !row.is_empty()) {
                 let kept = row.name.trim();
+                if kept.is_empty() {
+                    return Err(DraftError::ParameterNameMissing);
+                }
                 if parameters.iter().any(|known| known.name == kept) {
                     return Err(DraftError::ParameterDuplicate);
                 }
-                let known = old.and_then(|t| t.parameters.iter().find(|each| each.name == kept));
-                parameters.push(row.to_parameter(known));
+                parameters.push(row.to_parameter());
+            }
+            // A value written in the pattern and listed nowhere is a text parameter, so a
+            // rename in the pattern never sends a literal `{name}` to a shell. The editor
+            // warns of it beforehand.
+            for name in placeholders(pattern) {
+                if !parameters.iter().any(|known| known.name == name) {
+                    parameters.push(UserParameter::new(&name));
+                }
             }
             let name = match platform {
                 TemplatePlatform::Windows => &draft.windows_name,
@@ -2049,7 +2081,13 @@ fn template_of(
             TemplatePlatform::Windows => UserPlatform::Windows,
             TemplatePlatform::Linux => UserPlatform::Linux,
         },
-        name,
+        // A template with no name takes the command's title, as the C#
+        // (`CommandActionDialogViewModel.cs:474`).
+        name: if name.is_empty() {
+            draft.title.trim().to_owned()
+        } else {
+            name
+        },
         command_pattern: pattern.to_owned(),
         parameters,
     }))

@@ -193,7 +193,7 @@ fn kept(dir: &Path) -> UserLibrary {
 }
 
 /// What the dialog says of values written in the pattern and declared nowhere.
-const UNDECLARED: &str = "Written in the command but not declared as parameters, so they are left exactly as they are: host, count";
+const UNDECLARED: &str = "Written in the command but not declared as parameters, so they will be added as text parameters when you save: host, count";
 
 #[test]
 fn the_runbook_editor_is_a_dialog_over_the_list_and_escape_cancels_it() {
@@ -299,14 +299,44 @@ fn the_command_dialog_edits_a_parameter_row_and_saves_it() {
 }
 
 #[test]
-fn escape_cancels_the_command_dialog_and_keeps_nothing() {
+fn escape_closes_a_clean_dialog_and_asks_before_a_changed_one_is_thrown_away() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab) = opened(dir.path());
+    // Nothing typed: Escape closes it at once.
+    let _ = shell.update(library(tab, CommandLibraryMessage::New));
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("Risk Level").is_err(), "a clean dialog closes");
+    }
+    // Something typed: the C# question first.
     let _ = shell.update(library(tab, CommandLibraryMessage::New));
     type_into(&mut shell, tab, CommandField::Title, "Lost");
     type_into(&mut shell, tab, CommandField::Category, "Network");
     type_into(&mut shell, tab, CommandField::WindowsPattern, "Get-Date");
     let _ = shell.update(Message::DialogKey { confirm: false });
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Unsaved Changes").expect("the question");
+        ui.find("You have unsaved changes. Discard them and close?")
+            .expect("its words");
+        ui.find("Risk Level").expect("the dialog is still open");
+    }
+    // Enter does not answer it; a second Escape is its "No".
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert!(
+        kept(dir.path()).commands().is_empty(),
+        "Enter saved nothing"
+    );
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("Unsaved Changes").is_err(), "the question is gone");
+        ui.find("Risk Level").expect("still editing");
+    }
+    // Cancel asks again, and Yes throws the changes away.
+    let _ = shell.update(library(tab, CommandLibraryMessage::CancelEdit));
+    let _ = shell.update(library(tab, CommandLibraryMessage::DiscardEdit));
     assert!(kept(dir.path()).commands().is_empty());
     let mut ui = simulator(&shell);
     assert!(ui.find("Risk Level").is_err(), "the dialog is closed");

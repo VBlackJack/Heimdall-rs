@@ -1180,17 +1180,33 @@ impl ToolPanes {
         Task::batch(tasks)
     }
 
-    /// The editor dialog of the command library `tab`, in `height`, when one is open.
+    /// The editor dialog of the command library `tab`, in a window leaving `room`, when one
+    /// is open.
     #[must_use]
     pub fn cmdlib_dialog(
         &self,
         tab: TabId,
-        height: f32,
+        room: iced::Size,
     ) -> Option<Element<'_, crate::shell::Message>> {
         match &self.panes.get(&tab)?.pane {
-            Pane::CmdLib(pane) => pane.dialog_view(tab, height),
+            Pane::CmdLib(pane) => pane.dialog_view(tab, room),
             _ => None,
         }
+    }
+
+    /// The field of the dialog of command library `tab` that has the keyboard when it opens.
+    #[must_use]
+    pub fn cmdlib_dialog_focus(&self, tab: TabId) -> Option<iced::widget::Id> {
+        match &self.panes.get(&tab)?.pane {
+            Pane::CmdLib(pane) => Some(pane.dialog_focus()),
+            _ => None,
+        }
+    }
+
+    /// The field of command library `tab` that has the keyboard again when its dialog closes.
+    #[must_use]
+    pub fn cmdlib_search_field(tab: TabId) -> iced::widget::Id {
+        command_library_tool::search_id(tab)
     }
 
     /// Whether command library `tab` has an editor dialog open.

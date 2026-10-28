@@ -25,7 +25,7 @@ use heimdall_core::tools::user_commands::{
     Criticality, Draft, DraftError, OFFERED_PARAMETER_TYPES, ParameterDraft, TemplatePlatform,
     UserPlatform,
 };
-use iced::widget::{Column, checkbox, column, container, pick_list, row, space, text_input};
+use iced::widget::{Column, checkbox, column, container, pick_list, row, space, text, text_input};
 use iced::{Alignment, Element, Length};
 
 use super::ToolMessage;
@@ -88,28 +88,58 @@ pub(super) fn pick<'a, T: Clone + PartialEq + 'a>(
     .into()
 }
 
-/// The frame of a dialog: `title`, `body` scrolling, the `notes` under it (a refusal in the
-/// error colour, a warning), then Cancel and Save, each sending its message. `size` is the
-/// C# dialog's width and the height the window leaves, never more than the C# dialog's own.
+/// What a dialog asks to be answered before it goes on.
+pub(super) struct Discard {
+    /// Keep editing: the "No" of the question.
+    pub keep: Message,
+    /// Throw the changes away: the "Yes".
+    pub discard: Message,
+}
+
+/// The frame of a dialog: `title`, then `body` scrolling with the `notes` above the form (a
+/// refusal in the error colour, a warning), so that Save and Cancel are always in sight;
+/// the question of discarding unsaved changes, when asked, sits just over them. `size` is
+/// the C# dialog's width and height, each capped to what the window leaves.
 pub(super) fn frame<'a>(
     title: String,
     body: Element<'a, Message>,
     notes: Vec<Element<'a, Message>>,
+    discard: Option<Discard>,
     save: Message,
     cancel: Message,
     size: (f32, f32),
 ) -> Element<'a, Message> {
+    let mut scrolled: Column<'a, Message> = Column::new().spacing(spacing::MD);
+    for note in notes {
+        scrolled = scrolled.push(note);
+    }
+    scrolled = scrolled.push(body);
     let mut page: Column<'a, Message> = column![
         dialog_parts::title(title),
-        styles::scroll(container(body).padding(iced::Padding {
+        styles::scroll(container(scrolled).padding(iced::Padding {
             right: SCROLLBAR_ROOM,
             ..iced::Padding::ZERO
         }))
         .height(Length::Fill),
     ]
     .spacing(spacing::MD);
-    for note in notes {
-        page = page.push(note);
+    if let Some(discard) = discard {
+        // The C# `DialogUnsavedWarning` question, asked when a dialog with changes closes.
+        page = page.push(dialog_parts::warning_panel(
+            column![
+                text(fl!("ui-tool-cmdlib-discard-title"))
+                    .size(font_size::BODY)
+                    .font(styles::SEMIBOLD),
+                dialog_parts::note(fl!("ui-tool-cmdlib-discard-question")),
+                dialog_parts::buttons([
+                    dialog_parts::action(fl!("ui-tool-cmdlib-discard-no"), styles::secondary)
+                        .on_press(discard.keep),
+                    dialog_parts::action(fl!("ui-tool-cmdlib-discard-yes"), styles::danger)
+                        .on_press(discard.discard),
+                ]),
+            ]
+            .spacing(spacing::SM),
+        ));
     }
     page = page.push(dialog_parts::buttons([
         dialog_parts::action(fl!("ui-tool-cmdlib-cancel"), styles::secondary).on_press(cancel),
@@ -123,6 +153,26 @@ pub(super) fn frame<'a>(
         .into()
 }
 
+/// The id of the first field of the command dialog, which has the keyboard when it opens, as
+/// the C# `TxtTitle.Focus()`.
+pub(crate) fn title_field_id() -> iced::widget::Id {
+    iced::widget::Id::new("cmdlib-dialog-title")
+}
+
+/// The id of the first field of the runbook dialog.
+pub(crate) fn name_field_id() -> iced::widget::Id {
+    iced::widget::Id::new("cmdlib-dialog-name")
+}
+
+/// The size of a dialog of `wanted` size in a window that leaves `room`: a margin of a
+/// spacing all round, never more than wanted.
+pub(super) fn fitted(wanted: (f32, f32), room: iced::Size) -> (f32, f32) {
+    (
+        wanted.0.min(room.width - 2.0 * spacing::LG).max(0.0),
+        wanted.1.min(room.height - 2.0 * spacing::LG).max(0.0),
+    )
+}
+
 /// A field under its label, as the C# `DialogLabelStyle` above its box.
 pub(super) fn labelled<'a>(
     label: String,
@@ -131,20 +181,27 @@ pub(super) fn labelled<'a>(
     column![dialog_parts::dialog_label(label), input.into()].spacing(spacing::XS)
 }
 
-/// The command dialog over `draft`; `problem` is why the last Save was refused.
+/// The command dialog over `draft`; `problem` is why the last Save was refused, `discarding`
+/// whether it asks to discard unsaved changes, in a window leaving `room`.
 pub(super) fn command_dialog(
     tab: TabId,
     draft: &Draft,
     problem: Option<DraftError>,
-    height: f32,
+    discarding: bool,
+    room: iced::Size,
 ) -> Element<'_, Message> {
     let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
     let input = |value: &str, which: Field| {
-        text_input("", value)
+        let field = text_input("", value)
             .size(font_size::BODY)
             .padding(super::INPUT_PADDING)
             .style(styles::text_input)
-            .on_input(move |typed| send(CommandLibraryMessage::Field(which, typed)))
+            .on_input(move |typed| send(CommandLibraryMessage::Field(which, typed)));
+        if which == Field::Title {
+            field.id(title_field_id())
+        } else {
+            field
+        }
     };
     let platforms = pick(
         UserPlatform::ALL
@@ -214,12 +271,13 @@ pub(super) fn command_dialog(
         },
         form.into(),
         notes,
+        discarding.then(|| Discard {
+            keep: send(CommandLibraryMessage::KeepEditing),
+            discard: send(CommandLibraryMessage::DiscardEdit),
+        }),
         send(CommandLibraryMessage::Save),
         send(CommandLibraryMessage::CancelEdit),
-        (
-            COMMAND_DIALOG_WIDTH,
-            COMMAND_DIALOG_HEIGHT.min(height).max(0.0),
-        ),
+        fitted((COMMAND_DIALOG_WIDTH, COMMAND_DIALOG_HEIGHT), room),
     )
 }
 

@@ -39,7 +39,7 @@ use heimdall_core::tools::user_commands::{
     ValueError,
 };
 use iced::widget::{
-    Column, Row, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
+    Column, Row, button, checkbox, column, container, pick_list, row, text, text_input,
 };
 use iced::{Element, Length, Task, window};
 
@@ -57,8 +57,6 @@ mod sync;
 
 /// Width of a value's label, as the result grids' label column.
 const PARAM_LABEL_WIDTH: f32 = 160.0;
-
-/// Width of the editor's field labels.
 
 /// The most commands sent whose receipt is still awaited: a question left unanswered never
 /// gets one, so the oldest go.
@@ -109,13 +107,13 @@ const OFFSET_SCALE: f32 = 1000.0;
 /// Width of the field labels of the Git synchronization's form.
 pub(super) const EDITOR_LABEL_WIDTH: f32 = 140.0;
 
-/// The shares of the page's height the list and the details of the command opened take, so
-/// the list never collapses under tall details, whatever the window's height.
+/// The shares of the free height the list and the details of the command opened take, so the
+/// list never collapses under tall details, whatever the window's height.
 const LIST_PORTION: u16 = 3;
 const DETAILS_PORTION: u16 = 2;
 
-/// The share of the page the runbooks panel takes under the list, and the height it never
-/// passes, as the C# `CmdLibRunbooksMaxHeight` (`CommandLibraryView.xaml:43`).
+/// The height the runbooks panel never passes, as the C# `CmdLibRunbooksMaxHeight`
+/// (`CommandLibraryView.xaml:43`).
 const RUNBOOKS_MAX_HEIGHT: f32 = 420.0;
 
 /// The height the list of commands keeps whatever is docked under it, as the C#
@@ -244,6 +242,10 @@ pub enum CommandLibraryMessage {
     AddParam(TemplatePlatform),
     /// Remove row `.1` of the parameter table of template `.0`.
     RemoveParam(TemplatePlatform, usize),
+    /// Throw the unsaved changes of the editor away, once asked.
+    DiscardEdit,
+    /// Go on editing, once asked.
+    KeepEditing,
     /// Enter (`confirm`) or Escape reached the dialog over the window: save, or cancel.
     DialogKey {
         /// Enter, which saves, or Escape, which cancels.
@@ -519,6 +521,8 @@ struct Editor {
     /// The draft as the editor opened on it, to tell whether the user changed anything.
     original: Draft,
     problem: Option<DraftError>,
+    /// Whether the dialog asks to discard unsaved changes.
+    discarding: bool,
 }
 
 impl Editor {
@@ -528,7 +532,14 @@ impl Editor {
             original: draft.clone(),
             draft,
             problem: None,
+            discarding: false,
         }
+    }
+
+    /// The user changed something: what was refused or asked is no longer so.
+    fn touch(&mut self) {
+        self.problem = None;
+        self.discarding = false;
     }
 
     /// Whether the user changed the draft since the editor opened.
@@ -691,8 +702,8 @@ impl CommandLibraryPane {
     /// The dialog to draw over the window, in `height`: the runbook editor or the command
     /// editor; `None` when neither is open.
     #[must_use]
-    pub fn dialog_view(&self, tab: TabId, height: f32) -> Option<Element<'_, Message>> {
-        if let Some(dialog) = self.runbooks.dialog_view(tab, &self.library, height) {
+    pub fn dialog_view(&self, tab: TabId, room: iced::Size) -> Option<Element<'_, Message>> {
+        if let Some(dialog) = self.runbooks.dialog_view(tab, &self.library, room) {
             return Some(dialog);
         }
         let editor = self.editor.as_ref()?;
@@ -700,8 +711,20 @@ impl CommandLibraryPane {
             tab,
             &editor.draft,
             editor.problem,
-            height,
+            editor.discarding,
+            room,
         ))
+    }
+
+    /// The field that has the keyboard when the dialog opens: the title of a command, the name
+    /// of a runbook.
+    #[must_use]
+    pub fn dialog_focus(&self) -> iced::widget::Id {
+        if self.runbooks.is_editing() {
+            super::command_library_dialog::name_field_id()
+        } else {
+            super::command_library_dialog::title_field_id()
+        }
     }
 
     /// Whether `command` is among the rows the filters and the search keep.
@@ -1292,7 +1315,7 @@ impl CommandLibraryPane {
             }
             CommandLibraryMessage::Field(field, value) => {
                 if let Some(editor) = &mut self.editor {
-                    editor.problem = None;
+                    editor.touch();
                     let draft = &mut editor.draft;
                     match field {
                         Field::Title => draft.title = value,
@@ -1323,7 +1346,7 @@ impl CommandLibraryPane {
             }
             CommandLibraryMessage::AddParam(platform) => {
                 if let Some(editor) = &mut self.editor {
-                    editor.problem = None;
+                    editor.touch();
                     let table = editor.draft.parameters_mut(platform);
                     if table.len() < user_commands::MAX_PARAMETERS {
                         table.push(ParameterDraft::default());
@@ -1332,7 +1355,7 @@ impl CommandLibraryPane {
             }
             CommandLibraryMessage::RemoveParam(platform, index) => {
                 if let Some(editor) = &mut self.editor {
-                    editor.problem = None;
+                    editor.touch();
                     let table = editor.draft.parameters_mut(platform);
                     if index < table.len() {
                         table.remove(index);
@@ -1341,35 +1364,51 @@ impl CommandLibraryPane {
             }
             CommandLibraryMessage::EditPlatform(platform) => {
                 if let Some(editor) = &mut self.editor {
-                    editor.problem = None;
+                    editor.touch();
                     editor.draft.platform = platform;
                 }
             }
             CommandLibraryMessage::EditLevel(level) => {
                 if let Some(editor) = &mut self.editor {
-                    editor.problem = None;
+                    editor.touch();
                     editor.draft.level = level;
                 }
             }
             CommandLibraryMessage::DialogKey { confirm } => {
                 // Enter saves and Escape cancels, as the C# IsDefault and IsCancel buttons.
                 if self.runbooks.is_editing() {
-                    let message = if confirm {
-                        RunbookMessage::Save
-                    } else {
-                        RunbookMessage::Cancel
+                    let message = match (confirm, self.runbooks.is_asking_to_discard()) {
+                        // Enter does not answer the question; Escape is its "No".
+                        (true, true) => return,
+                        (true, false) => RunbookMessage::Save,
+                        (false, true) => RunbookMessage::KeepEditing,
+                        (false, false) => RunbookMessage::Cancel,
                     };
                     self.runbooks.update(message, &self.library);
-                } else if self.editor.is_some() {
-                    if confirm {
-                        self.save_editor();
-                    } else {
-                        self.editor = None;
+                } else if let Some(editor) = &self.editor {
+                    let asking = editor.discarding;
+                    match (confirm, asking) {
+                        (true, true) => {}
+                        (true, false) => self.save_editor(),
+                        (false, true) => self.edit(CommandLibraryMessage::KeepEditing),
+                        (false, false) => self.edit(CommandLibraryMessage::CancelEdit),
                     }
                 }
             }
             CommandLibraryMessage::Save => self.save_editor(),
-            CommandLibraryMessage::CancelEdit => self.editor = None,
+            // A dialog with changes asks before it goes, as the C# `OnWindowClosing`.
+            CommandLibraryMessage::CancelEdit => match &mut self.editor {
+                Some(editor) if editor.is_changed() && !editor.discarding => {
+                    editor.discarding = true;
+                }
+                _ => self.editor = None,
+            },
+            CommandLibraryMessage::DiscardEdit => self.editor = None,
+            CommandLibraryMessage::KeepEditing => {
+                if let Some(editor) = &mut self.editor {
+                    editor.discarding = false;
+                }
+            }
             CommandLibraryMessage::AskDelete(id) if self.can_edit() => self.deleting = Some(id),
             CommandLibraryMessage::ConfirmDelete(id) if self.can_edit() => {
                 self.deleting = None;
@@ -1405,7 +1444,7 @@ impl CommandLibraryPane {
         change: impl FnOnce(&mut ParameterDraft),
     ) {
         if let Some(editor) = &mut self.editor {
-            editor.problem = None;
+            editor.touch();
             if let Some(row) = editor.draft.parameters_mut(platform).get_mut(index) {
                 change(row);
             }
@@ -1951,6 +1990,7 @@ impl CommandLibraryPane {
     pub fn view<'a>(&'a self, tab: TabId, state: &'a ToolPane) -> Element<'a, Message> {
         let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
         let search = text_input(&fl!("ui-tool-cmdlib-search-placeholder"), &self.search)
+            .id(search_id(tab))
             .size(font_size::BODY)
             .padding(super::INPUT_PADDING)
             .style(styles::text_input)
@@ -2876,6 +2916,12 @@ impl CommandLibraryPane {
     }
 }
 
+/// The search box of the library of tab `tab`: it has the keyboard again when a dialog over
+/// the library closes.
+pub(crate) fn search_id(tab: TabId) -> iced::widget::Id {
+    iced::widget::Id::from(format!("cmdlib-search-{}", tab.value()))
+}
+
 /// The scrollable of the list of commands of tab `tab`.
 pub(super) fn list_id(tab: TabId) -> iced::widget::Id {
     iced::widget::Id::from(format!("cmdlib-list-{}", tab.value()))
@@ -3428,6 +3474,7 @@ pub(super) fn draft_error(problem: DraftError) -> String {
         DraftError::PatternHidden => fl!("ui-tool-cmdlib-error-pattern-hidden"),
         DraftError::TooManyParameters => fl!("ui-tool-cmdlib-error-too-many-parameters"),
         DraftError::ParameterDuplicate => fl!("ui-tool-cmdlib-error-param-duplicate"),
+        DraftError::ParameterNameMissing => fl!("ui-tool-cmdlib-error-param-name-missing"),
         DraftError::TooManyTags => fl!("ui-tool-cmdlib-error-too-many-tags"),
         DraftError::Gone => fl!("ui-tool-cmdlib-error-gone"),
     }
