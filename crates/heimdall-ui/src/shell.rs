@@ -8678,6 +8678,11 @@ impl Shell {
             .into_iter()
             .map(|tab| {
                 let focused = active == Some(tab.id);
+                // The local file browser docked beside a local shell has no header of its
+                // own, as the C# one is part of the shell's pane.
+                if tab.files.as_ref().is_some_and(|files| files.local_only) {
+                    return split_view::headerless_pane(self.tab_page(tab, focused), focused);
+                }
                 let mut badges = tab_badges(tab, focused);
                 badges.extend(transcript_mark(tab));
                 // A desktop's indicators and buttons, on its pane's header as on the C#

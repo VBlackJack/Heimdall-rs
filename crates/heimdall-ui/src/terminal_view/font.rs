@@ -32,11 +32,11 @@
 
 use std::sync::OnceLock;
 
-use heimdall_core::settings::TERMINAL_FONT_FAMILY_DEFAULT;
+use heimdall_core::settings::TERMINAL_FONT_FAMILY_EMBEDDED;
 use iced::advanced::graphics::text::{cosmic_text::fontdb, font_system};
 
-/// Family of the embedded terminal font, the settings' default.
-pub const FONT_FAMILY: &str = TERMINAL_FONT_FAMILY_DEFAULT;
+/// Family of the embedded terminal font, the fallback of any family the computer lacks.
+pub const FONT_FAMILY: &str = TERMINAL_FONT_FAMILY_EMBEDDED;
 
 /// The characters whose advance must be the same as that of `0` for a face to be monospace.
 const MONOSPACE_PROBES: [char; 4] = ['i', 'M', 'W', ' '];

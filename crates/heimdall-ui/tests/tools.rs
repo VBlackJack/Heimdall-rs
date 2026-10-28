@@ -424,6 +424,71 @@ fn opening_a_tool_shows_its_tab_on_the_sessions_page_once() {
     ui.find("Generate Batch").expect("its button");
 }
 
+/// Widest a tool's content is drawn, as the C# `ToolContentMaxWidth` (`CommonControls.xaml:75`).
+const TOOL_CONTENT_WIDTH: f32 = 700.0;
+
+/// Room at each side of a tool's header, as the C# `ToolHeaderPadding` (`12,8`).
+const TOOL_HEADER_SIDE: f32 = 12.0;
+
+/// Side of the help button, as the C# `ToolHelpButtonStyle` (`CommonControls.xaml:558`).
+const TOOL_HELP_SIDE: f32 = 32.0;
+
+/// Side of a tab's close button, as the C# `TabCloseButton` (`MainWindow.xaml:1722`).
+const TAB_CLOSE_SIDE: f32 = 24.0;
+
+/// Slack for text bounds against the box they sit in.
+const LAYOUT_SLACK: f32 = 1.5;
+
+#[test]
+fn a_tool_s_content_is_centred_at_most_700_wide_as_the_c_sharp_stack_panel() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTool(ToolId::Hash));
+    let title = tools::label(ToolId::Hash);
+    let mut ui = simulator(&shell);
+    let help = common::last_bounds(&mut ui, "?");
+    // The header's own title, level with the help button: the tab carries the name too.
+    let header_title = common::all_bounds(&mut ui, &title)
+        .into_iter()
+        .find(|bounds| (bounds.center_y() - help.center_y()).abs() < help.height)
+        .expect("the header's title");
+    let input = common::last_bounds(&mut ui, "Input text");
+    let pane_left = header_title.x - TOOL_HEADER_SIDE;
+    // The "?" is the text inside its 32-wide button, which sits at the header's padding.
+    let pane_right = help.center_x() + TOOL_HELP_SIDE / 2.0 + TOOL_HEADER_SIDE;
+    let left = input.x - pane_left;
+    let right = pane_right - (input.x + TOOL_CONTENT_WIDTH);
+    assert!(
+        (left - right).abs() < LAYOUT_SLACK,
+        "centred: {left} left, {right} right"
+    );
+    assert!(
+        left > TOOL_HEADER_SIDE * 2.0,
+        "not at the page's left edge: {left}"
+    );
+}
+
+#[test]
+fn a_tab_s_close_button_is_24_by_24_as_the_c_sharp_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTool(ToolId::Hash));
+    let tab = shell.app().tabs[0].id;
+    let mut ui = simulator(&shell);
+    let bounds = ui
+        .find(heimdall_ui::shell::tab_close_id(tab))
+        .expect("the close button")
+        .bounds();
+    assert!(
+        (bounds.width - TAB_CLOSE_SIDE).abs() < LAYOUT_SLACK,
+        "{bounds:?}"
+    );
+    assert!(
+        (bounds.height - TAB_CLOSE_SIDE).abs() < LAYOUT_SLACK,
+        "{bounds:?}"
+    );
+}
+
 #[test]
 fn tab_moves_between_a_tool_s_fields_as_wpf_moves_through_its_controls() {
     let dir = tempfile::tempdir().expect("dir");
