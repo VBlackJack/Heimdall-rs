@@ -111,6 +111,14 @@ const OFFSET_SCALE: f32 = 1000.0;
 const LIST_PORTION: u16 = 3;
 const DETAILS_PORTION: u16 = 2;
 
+/// The share of the page the runbooks panel takes under the list, and the height it never
+/// passes, as the C# `CmdLibRunbooksMaxHeight` (`CommandLibraryView.xaml:43`).
+const RUNBOOKS_MAX_HEIGHT: f32 = 420.0;
+
+/// The height the list of commands keeps whatever is docked under it, as the C#
+/// `CmdLibActionListMinHeight` (`CommandLibraryView.xaml:33`).
+const LIST_MIN_HEIGHT: f32 = 128.0;
+
 /// The longest item of the category, tag, platform and level drop-downs, in characters, over
 /// English, French and Spanish ("Toutes les catégories", "Todas las etiquetas", "Toutes les
 /// plateformes", "Todos los niveles"): each drop-down is as wide as its longest item, so that
@@ -1814,75 +1822,61 @@ impl CommandLibraryPane {
 
     /// The tool's page: the platforms and the search, the terminal commands go to, the
     /// editor when open, then the user's commands and the catalog.
-    pub fn view<'a>(&'a self, tab: TabId, state: &ToolPane) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, tab: TabId, state: &'a ToolPane) -> Element<'a, Message> {
         let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
         let search = text_input(&fl!("ui-tool-cmdlib-search-placeholder"), &self.search)
             .size(font_size::BODY)
             .padding(super::INPUT_PADDING)
             .style(styles::text_input)
             .on_input(move |typed| send(CommandLibraryMessage::Search(typed)));
-        let new = button(text(fl!("ui-tool-cmdlib-new")).size(font_size::BODY))
-            .padding(super::COPY_PADDING)
-            .style(styles::primary)
-            .on_press_maybe(
+        // The C# header's icon buttons: Add, Export, Import, Sync, then the Runbooks and History
+        // toggles (`CommandLibraryView.xaml:89-195`), each named by its tooltip.
+        let tools = row![
+            icon_button(
+                Icon::Add,
+                fl!("ui-tool-cmdlib-new"),
+                IconState::Plain,
+                // The editor is the form of one command at a time, as the C# dialog.
                 (self.can_edit() && self.editor.is_none())
                     .then(|| send(CommandLibraryMessage::New)),
-            );
-        // The button is another kind of widget while the editor is open, so its pressed or
-        // hovered state is dropped with the editor instead of coming back highlighted when
-        // the form closes.
-        let new: Element<'a, Message> = if self.editor.is_some() {
-            container(new).into()
-        } else {
-            new.into()
-        };
-        let plain = |label: String, on: bool, message: Option<CommandLibraryMessage>| {
-            button(text(label).size(font_size::BODY))
-                .padding(super::COPY_PADDING)
-                .style(if on {
-                    styles::primary
-                } else {
-                    styles::secondary
-                })
-                .on_press_maybe(message.map(send))
-        };
-        let tools = row![
-            new,
-            plain(
-                fl!("ui-tool-cmdlib-import"),
-                false,
-                self.can_edit().then_some(CommandLibraryMessage::Import)
             ),
-            plain(
+            icon_button(
+                Icon::Export,
                 fl!("ui-tool-cmdlib-export"),
-                self.export_choice,
-                Some(CommandLibraryMessage::Export)
+                IconState::Toggle(self.export_choice),
+                Some(send(CommandLibraryMessage::Export)),
             ),
-            plain(
+            icon_button(
+                Icon::Import,
+                fl!("ui-tool-cmdlib-import"),
+                IconState::Plain,
+                self.can_edit().then(|| send(CommandLibraryMessage::Import)),
+            ),
+            icon_button(
+                Icon::Sync,
                 fl!("ui-tool-cmdlib-sync"),
-                self.sync.is_open(),
-                Some(CommandLibraryMessage::Sync(SyncMessage::Toggle))
+                IconState::Toggle(self.sync.is_open()),
+                Some(send(CommandLibraryMessage::Sync(SyncMessage::Toggle))),
             ),
-            plain(
-                fl!("ui-tool-cmdlib-favorites-only"),
-                self.favorites_only,
-                Some(CommandLibraryMessage::FavoritesOnly)
-            ),
-            plain(
-                fl!("ui-tool-cmdlib-history"),
-                self.history_open,
-                Some(CommandLibraryMessage::ToggleHistory)
-            ),
-            plain(
+            icon_button(
+                Icon::Runbooks,
                 fl!("ui-tool-cmdlib-runbooks"),
-                self.runbooks.is_open(),
-                Some(CommandLibraryMessage::Runbooks(RunbookMessage::Toggle))
+                IconState::Toggle(self.runbooks.is_open()),
+                Some(send(CommandLibraryMessage::Runbooks(
+                    RunbookMessage::Toggle
+                ))),
+            ),
+            icon_button(
+                Icon::History,
+                fl!("ui-tool-cmdlib-history"),
+                IconState::Toggle(self.history_open),
+                Some(send(CommandLibraryMessage::ToggleHistory)),
             ),
         ]
-        .spacing(spacing::SM);
-        // The runbooks have the whole view, as the C#: a panel squeezed in above the list of
-        // commands left room for a few lines of it.
-        if self.runbooks.is_open() {
+        .spacing(spacing::XS);
+        // The runbooks panel is docked under the list, as the C#. Only the editor, which is
+        // still a form and not yet a dialog, has the whole view.
+        if self.runbooks.is_open() && self.runbooks.is_editing() {
             let mut page = column![tools].spacing(spacing::SM);
             if self.export_choice {
                 page = page.push(export_choice_view(tab));
@@ -1894,14 +1888,7 @@ impl CommandLibraryPane {
                 page = page.push(notice_view(notice));
             }
             page = page.push(self.target_row(tab));
-            let run_target = self.run_target();
-            let warning = self.run_warning();
-            let can_send = if self.runbooks.is_bound() {
-                matches!(run_target, RunTarget::Ready(_))
-            } else {
-                self.effective_target().is_some()
-            };
-            let panel = self.runbooks.view(tab, &self.library, can_send, warning);
+            let panel = self.runbooks_panel(tab);
             return super::tool_body(
                 page.push(
                     scrollable(panel.unwrap_or_else(|| column![].into())).height(Length::Fill),
@@ -1944,6 +1931,47 @@ impl CommandLibraryPane {
         if let Some(row) = self.broadcast_row(tab) {
             page = page.push(row);
         }
+        // The list, the details and the runbooks panel share what the page has left, sized
+        // from it as the C# `RemainingHeightConverter` does (`CommandLibraryView.xaml:970`).
+        let body = iced::widget::responsive(move |size| self.list_body(tab, state, size.height));
+        super::tool_body(page.push(body))
+    }
+
+    /// The list of commands, the details of the one opened and the runbooks panel docked under
+    /// them, in `height`: the panel is as tall as its content up to [`RUNBOOKS_MAX_HEIGHT`] and
+    /// never takes what the list needs ([`LIST_MIN_HEIGHT`]), and the list and the details
+    /// share the rest, so a tall window leaves no blank strip. While a runbook runs, its
+    /// panel has the whole body, the list and the details put away: a run needs about 270 px
+    /// for its title, steps and Send, Insert, Copy and Skip buttons, which the page does not
+    /// have under the list on an 800 by 600 window (measured: the Send row fell 10 px below
+    /// the window with the list cut to 40 px). A run is a mode of the panel, and the list is
+    /// one press of Stop away.
+    fn list_body<'a>(
+        &'a self,
+        tab: TabId,
+        state: &'a ToolPane,
+        height: f32,
+    ) -> Element<'a, Message> {
+        let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
+        let shown = self.shown();
+        let mine = self.shown_user();
+        let count = shown.len() + mine.len();
+        if self.runbooks.is_running()
+            && let Some(panel) = self.runbooks_panel(tab)
+        {
+            return styles::scroll(panel).height(Length::Fill).into();
+        }
+        let details = self.details(tab, state);
+        let reserve = if details.is_some() {
+            LIST_MIN_HEIGHT * f32::from(LIST_PORTION + DETAILS_PORTION) / f32::from(LIST_PORTION)
+        } else {
+            LIST_MIN_HEIGHT
+        };
+        let dock: Option<Element<'a, Message>> = self.runbooks_panel(tab).map(|panel| {
+            container(styles::scroll(panel))
+                .max_height((height - reserve).clamp(0.0, RUNBOOKS_MAX_HEIGHT))
+                .into()
+        });
         let mut cards: Column<'a, Message> = Column::new().spacing(spacing::MD);
         if self.history_open {
             cards = cards.push(self.history_view(tab, state));
@@ -1952,7 +1980,12 @@ impl CommandLibraryPane {
             cards = cards.push(editor_view(tab, editor));
         }
         if count == 0 && self.editor.is_none() && !self.history_open {
-            return super::tool_body(page.push(super::empty_state(fl!("ui-tool-cmdlib-empty"))));
+            let mut page: Column<'a, Message> =
+                column![super::empty_state(fl!("ui-tool-cmdlib-empty"))];
+            if let Some(dock) = dock {
+                page = page.push(dock);
+            }
+            return page.into();
         }
         let language = language();
         let mut list: Column<'a, Message> = Column::new();
@@ -1989,15 +2022,31 @@ impl CommandLibraryPane {
             list = list.push(show_more(remaining, send(CommandLibraryMessage::ShowMore)));
         }
         cards = cards.push(list);
-        let mut page = page.push(
+        let mut page: Column<'a, Message> = column![
             styles::scroll(cards)
                 .id(list_id(tab))
-                .height(Length::FillPortion(LIST_PORTION)),
-        );
-        if let Some(details) = self.details(tab, state) {
+                .height(Length::FillPortion(LIST_PORTION))
+        ];
+        if let Some(details) = details {
             page = page.push(details);
         }
-        super::tool_body(page)
+        if let Some(dock) = dock {
+            page = page.push(dock);
+        }
+        page.into()
+    }
+
+    /// The runbooks panel as it is shown in the page's flow, or only an element to put under
+    /// the list; `None` while it is closed.
+    fn runbooks_panel<'a>(&'a self, tab: TabId) -> Option<Element<'a, Message>> {
+        let run_target = self.run_target();
+        let warning = self.run_warning();
+        let can_send = if self.runbooks.is_bound() {
+            matches!(run_target, RunTarget::Ready(_))
+        } else {
+            self.effective_target().is_some()
+        };
+        self.runbooks.view(tab, &self.library, can_send, warning)
     }
 
     /// The filters under the search, as the C# wrap panel: how many commands of how many are
@@ -2059,6 +2108,17 @@ impl CommandLibraryPane {
             ))
             .size(font_size::CAPTION)
             .style(text::secondary),
+            // The favorites filter is the C# star beside the count (`xaml:282-299`).
+            icon_button(
+                if self.favorites_only {
+                    Icon::FavoriteStarFill
+                } else {
+                    Icon::FavoriteStar
+                },
+                fl!("ui-tool-cmdlib-favorites-only"),
+                IconState::Toggle(self.favorites_only),
+                Some(send(CommandLibraryMessage::FavoritesOnly)),
+            ),
             filter_list(
                 category_choices,
                 &self.category,
@@ -2418,13 +2478,14 @@ impl CommandLibraryPane {
                 styles::secondary
             })
             .on_press(send(CommandLibraryMessage::ToggleFavorite(command.clone()))),
-            button(text(fl!("ui-tool-cmdlib-duplicate")).size(font_size::BODY))
-                .padding(super::COPY_PADDING)
-                .style(styles::secondary)
-                .on_press_maybe(
-                    (self.can_edit() && self.editor.is_none())
-                        .then(|| send(CommandLibraryMessage::Duplicate(command.clone())))
-                ),
+            // The C# details bar's Duplicate icon (`CommandLibraryView.xaml:591-599`).
+            icon_button(
+                Icon::Copy,
+                fl!("ui-tool-cmdlib-duplicate"),
+                IconState::Plain,
+                (self.can_edit() && self.editor.is_none())
+                    .then(|| send(CommandLibraryMessage::Duplicate(command.clone()))),
+            ),
             button(text(fl!("ui-tool-cmdlib-broadcast")).size(font_size::BODY))
                 .padding(super::COPY_PADDING)
                 .style(styles::secondary)
@@ -2681,19 +2742,24 @@ impl CommandLibraryPane {
             .into()
         } else {
             row![
-                button(text(fl!("ui-tool-cmdlib-edit")).size(font_size::BODY))
-                    .padding(super::COPY_PADDING)
-                    .style(styles::secondary)
-                    .on_press_maybe(
-                        (self.editor.is_none())
-                            .then(|| send(CommandLibraryMessage::Edit(command.id.clone())))
-                    ),
-                button(text(fl!("ui-tool-cmdlib-delete")).size(font_size::BODY))
-                    .padding(super::COPY_PADDING)
-                    .style(styles::secondary)
-                    .on_press(send(CommandLibraryMessage::AskDelete(command.id.clone()))),
+                // The C# details bar's Edit and Delete icons (`xaml:578-609`).
+                icon_button(
+                    Icon::Edit,
+                    fl!("ui-tool-cmdlib-edit"),
+                    IconState::Plain,
+                    self.editor
+                        .is_none()
+                        .then(|| send(CommandLibraryMessage::Edit(command.id.clone()))),
+                ),
+                icon_button(
+                    Icon::Trash,
+                    fl!("ui-tool-cmdlib-delete"),
+                    IconState::Plain,
+                    Some(send(CommandLibraryMessage::AskDelete(command.id.clone()))),
+                ),
             ]
-            .spacing(spacing::SM)
+            .spacing(spacing::XS)
+            .align_y(iced::Alignment::Center)
             .into()
         };
         self.command_card(
@@ -2785,6 +2851,39 @@ fn filter_list<'a, T: Clone + PartialEq + 'a>(
     .text_size(font_size::BODY)
     .style(styles::pick_list)
     .menu_style(styles::menu)
+    .into()
+}
+
+/// What an icon button says about its own state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum IconState {
+    /// An action: quiet until the pointer is on it.
+    Plain,
+    /// A switch, outlined while it is on, as the C# `CmdLibOnOffButtonStyle`.
+    Toggle(bool),
+}
+
+/// An icon button, as the C# toolbar's square ghost buttons: the glyph alone, named by its
+/// tooltip (the C# `ToolTip` and `AutomationProperties.Name` are the one string). `message`
+/// is `None` when the action is not available.
+pub(super) fn icon_button<'a>(
+    icon: Icon,
+    label: String,
+    state: IconState,
+    message: Option<Message>,
+) -> Element<'a, Message> {
+    let button = icons::button(icon).on_press_maybe(message);
+    let button = match state {
+        IconState::Plain => button.style(styles::subtle),
+        IconState::Toggle(on) => button.style(styles::toggle(on)),
+    };
+    styles::tip(
+        button,
+        text(label).size(font_size::CAPTION),
+        iced::widget::tooltip::Position::Bottom,
+    )
+    .padding(styles::TOOLTIP_PADDING)
+    .style(styles::tooltip)
     .into()
 }
 

@@ -116,6 +116,7 @@ pub use certgen_tool::{
     CertCopy, CertGenMessage, CertSave, Generated as GeneratedCertificates, KeySizeChoice,
 };
 pub use chmod_tool::ChmodMessage;
+pub use command_library_runbooks::RunbookMessage;
 pub use command_library_tool::CommandLibraryMessage;
 pub use context::{inherited_context, inherited_host, session_message, tab_title, titled};
 pub use cron_job_tool::CronJobMessage;

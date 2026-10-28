@@ -611,3 +611,85 @@ fn an_import_whose_save_fails_after_a_good_load_changes_nothing() {
     );
     assert_eq!(pane.failure, Some(Failure::Unsaved));
 }
+
+#[test]
+fn the_list_selects_a_runbook_which_the_header_buttons_act_on() {
+    let folder = tempfile::tempdir().expect("folder");
+    let mut pane = pane_in(folder.path());
+    keep_literal(&mut pane, "First", "uptime");
+    keep_literal(&mut pane, "Second", "df -h");
+    // A kept runbook is the selected one, as the C# list after a dialog's OK.
+    let second = pane.selected.clone().expect("the runbook just kept");
+    assert_eq!(
+        pane.selected_runbook().map(|each| each.name.as_str()),
+        Some("Second")
+    );
+
+    let first = pane
+        .store
+        .runbooks()
+        .iter()
+        .find(|each| each.name == "First")
+        .map(|each| each.public_id.clone())
+        .expect("the first runbook");
+    assert_ne!(first, second);
+    send(&mut pane, RunbookMessage::Select(first.clone()));
+    assert_eq!(pane.selected.as_deref(), Some(first.as_str()));
+
+    // An identity the file does not hold selects nothing.
+    send(&mut pane, RunbookMessage::Select("unknown".to_owned()));
+    assert_eq!(pane.selected.as_deref(), Some(first.as_str()));
+
+    // A question about deleting follows the selection: another row ends it.
+    send(&mut pane, RunbookMessage::AskDelete(first.clone()));
+    assert_eq!(pane.deleting.as_deref(), Some(first.as_str()));
+    send(&mut pane, RunbookMessage::Select(second.clone()));
+    assert_eq!(pane.deleting, None);
+
+    // Deleting the selected runbook leaves none selected.
+    send(&mut pane, RunbookMessage::ConfirmDelete(second));
+    assert_eq!(pane.selected, None);
+    assert!(pane.selected_runbook().is_none());
+    assert_eq!(pane.store.runbooks().len(), 1);
+}
+
+#[test]
+fn only_the_editor_takes_the_whole_page() {
+    let folder = tempfile::tempdir().expect("folder");
+    let mut pane = pane_in(folder.path());
+    send(&mut pane, RunbookMessage::Toggle);
+    assert!(pane.is_open() && !pane.is_editing());
+    send(&mut pane, RunbookMessage::New);
+    assert!(pane.is_editing());
+    send(&mut pane, RunbookMessage::Cancel);
+    assert!(pane.is_open() && !pane.is_editing());
+}
+
+#[test]
+fn a_duplicate_is_the_selected_runbook_once_it_is_written() {
+    let folder = tempfile::tempdir().expect("folder");
+    let mut pane = pane_in(folder.path());
+    keep_literal(&mut pane, "Original", "uptime");
+    let original = pane.selected.clone().expect("selected");
+    send(&mut pane, RunbookMessage::Duplicate(original.clone()));
+    let copy = pane.selected.clone().expect("the copy is selected");
+    assert_ne!(copy, original);
+    assert_eq!(
+        pane.selected_runbook().map(|each| each.name.as_str()),
+        Some("Original (copy)")
+    );
+}
+
+#[test]
+fn a_delete_that_could_not_be_made_keeps_the_selection() {
+    let folder = tempfile::tempdir().expect("folder");
+    let mut pane = pane_in(folder.path());
+    keep_literal(&mut pane, "R", "uptime");
+    let id = pane.selected.clone().expect("selected");
+    // The file cannot be read now, so nothing can be deleted or written.
+    std::fs::remove_file(folder.path().join(RUNBOOKS_FILE)).expect("removed");
+    std::fs::create_dir(folder.path().join(RUNBOOKS_FILE)).expect("a folder");
+    send(&mut pane, RunbookMessage::ConfirmDelete(id.clone()));
+    assert_eq!(pane.selected.as_deref(), Some(id.as_str()));
+    assert_eq!(pane.store.runbooks().len(), 1);
+}
