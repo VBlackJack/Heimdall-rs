@@ -241,6 +241,62 @@ fn an_empty_required_value_is_still_an_error() {
     }
 }
 
+/// An optional parameter introduced by `flag`, as `ad-set-user-properties` declares them.
+fn flagged(name: &str, flag: &str) -> UserParameter {
+    let mut parameter = parameter(name, false);
+    parameter.flag = Some(flag.to_owned());
+    parameter
+}
+
+/// The pattern of the shipped `ad-set-user-properties`, cut to two optional parameters.
+const SET_USER: &str = "Set-ADUser -Identity {username} -Department {department} -Title {title}";
+
+fn set_user_parameters() -> Vec<UserParameter> {
+    vec![
+        parameter("username", true),
+        flagged("department", "-Department"),
+        flagged("title", "-Title"),
+    ]
+}
+
+#[test]
+fn an_empty_optional_value_takes_its_declared_flag_along() {
+    assert_eq!(
+        render(
+            WINDOWS,
+            SET_USER,
+            set_user_parameters(),
+            &[("username", "jdoe")]
+        )
+        .as_deref(),
+        Ok("Set-ADUser -Identity jdoe")
+    );
+    // Not declared, the token before the placeholder is a switch of its own and stays.
+    assert_eq!(
+        render_one(LINUX, "du -sh {path}", parameter("path", false), "").as_deref(),
+        Ok("du -sh")
+    );
+    // A declared flag that is not the whole token before the placeholder stays as written.
+    assert_eq!(
+        render_one(LINUX, "run x-Title {title}", flagged("title", "-Title"), "").as_deref(),
+        Ok("run x-Title")
+    );
+}
+
+#[test]
+fn a_flag_stays_with_the_value_it_introduces() {
+    assert_eq!(
+        render(
+            WINDOWS,
+            SET_USER,
+            set_user_parameters(),
+            &[("username", "jdoe"), ("title", "Engineer")]
+        )
+        .as_deref(),
+        Ok("Set-ADUser -Identity jdoe -Title Engineer")
+    );
+}
+
 #[test]
 fn an_empty_optional_value_takes_its_default_before_being_left_out() {
     let mut level = parameter("level", false);

@@ -1041,8 +1041,9 @@ impl CommandLibraryPane {
         }
         let draft = match command {
             CommandRef::User(id) => self.library.get(id).map(|each| {
+                let each = command_library::localize_user(each, &language());
                 Draft::copy_of(
-                    each,
+                    &each,
                     fl!(
                         "ui-tool-cmdlib-duplicate-title",
                         title = each.title.as_str()
@@ -1350,10 +1351,10 @@ impl CommandLibraryPane {
         match command {
             CommandRef::Catalog(id) => catalogue_entry(id)
                 .and_then(|entry| self.render(command, &entry.localized(&language())).ok()),
-            CommandRef::User(id) => self
-                .library
-                .get(id)
-                .and_then(|each| self.render(command, each).ok()),
+            CommandRef::User(id) => self.library.get(id).and_then(|each| {
+                self.render(command, &command_library::localize_user(each, &language()))
+                    .ok()
+            }),
         }
     }
 
@@ -1391,8 +1392,8 @@ impl CommandLibraryPane {
                 )
             }
             CommandRef::User(id) => {
-                let each = self.library.get(id)?;
-                let template = each.template(self.template_shown(command, each)?)?;
+                let each = command_library::localize_user(self.library.get(id)?, &language());
+                let template = each.template(self.template_shown(command, &each)?)?;
                 (
                     each.title.clone(),
                     template.command_pattern.clone(),
@@ -1806,6 +1807,7 @@ impl CommandLibraryPane {
 
     /// The commands of the user the platform and the search keep.
     fn shown_user(&self) -> Vec<&UserCommand> {
+        let language = language();
         self.library
             .commands()
             .iter()
@@ -1815,7 +1817,13 @@ impl CommandLibraryPane {
             .filter(|command| command_library::on_platform(command.platform, self.platform))
             .filter(|command| self.keeps(command))
             .filter(|command| {
-                command_library::matches_query(command, &command.category, &self.search)
+                // The text shown in the window's language, and the English as for the
+                // catalogue.
+                command_library::matches_query(
+                    &command_library::localize_user(command, &language),
+                    &command.category,
+                    &self.search,
+                ) || command_library::matches_query(command, &command.category, &self.search)
             })
             .collect()
     }
@@ -1995,8 +2003,9 @@ impl CommandLibraryPane {
                 CATALOG_PAGE_SIZE.saturating_mul(self.more_mine_pages.saturating_add(1));
             let remaining_mine = mine.len().saturating_sub(visible_mine);
             for command in mine.into_iter().take(visible_mine) {
+                let command = command_library::localize_user(command, &language);
                 list =
-                    list.push(self.list_row(tab, &CommandRef::User(command.id.clone()), command));
+                    list.push(self.list_row(tab, &CommandRef::User(command.id.clone()), &command));
             }
             if remaining_mine > 0 {
                 list = list.push(show_more(
@@ -2719,6 +2728,7 @@ impl CommandLibraryPane {
         command: &'a UserCommand,
     ) -> Element<'a, Message> {
         let send = move |message| Message::Tool(tab, ToolMessage::CmdLib(message));
+        let command = command_library::localize_user(command, &language());
         let manage: Element<'a, Message> = if self.deleting.as_deref() == Some(&command.id) {
             row![
                 text(fl!(
@@ -2766,7 +2776,7 @@ impl CommandLibraryPane {
             tab,
             state,
             &CommandRef::User(command.id.clone()),
-            command,
+            &command,
             command.category.clone(),
             None,
             Some(manage),

@@ -31,6 +31,7 @@
         "label": "Department",
         "type": "string",
         "defaultValue": "",
+        "flag": "-Department",
         "required": false,
         "description": "Department of the user"
       },
@@ -39,6 +40,7 @@
         "label": "Title",
         "type": "string",
         "defaultValue": "",
+        "flag": "-Title",
         "required": false,
         "description": "Title or position of the user"
       },
@@ -47,6 +49,7 @@
         "label": "Phone",
         "type": "string",
         "defaultValue": "",
+        "flag": "-OfficePhone",
         "required": false,
         "description": "Phone number"
       },
@@ -55,6 +58,7 @@
         "label": "Email",
         "type": "string",
         "defaultValue": "",
+        "flag": "-EmailAddress",
         "required": false,
         "description": "Email address"
       }
@@ -130,6 +134,10 @@
         "Set-ADUser -Identity jdupont -Department \"IT\" -Title \"System Administrator\" -OfficePhone \"+33 1 23 45 67 89\" -EmailAddress \"jdupont@contoso.com\" -PassThru": "Force la commande à retourner l'objet modifié/créé dans le pipeline. Par défaut, les cmdlets Set-/New- ne retournent rien. -PassThru active le retour pour permettre des opérations en chaîne ou des vérifications immédiates.",
         "Set-ADUser -Identity jdupont -Department \"IT\" -Title \"System Administrator\" -OfficePhone \"+33 1 23 45 67 89\" -EmailAddress \"jdupont@contoso.com\" -Verbose": "Affiche des informations détaillées sur l'exécution de la commande. -Verbose active les messages de débogage pour comprendre précisément ce qui se passe. Essentiel pour le troubleshooting et la compréhension des opérations internes."
       }
+    },
+    "es": {
+      "title": "Cambiar las propiedades de un usuario de AD",
+      "description": "Cambia las propiedades de un usuario de AD (departamento, cargo, teléfono y más)."
     }
   }
 }

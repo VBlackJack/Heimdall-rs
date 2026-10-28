@@ -268,7 +268,9 @@ fn shown_action_in<'l>(
     if let Some(entry) = command_library::shipped().get(id) {
         return Some(entry.localized(language));
     }
-    library.get(id).map(Cow::Borrowed)
+    library
+        .get(id)
+        .map(|command| command_library::localize_user(command, language))
 }
 
 /// The fields of a step: one per declared parameter, holding what the step stores or else
@@ -1057,13 +1059,11 @@ fn matches<'a>(library: &'a UserLibrary, query: &str) -> Vec<(String, String)> {
         return Vec::new();
     }
     let language = language();
-    let mine = library
-        .commands()
-        .iter()
-        .filter(|command| {
-            command_library::matches_query(command, &category_name(&command.category), query)
-        })
-        .map(|command| (command.id.clone(), command.title.clone()));
+    let mine = library.commands().iter().filter_map(|command| {
+        let shown = command_library::localize_user(command, &language);
+        command_library::matches_query(&shown, &category_name(&shown.category), query)
+            .then(|| (shown.id.clone(), shown.title.clone()))
+    });
     let shipped = command_library::shipped()
         .entries()
         .iter()

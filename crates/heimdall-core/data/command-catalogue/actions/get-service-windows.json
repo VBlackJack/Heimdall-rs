@@ -24,6 +24,7 @@
         "label": "Service name",
         "type": "string",
         "defaultValue": "",
+        "flag": "-Name",
         "required": false,
         "description": "Service name (e.g. -Name 'wuauserv') or leave empty"
       },
@@ -89,6 +90,10 @@
         "Get-Service -Name 'wuauserv'": "Service Windows Update",
         "Get-Service | Where-Object {$_.StartType -eq 'Automatic' -and $_.Status -ne 'Running'}": "Services automatiques arrêtés (problème potentiel)"
       }
+    },
+    "es": {
+      "title": "Listar los servicios de Windows",
+      "description": "Muestra todos los servicios de Windows con su estado (Running, Stopped, etc.)."
     }
   }
 }

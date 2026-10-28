@@ -20,9 +20,12 @@
 //! copied from, so a later sync is a copy of the files).
 //!
 //! An entry is a [`UserCommand`] (the C# `Action`, same JSON) plus its `translations`: the
-//! English is the pivot text of the file, the French sits under `translations.fr`, and any
-//! other language (Spanish) shows the pivot, as `ActionLocalizer.cs` does. A category is a
-//! stable key (`active-directory`), its label written by the window in its language.
+//! English is the pivot text of the file, the French sits under `translations.fr` and the
+//! Spanish under `translations.es` (titles and descriptions only in the shipped catalogue). A
+//! part a language has no text for, and every part of a language with no block, shows the
+//! pivot, as `ActionLocalizer.cs` does. A user's command that carries `translations` (an
+//! imported pack) is shown the same way ([`localize_user`]). A category is a stable key
+//! (`active-directory`), its label written by the window in its language.
 //!
 //! Nothing here runs a command. A file the user hands over (the library's Import) is
 //! untrusted: [`validate_import`] holds it to the same checks as the shipped entries and
@@ -51,6 +54,9 @@ pub const PIVOT_LANGUAGE: &str = "en";
 
 /// The length of a language code in a file: `fr`, `FR` and `fr-FR` are one language.
 const LANGUAGE_CODE_LENGTH: usize = 2;
+
+/// The field of an action that holds its text in each language.
+const TRANSLATIONS_FIELD: &str = "translations";
 
 /// The categories the catalogue uses, as the C# `CommandCategories`, in the order they are
 /// listed.
@@ -180,7 +186,7 @@ impl CatalogueEntry {
         let mut value: Value = serde_json::from_str(text).ok()?;
         let object = value.as_object_mut()?;
         let mut translations = BTreeMap::new();
-        let raw_translations = object.remove("translations");
+        let raw_translations = object.remove(TRANSLATIONS_FIELD);
         if let Some(Value::Object(languages)) = raw_translations.clone() {
             for (language, each) in languages {
                 let translation: Translation = serde_json::from_value(each).ok()?;
@@ -202,7 +208,7 @@ impl CatalogueEntry {
         let mut value = serde_json::to_value(&self.command).unwrap_or_default();
         if let (Some(object), Some(translations)) = (value.as_object_mut(), &self.raw_translations)
         {
-            object.insert("translations".to_owned(), translations.clone());
+            object.insert(TRANSLATIONS_FIELD.to_owned(), translations.clone());
         }
         value
     }
@@ -221,11 +227,7 @@ impl CatalogueEntry {
     /// The translation into `language`; `None` for the pivot and for a language the entry
     /// has no text in.
     fn translation(&self, language: &str) -> Option<&Translation> {
-        let language = normalize_language(language);
-        if language.is_empty() || language == PIVOT_LANGUAGE {
-            return None;
-        }
-        self.translations.get(&language)
+        self.translations.get(&translated_language(language)?)
     }
 
     /// The action in `language`: the translated text where the entry has some and the pivot
@@ -233,35 +235,10 @@ impl CatalogueEntry {
     /// translation to apply.
     #[must_use]
     pub fn localized(&self, language: &str) -> Cow<'_, UserCommand> {
-        let Some(translation) = self.translation(language) else {
-            return Cow::Borrowed(&self.command);
-        };
-        let mut copy = self.command.clone();
-        copy.title = pick(translation.title.as_ref(), &copy.title);
-        copy.description = pick(translation.description.as_ref(), &copy.description);
-        for (template, texts) in [
-            (
-                copy.windows_command_template.as_mut(),
-                &translation.parameters.windows,
-            ),
-            (
-                copy.linux_command_template.as_mut(),
-                &translation.parameters.linux,
-            ),
-        ] {
-            let Some(template) = template else {
-                continue;
-            };
-            for parameter in &mut template.parameters {
-                if let Some(text) = texts.get(&parameter.name) {
-                    parameter.label = pick(text.label.as_ref(), &parameter.label);
-                    if let Some(description) = text.description.as_ref().filter(|d| !d.is_empty()) {
-                        parameter.description = Some(description.clone());
-                    }
-                }
-            }
+        match self.translation(language) {
+            Some(translation) => Cow::Owned(translated(&self.command, translation)),
+            None => Cow::Borrowed(&self.command),
         }
-        Cow::Owned(copy)
     }
 
     /// The notes in `language`, the pivot's when there are none translated.
@@ -273,6 +250,65 @@ impl CatalogueEntry {
             .and_then(|translation| translation.notes.as_deref())
             .filter(|notes| !notes.trim().is_empty());
         translated.or(pivot).map(str::to_owned)
+    }
+}
+
+/// The language `language` names when it is not the pivot: `None` for the pivot and for no
+/// language, whose text is the file's own.
+fn translated_language(language: &str) -> Option<String> {
+    let language = normalize_language(language);
+    (!language.is_empty() && language != PIVOT_LANGUAGE).then_some(language)
+}
+
+/// `command` with the texts of `translation`: each part it says something for, the pivot's
+/// everywhere else, as the C# `ActionLocalizer.Localize`.
+fn translated(command: &UserCommand, translation: &Translation) -> UserCommand {
+    let mut copy = command.clone();
+    copy.title = pick(translation.title.as_ref(), &copy.title);
+    copy.description = pick(translation.description.as_ref(), &copy.description);
+    for (template, texts) in [
+        (
+            copy.windows_command_template.as_mut(),
+            &translation.parameters.windows,
+        ),
+        (
+            copy.linux_command_template.as_mut(),
+            &translation.parameters.linux,
+        ),
+    ] {
+        let Some(template) = template else {
+            continue;
+        };
+        for parameter in &mut template.parameters {
+            if let Some(text) = texts.get(&parameter.name) {
+                parameter.label = pick(text.label.as_ref(), &parameter.label);
+                if let Some(description) = text.description.as_ref().filter(|d| !d.is_empty()) {
+                    parameter.description = Some(description.clone());
+                }
+            }
+        }
+    }
+    copy
+}
+
+/// A user's command in `language`, as the C# `CommandLibraryViewModel` shows every action
+/// through `ActionLocalizer`: the `translations` an imported action carries (the debloat pack's
+/// French and Spanish) give its text, with the same rules as the shipped catalogue; borrowed
+/// when it has none for that language, or none that reads.
+#[must_use]
+pub fn localize_user<'c>(command: &'c UserCommand, language: &str) -> Cow<'c, UserCommand> {
+    let found = translated_language(language).and_then(|language| {
+        let Some(Value::Object(languages)) = command.extra.get(TRANSLATIONS_FIELD) else {
+            return None;
+        };
+        languages
+            .iter()
+            .find(|(each, _)| normalize_language(each) == language)
+            .and_then(|(_, text)| Translation::deserialize(text).ok())
+    });
+    match found {
+        Some(translation) => Cow::Owned(translated(command, &translation)),
+        None => Cow::Borrowed(command),
     }
 }
 
