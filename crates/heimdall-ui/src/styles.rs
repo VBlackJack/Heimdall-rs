@@ -709,19 +709,16 @@ pub fn sidebar_tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonSty
 }
 
 /// A section on the Settings rail, as the C# `SettingsRailTabItemStyle`: its text secondary
-/// until `selected` or under the pointer, then the text's own colour; the rail sits straight
-/// on the window's background, so the open section is lit by the card's colour and the one
-/// under the pointer by the highlight. The accent's bar at its left is its caller's.
+/// until `selected` or under the pointer, then the text's own colour; the open section and the
+/// one under the pointer are both a pill on the highlight, as the C# rail's `IsSelected` and
+/// `IsMouseOver` triggers (`CommonControls.xaml:1531-1538`). The accent's bar at its left is
+/// its caller's.
 pub fn rail_item(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
     move |theme, status| {
         let brushes = Brushes::of(theme);
         let hovered = matches!(status, ButtonStatus::Hovered | ButtonStatus::Pressed);
         ButtonStyle {
-            background: if hovered {
-                Some(Background::Color(brushes.highlight))
-            } else {
-                selected.then_some(Background::Color(brushes.card))
-            },
+            background: (hovered || selected).then_some(Background::Color(brushes.highlight)),
             text_color: if selected || hovered {
                 brushes.text
             } else {
@@ -1905,6 +1902,29 @@ mod tests {
                 menu(&theme).selected_background,
                 Background::Color(colors.selection),
                 "{each:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_open_rail_section_is_a_pill_on_the_selection_as_the_csharp_rail() {
+        for each in AppTheme::ALL {
+            let theme = themes::theme(each, Accent::Default);
+            let selection = Some(Background::Color(themes::selection_of(&theme)));
+            assert_eq!(
+                rail_item(true)(&theme, ButtonStatus::Active).background,
+                selection,
+                "{each:?}: the open section"
+            );
+            assert_eq!(
+                rail_item(false)(&theme, ButtonStatus::Hovered).background,
+                selection,
+                "{each:?}: a section under the pointer"
+            );
+            assert_eq!(
+                rail_item(false)(&theme, ButtonStatus::Active).background,
+                None,
+                "{each:?}: the others lie on the window"
             );
         }
     }

@@ -396,6 +396,8 @@ pub enum SettingRow {
     CollapseTunnelsPanel,
     /// The properties panel docked under the tree, shared with the tree's filter menu.
     ShowPropertiesPanel,
+    /// The gateway badge on the tree's session rows, shared with the tree's filter menu.
+    ShowGatewayBadge,
     /// The computer kept from sleeping while a session is open.
     PreventSleep,
     /// Most sessions open at once.
@@ -550,7 +552,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 80] = [
+    pub const ALL: [Self; 81] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -558,6 +560,7 @@ impl SettingRow {
         Self::PreventSleep,
         Self::MaxSessions,
         Self::ShowPropertiesPanel,
+        Self::ShowGatewayBadge,
         Self::UpdateChecks,
         Self::UpdateInterval,
         Self::UpdateVersion,
@@ -641,7 +644,7 @@ impl SettingRow {
             Self::CollapseTunnelsPanel | Self::PreventSleep | Self::MaxSessions => {
                 SettingsCard::Behavior
             }
-            Self::ShowPropertiesPanel => SettingsCard::SessionTree,
+            Self::ShowPropertiesPanel | Self::ShowGatewayBadge => SettingsCard::SessionTree,
             Self::UpdateChecks
             | Self::UpdateInterval
             | Self::UpdateVersion
@@ -932,6 +935,7 @@ impl SettingRow {
         Some(match self {
             Self::CollapseTunnelsPanel => settings.collapse_tunnels_panel,
             Self::ShowPropertiesPanel => settings.show_properties_panel,
+            Self::ShowGatewayBadge => settings.show_gateway_badge,
             Self::PreventSleep => settings.prevent_sleep,
             Self::UpdateChecks => settings.updates.enabled,
             Self::Reachability => settings.reachability.enabled,
@@ -980,6 +984,7 @@ impl SettingRow {
         Some(match self {
             Self::CollapseTunnelsPanel => SettingsMessage::CollapseTunnelsPanel(on),
             Self::ShowPropertiesPanel => SettingsMessage::ShowPropertiesPanel(on),
+            Self::ShowGatewayBadge => SettingsMessage::ShowGatewayBadge(on),
             Self::PreventSleep => SettingsMessage::PreventSleep(on),
             Self::UpdateChecks => SettingsMessage::UpdateChecks(on),
             Self::Reachability => SettingsMessage::Reachability(on),

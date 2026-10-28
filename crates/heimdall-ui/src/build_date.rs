@@ -21,6 +21,24 @@
 /// The variable the build script sets to the build's day, read by the About page.
 pub const BUILD_DATE_VARIABLE: &str = "HEIMDALL_BUILD_DATE";
 
+/// The variable the build script sets to the abbreviated hash of the commit built, read by
+/// the About page.
+pub const COMMIT_VARIABLE: &str = "HEIMDALL_COMMIT";
+
+/// The fewest and most characters of an abbreviated hash git writes (`core.abbrev` allows 4
+/// to 40; a SHA-256 repository writes up to 64).
+const COMMIT_HASH_LENGTHS: std::ops::RangeInclusive<usize> = 4..=64;
+
+/// Whether `text` is a commit hash as git writes one: lower-case hexadecimal digits only,
+/// so that nothing else git may print is shown as a version.
+#[must_use]
+pub fn is_commit_hash(text: &str) -> bool {
+    COMMIT_HASH_LENGTHS.contains(&text.len())
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 /// Seconds in a day: the instants are UTC, with no leap second, as Unix time counts them.
 const SECONDS_PER_DAY: i64 = 86_400;
 
@@ -84,7 +102,7 @@ pub fn civil_date(seconds: i64) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::civil_date;
+    use super::{civil_date, is_commit_hash};
 
     #[test]
     fn instants_are_written_as_their_utc_day() {
@@ -100,5 +118,21 @@ mod tests {
         assert_eq!(civil_date(1_735_689_600).as_deref(), Some("2025-01-01"));
         assert_eq!(civil_date(1_791_331_200).as_deref(), Some("2026-10-07"));
         assert_eq!(civil_date(-1), None, "before 1970");
+    }
+
+    #[test]
+    fn only_a_run_of_lower_case_hex_digits_is_a_commit_hash() {
+        assert!(is_commit_hash("bbcc0b1"));
+        assert!(is_commit_hash("2268c718"));
+        for refused in [
+            "",
+            "abc",
+            "BBCC0B1",
+            "bbcc0b1\n",
+            "fatal: not a git",
+            "bbcc0g1",
+        ] {
+            assert!(!is_commit_hash(refused), "{refused:?}");
+        }
     }
 }
