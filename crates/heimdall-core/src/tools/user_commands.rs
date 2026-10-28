@@ -1311,6 +1311,9 @@ pub struct ParameterDraft {
     /// How the value is put in the command; not edited, but kept through a rename, an edit and
     /// a copy of the command.
     pub quoting: Option<Quoting>,
+    /// The flag that introduces the value ([`UserParameter::flag`]); not edited, but kept as
+    /// `quoting` is, as the C# `ParameterEntryVm.Flag`.
+    pub flag: Option<String>,
 }
 
 impl Default for ParameterDraft {
@@ -1324,6 +1327,7 @@ impl Default for ParameterDraft {
             description: String::new(),
             allowed_values: String::new(),
             quoting: None,
+            flag: None,
         }
     }
 }
@@ -1349,6 +1353,7 @@ impl ParameterDraft {
                 .map(|values| values.join(", "))
                 .unwrap_or_default(),
             quoting: parameter.quoting,
+            flag: parameter.flag.clone(),
         }
     }
 
@@ -1389,6 +1394,7 @@ impl ParameterDraft {
             description: some(&self.description),
             allowed_values: (!allowed.is_empty()).then_some(allowed),
             quoting: self.quoting,
+            flag: self.flag.clone(),
         }
     }
 
