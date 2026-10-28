@@ -39,6 +39,14 @@ const SOURCE_DATE_EPOCH: &str = "SOURCE_DATE_EPOCH";
 /// The file holding the versions every package of the workspace is built with.
 const LOCK_FILE: &str = "Cargo.lock";
 
+/// The variable that, set when building, names the commit instead of git: for a build from
+/// a source archive, where there is no repository to ask. It is the page's own variable.
+const COMMIT_OVERRIDE: &str = build_date::COMMIT_VARIABLE;
+
+/// How many digits of the commit's hash are shown: fixed, so that git's own abbreviation
+/// (which grows with the repository) never changes what the page says.
+const COMMIT_ABBREVIATION: usize = 7;
+
 /// The files of the git folder written when the commit checked out changes.
 const HEAD_FILES: [&str; 2] = ["HEAD", "logs/HEAD"];
 
@@ -47,10 +55,16 @@ fn main() {
     println!("cargo::rerun-if-changed=src/build_date.rs");
     println!("cargo::rerun-if-changed=src/component_versions.rs");
     println!("cargo::rerun-if-env-changed={SOURCE_DATE_EPOCH}");
+    println!("cargo::rerun-if-env-changed={COMMIT_OVERRIDE}");
+    // Once, whichever of the date and the commit asks git.
+    watch_head();
     let seconds = std::env::var(SOURCE_DATE_EPOCH)
         .ok()
         .and_then(|value| value.trim().parse::<i64>().ok())
         .or_else(commit_time);
+    if let Some(commit) = commit_override().or_else(short_commit) {
+        println!("cargo::rustc-env={}={commit}", build_date::COMMIT_VARIABLE);
+    }
     if let Some(date) = seconds.and_then(build_date::civil_date) {
         println!(
             "cargo::rustc-env={}={date}",
@@ -86,9 +100,9 @@ fn lock_file() -> Option<PathBuf> {
         .find(|lock| lock.is_file())
 }
 
-/// The time of the commit checked out, in seconds since 1970; `None` without git or
-/// outside a repository. The build runs again when that commit changes.
-fn commit_time() -> Option<i64> {
+/// Asks cargo to run the build again when the commit checked out changes; nothing without
+/// git or outside a repository.
+fn watch_head() -> Option<()> {
     let git_dir = PathBuf::from(git(&["rev-parse", "--absolute-git-dir"])?);
     for file in HEAD_FILES {
         let path = git_dir.join(file);
@@ -96,7 +110,34 @@ fn commit_time() -> Option<i64> {
             println!("cargo::rerun-if-changed={}", path.display());
         }
     }
+    Some(())
+}
+
+/// The time of the commit checked out, in seconds since 1970; `None` without git or
+/// outside a repository.
+fn commit_time() -> Option<i64> {
     git(&["log", "-1", "--format=%ct"])?.parse().ok()
+}
+
+/// The commit the environment names, shortened to [`COMMIT_ABBREVIATION`] digits; `None`
+/// when it is not set or is not a hash.
+fn commit_override() -> Option<String> {
+    let named = std::env::var(COMMIT_OVERRIDE).ok()?;
+    let named = named.trim();
+    build_date::is_commit_hash(named).then(|| named.chars().take(COMMIT_ABBREVIATION).collect())
+}
+
+/// The first [`COMMIT_ABBREVIATION`] digits of the hash of the commit checked out, as the C#
+/// version carries its commit after a plus sign; `None` without git, outside a repository,
+/// or when git answers something that is not a hash.
+fn short_commit() -> Option<String> {
+    git(&[
+        "rev-parse",
+        &format!("--short={COMMIT_ABBREVIATION}"),
+        "HEAD",
+    ])
+    .filter(|hash| build_date::is_commit_hash(hash))
+    .map(|hash| hash.chars().take(COMMIT_ABBREVIATION).collect())
 }
 
 /// What git says to `arguments`, run in this package's folder; `None` when it fails.

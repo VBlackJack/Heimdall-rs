@@ -119,6 +119,16 @@ const RAIL_GROUP_PADDING: iced::Padding = iced::Padding {
 /// the names keep the whole of [`RAIL_WIDTH`].
 const RAIL_ITEM_INDENT: f32 = 10.0;
 
+/// Width of the rail with its names, its indent and its padding: what the section's page
+/// leaves of the window once the rail is taken.
+const RAIL_TOTAL_WIDTH: f32 =
+    RAIL_WIDTH + RAIL_ITEM_INDENT + RAIL_PADDING.left + RAIL_PADDING.right;
+
+/// Narrowest inner width of the Appearance card that lays its three lists in columns: a
+/// list, its "Modified" marker and its "Reset" in the longest language each need about 180,
+/// and the two gaps between the columns.
+const APPEARANCE_COLUMNS_MIN_WIDTH: f32 = 3.0 * 180.0 + 2.0 * spacing::LG;
+
 /// Room around the rail: the page's own above and below, the page's edge at its left, and the
 /// C# rail border's 8 at its right.
 const RAIL_PADDING: iced::Padding = iced::Padding {
@@ -224,6 +234,23 @@ where
         .into()
 }
 
+/// [`choices`] as wide as its column: the C# Appearance card's three lists each fill a third
+/// of the card.
+fn wide_choices<'a, T>(
+    options: Vec<T>,
+    selected: Option<T>,
+    on_select: impl Fn(T) -> Message + 'a,
+) -> Element<'a, Message>
+where
+    T: ToString + PartialEq + Clone + 'a,
+{
+    pick_list(options, selected, on_select)
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
+        .width(Length::Fill)
+        .into()
+}
+
 /// `label` above `control`, as the C# Settings tab lays out its lists and fields: a
 /// caption in the secondary text.
 fn labelled<'a>(label: String, control: impl Into<Element<'a, Message>>) -> Column<'a, Message> {
@@ -283,7 +310,7 @@ fn applies_glyph<'a>(applies: Applies) -> Element<'a, Message> {
 }
 
 /// What the glyph means, once, at the foot of the rail, under a line that says every setting
-/// applies as it is changed.
+/// applies as it is changed. The sessions' wording is in each row's tooltip.
 fn apply_legend<'a>() -> Element<'a, Message> {
     container(
         column![
@@ -522,6 +549,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::Accent => fl!("ui-settings-accent"),
         SettingRow::CollapseTunnelsPanel => fl!("ui-settings-collapse-tunnels-panel"),
         SettingRow::ShowPropertiesPanel => fl!("ui-settings-show-properties-panel"),
+        SettingRow::ShowGatewayBadge => fl!("ui-settings-show-gateway-badge"),
         SettingRow::PreventSleep => fl!("ui-settings-prevent-sleep"),
         SettingRow::MaxSessions => fl!("ui-settings-max-sessions"),
         SettingRow::UpdateChecks => fl!("ui-settings-updates-enabled"),
@@ -592,6 +620,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
     Some(match row {
         SettingRow::CollapseTunnelsPanel => fl!("ui-settings-collapse-tunnels-panel-hint"),
         SettingRow::ShowPropertiesPanel => fl!("ui-settings-show-properties-panel-hint"),
+        SettingRow::ShowGatewayBadge => fl!("ui-settings-show-gateway-badge-hint"),
         SettingRow::PreventSleep => fl!("ui-settings-prevent-sleep-hint"),
         SettingRow::Reachability => fl!("ui-settings-reachability-hint"),
         SettingRow::Onboarding => fl!("ui-settings-onboarding-hint"),
@@ -1171,8 +1200,12 @@ impl Shell {
         if let Some(description) = card_description(card) {
             body = body.push(text(description).size(font_size::CAPTION));
         }
-        for &row in rows {
-            body = body.push(self.setting_row(row));
+        if card == SettingsCard::Appearance {
+            body = body.push(self.appearance_body(rows));
+        } else {
+            for &row in rows {
+                body = body.push(self.setting_row(row));
+            }
         }
         if matches!(card, SettingsCard::SshTrusted | SettingsCard::RdpTrusted)
             && let Some(unreadable) = crate::trusted_keys_view::unreadable(self.app.trusted_keys())
@@ -1199,6 +1232,43 @@ impl Shell {
         } else {
             shown.into()
         }
+    }
+
+    /// The rows of the Appearance card: its language, theme and accent side by side in
+    /// columns of equal width, as the C# card's grid, when the card is wide enough for the
+    /// longest "Modified" marker and its "Reset" in each; stacked otherwise, and when a search
+    /// leaves a single row of the card.
+    fn appearance_body(&self, rows: &[SettingRow]) -> Element<'_, Message> {
+        if rows.len() > 1 && self.appearance_columns_fit() {
+            iced::widget::Row::with_children(rows.iter().map(|&row| {
+                container(self.setting_row(row))
+                    .width(Length::FillPortion(1))
+                    .into()
+            }))
+            .spacing(spacing::LG)
+            .into()
+        } else {
+            Column::with_children(rows.iter().map(|&row| self.setting_row(row)))
+                .spacing(spacing::SM)
+                .into()
+        }
+    }
+
+    /// Whether the card's inner width, from the window's width less the sidebar, the rail and
+    /// the paddings, reaches [`APPEARANCE_COLUMNS_MIN_WIDTH`]; true while the window's size
+    /// is not known yet.
+    fn appearance_columns_fit(&self) -> bool {
+        let Some(window) = self.window_size else {
+            return true;
+        };
+        let sidebar = if self.sidebar_hidden {
+            0.0
+        } else {
+            self.sidebar_width + BORDER_WIDTH
+        };
+        let page = (window.width - sidebar - RAIL_TOTAL_WIDTH - BORDER_WIDTH - 2.0 * spacing::LG)
+            .min(SETTINGS_WIDTH);
+        page - 2.0 * spacing::LG >= APPEARANCE_COLUMNS_MIN_WIDTH
     }
 
     /// `row`, with its "Modified" marker when its value is not the default, outlined when a
@@ -1574,7 +1644,7 @@ impl Shell {
         let line = match row {
             SettingRow::Language => labelled(
                 label,
-                choices(
+                wide_choices(
                     Language::ALL.map(LanguageChoice).to_vec(),
                     Some(LanguageChoice(
                         settings.language.unwrap_or_else(crate::i18n::current),
@@ -1584,7 +1654,7 @@ impl Shell {
             ),
             SettingRow::Theme => labelled(
                 label,
-                choices(
+                wide_choices(
                     AppTheme::ALL.map(ThemeChoice).to_vec(),
                     Some(ThemeChoice(settings.theme)),
                     |ThemeChoice(theme)| send(SettingsMessage::Theme(theme)),
@@ -1592,7 +1662,7 @@ impl Shell {
             ),
             SettingRow::Accent => labelled(
                 label,
-                choices(
+                wide_choices(
                     Accent::ALL.map(AccentChoice).to_vec(),
                     Some(AccentChoice(settings.accent)),
                     |AccentChoice(accent)| send(SettingsMessage::Accent(accent)),

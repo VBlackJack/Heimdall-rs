@@ -148,6 +148,9 @@ pub enum SettingsMessage {
     /// The properties panel docked under the tree, or not; the same choice as the tree
     /// filter menu's and Ctrl+Shift+B.
     ShowPropertiesPanel(bool),
+    /// The tree's rows show the gateway their profile goes through, or not; the same
+    /// choice as the tree filter menu's.
+    ShowGatewayBadge(bool),
     /// The application writes its diagnostics log, or not.
     DiagnosticsLog(bool),
     /// The background check of every server runs, or not.
@@ -673,6 +676,7 @@ impl App {
                 self.settings.rdp_redirection_indicators_expanded = *on;
             }
             SettingsMessage::ShowPropertiesPanel(on) => self.settings.show_properties_panel = *on,
+            SettingsMessage::ShowGatewayBadge(on) => self.settings.show_gateway_badge = *on,
             SettingsMessage::CollapseTunnelsPanel(collapse) => {
                 self.settings.collapse_tunnels_panel = *collapse;
             }

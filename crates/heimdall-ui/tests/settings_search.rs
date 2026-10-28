@@ -1097,11 +1097,11 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
     // The last rows added, the welcome tour's button, the RDP keep-alive interval, the
     // built-in client's compression, the properties panel's box, the SSH reconnect waits,
     // the RDP disconnect confirmation and redirection indicators, the terminal minimum contrast
-    // choice, hold no path; the external
+    // choice, and the gateway badge's box, hold no path; the external
     // tools' card holds the Browse buttons of the tool chosen, which its own tests cover, and
     // the MobaXterm variables' card holds none; the shared sources' card holds one per source,
     // which its own test covers; the Citrix store prefix is a name, not a path.
-    assert_eq!(SettingRow::ALL.len(), 80, "no row added");
+    assert_eq!(SettingRow::ALL.len(), 81, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(
@@ -1956,7 +1956,7 @@ fn section_name(section: SettingsSection, language: Language) -> &'static str {
         S::Appearance => ("Apparence", "Apariencia"),
         S::Behavior | S::RdpBehavior => ("Comportement", "Comportamiento"),
         S::Updates => ("Mises à jour", "Actualizaciones"),
-        S::Import => ("Import", "Importación"),
+        S::Import => ("Fichier et import", "Archivo e importación"),
         S::SharedSources => ("Sources partagées", "Orígenes compartidos"),
         S::Tools => ("Outils et intégrations", "Herramientas e integraciones"),
         S::Onboarding => ("Visite guidée", "Recorrido de bienvenida"),
@@ -2087,4 +2087,140 @@ fn the_search_finds_a_row_of_a_section_that_is_not_open() {
     assert!(!shows(&shell, "Require Credential Guard"));
     let _ = shell.update(Message::SettingsSearch("credential guard".to_owned()));
     assert!(shows(&shell, "Require Credential Guard"));
+}
+
+#[test]
+fn the_appearance_card_lays_its_three_lists_side_by_side_as_the_csharps_grid() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = shell(dir.path());
+    let mut ui = simulator(&shell);
+    // The caption of each list: the rail and the status bar say "Theme" or "Language" in
+    // no other place of the page's body, so the last text is the card's.
+    let language = common::last_bounds(&mut ui, "Language");
+    let theme = common::last_bounds(&mut ui, "Theme");
+    let accent = common::last_bounds(&mut ui, "Accent");
+    assert!(
+        (language.y - theme.y).abs() < 1.0 && (theme.y - accent.y).abs() < 1.0,
+        "one line: {language:?} {theme:?} {accent:?}"
+    );
+    assert!(
+        language.x < theme.x && theme.x < accent.x,
+        "language, theme, accent from the left: {language:?} {theme:?} {accent:?}"
+    );
+    // Three columns of the same width: the gaps between their left edges are equal.
+    let first = theme.x - language.x;
+    let second = accent.x - theme.x;
+    assert!((first - second).abs() < 1.0, "{first} against {second}");
+}
+
+#[test]
+fn the_gateway_badge_is_ticked_in_the_session_tree_card_and_is_the_filter_menus_setting() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    assert!(
+        shell.app().shows_gateway_badge(),
+        "shown, as the C# default"
+    );
+    assert_eq!(
+        SettingRow::ShowGatewayBadge.card(),
+        SettingsCard::SessionTree
+    );
+    assert_eq!(
+        shell.settings_found("gateway badge"),
+        [SettingRow::ShowGatewayBadge],
+        "found by its name"
+    );
+    let messages: Vec<Message> = {
+        let mut ui = simulator(&shell);
+        ui.click("Show gateway badge").expect("the box");
+        ui.into_messages().collect()
+    };
+    for message in messages {
+        let _ = shell.update(message);
+    }
+    assert!(!shell.app().shows_gateway_badge(), "off, as the menu's");
+    assert!(
+        SettingRow::ShowGatewayBadge.is_modified(shell.app().settings()),
+        "marked once off its default"
+    );
+    let _ = shell.update(Message::ResetSetting(SettingRow::ShowGatewayBadge));
+    assert!(shell.app().shows_gateway_badge(), "reset");
+}
+
+#[test]
+fn the_rail_names_the_files_section_as_the_csharp_does_and_its_legend_names_both_glyph_meanings() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = shell(dir.path());
+    let mut ui = simulator(&shell);
+    for said in [
+        "Settings file & import",
+        "Settings apply as you change them",
+        "Applies to connections opened after the change",
+    ] {
+        ui.find(said).expect(said);
+    }
+    assert!(ui.find("Import").is_err(), "no longer the bare word");
+}
+
+#[test]
+fn the_gateway_badge_box_says_it_is_also_in_the_tree_filter_menu() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = shell(dir.path());
+    let mut ui = simulator(&shell);
+    ui.find("Shows on each session row the gateway it goes through. Also in the tree filter menu.")
+        .expect("the hint");
+}
+
+#[test]
+fn the_appearance_card_stacks_its_lists_in_a_narrow_window_with_the_markers_in_spanish() {
+    let _english = english();
+    heimdall_ui::i18n::apply(Some(Language::Spanish));
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    change(&mut shell, SettingsMessage::Theme(AppTheme::Parchment));
+    change(&mut shell, SettingsMessage::Accent(Accent::Blue));
+    // The smallest window, the main sidebar open.
+    let narrow = Size::new(800.0, 600.0);
+    let _ = shell.update(Message::WindowResized(narrow));
+    let settings = IcedSettings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..IcedSettings::default()
+    };
+    let mut ui = common::simulator(settings, narrow, shell.view());
+    let language = common::last_bounds(&mut ui, "Idioma");
+    let theme = common::last_bounds(&mut ui, "Tema");
+    let accent = common::last_bounds(&mut ui, "Acento");
+    assert!(
+        language.y < theme.y && theme.y < accent.y,
+        "one under the other: {language:?} {theme:?} {accent:?}"
+    );
+    assert!(
+        (language.x - theme.x).abs() < 1.0 && (theme.x - accent.x).abs() < 1.0,
+        "one column: {language:?} {theme:?} {accent:?}"
+    );
+    // Neither marker leaves the window.
+    for marker in common::all_bounds(&mut ui, "Restablecer") {
+        assert!(marker.x + marker.width <= narrow.width, "{marker:?}");
+    }
+}
+
+#[test]
+fn a_search_leaving_one_row_of_the_appearance_card_shows_it_alone_not_in_columns() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(Message::SettingsSearch("accent".to_owned()));
+    assert_eq!(shell.settings_found("accent"), [SettingRow::Accent]);
+    let mut ui = simulator(&shell);
+    let accent = common::last_bounds(&mut ui, "Accent");
+    // The rail names "Appearance" too: the card's heading is the last.
+    let card = common::last_bounds(&mut ui, "Appearance");
+    assert!(
+        (accent.x - card.x).abs() < 1.0,
+        "under the heading at the card's left edge, not in a third column: {accent:?} {card:?}"
+    );
 }
