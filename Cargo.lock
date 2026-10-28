@@ -8341,6 +8341,7 @@ version = "2026.101701.0"
 dependencies = [
  "heimdall-i18n",
  "serde_json",
+ "tempfile",
  "toml 1.1.6+spec-1.1.0",
 ]
 
