@@ -564,6 +564,30 @@ fn the_labels_of_a_step_are_those_of_the_language_not_the_catalogue_pivot() {
 }
 
 #[test]
+fn an_imported_action_shows_the_translation_it_carries_in_the_language() {
+    let mut library = UserLibrary::default();
+    library
+        .import(
+            r#"{"id":"imported","title":"Restart a service","category":"System","platform":1,
+                "linuxCommandTemplate":{"platform":1,"commandPattern":"systemctl restart {service}",
+                    "parameters":[{"name":"service","label":"Service name","type":"string",
+                        "required":true}]},
+                "translations":{"fr":{"title":"Redémarrer un service",
+                    "parameters":{"linux":{"service":{"label":"Nom du service"}}}}}}"#,
+        )
+        .expect("imported");
+    let id = library.commands()[0].id.clone();
+    let shown = |language: &str| shown_action_in(&library, &id, language).expect("kept");
+    assert_eq!(shown("fr").title, "Redémarrer un service");
+    assert_eq!(
+        fields_of(Some(&shown("fr")), &BTreeMap::new())[0].label,
+        "Nom du service"
+    );
+    // A language the action has no text for shows its own.
+    assert_eq!(shown("es").title, "Restart a service");
+}
+
+#[test]
 fn an_import_whose_save_fails_after_a_good_load_changes_nothing() {
     use heimdall_core::tools::library_transfer;
 

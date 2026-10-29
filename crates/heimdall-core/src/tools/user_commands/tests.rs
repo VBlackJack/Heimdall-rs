@@ -454,6 +454,16 @@ fn row(name: &str) -> ParameterDraft {
 }
 
 #[test]
+fn a_parameter_row_keeps_the_flag_it_does_not_edit() {
+    let mut parameter = UserParameter::new("title");
+    parameter.flag = Some("-Title".to_owned());
+    let edited = ParameterDraft::of(&parameter);
+    assert_eq!(edited.flag.as_deref(), Some("-Title"));
+    assert_eq!(edited.to_parameter().flag.as_deref(), Some("-Title"));
+    assert_eq!(row("port").to_parameter().flag, None);
+}
+
+#[test]
 fn a_parameter_table_is_the_whole_truth_as_in_the_csharp() {
     let mut library = UserLibrary::default();
     let mut port = row(" port ");

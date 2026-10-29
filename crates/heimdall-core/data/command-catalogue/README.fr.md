@@ -4,8 +4,9 @@
 
 `actions/*.json` est le catalogue de la bibliothèque de commandes, copié **tel quel** depuis le
 Heimdall C# (`data/seed/actions/*.json`, 527 fichiers). Chaque fichier est une action au format
-JSON `Action` du C# ; le texte anglais est le pivot et `translations.fr` porte le français.
-L'espagnol affiche l'anglais, comme le `ActionLocalizer` du C#. Les catégories sont des clés
+JSON `Action` du C# ; le texte anglais est le pivot, `translations.fr` porte le français et
+`translations.es` l'espagnol. Une partie qu'une langue ne traduit pas (l'espagnol ne porte que
+les titres et les descriptions) affiche le texte anglais, comme le `ActionLocalizer` du C#. Les catégories sont des clés
 stables (`active-directory`), leurs libellés sont écrits par la fenêtre dans sa langue.
 
 Les fichiers sont intégrés à la compilation (`build.rs` les liste, `src/tools/command_library.rs`
@@ -18,10 +19,10 @@ envoyée après la question posée à l'utilisateur.
 | Quoi | Valeur |
 |---|---|
 | Dépôt | Heimdall C# (`G:\_Projects\Heimdall`, `VBlackJack/Heimdall`) |
-| Commit | `6a400691b8cfe8588e0dd59a2146c8a6d1132c22` (`release: v2026.102201`) |
+| Commit | `edb753df5da6508418d9da5bcdbc71ac87a5f90f` (master au 2026-10-28 : la base de v2026.102702 plus les textes espagnols et les correctifs suivants) |
 | Dossier | `data/seed/actions` |
 | Fichiers | 527 |
-| Pas encore copié | `data/packs/windows-workstation-debloat.json` (un changement ultérieur) |
+| Copié aussi | `data/packs/windows-workstation-debloat.json`, même commit, dans `data/packs` à la racine de l'espace de travail (un import facultatif, hors de ce catalogue) |
 
 ## Synchroniser avec le catalogue C#
 
@@ -36,3 +37,5 @@ Une synchronisation est une copie de fichiers, sans liste Rust à modifier :
    Les modèles que le générateur Rust refuse volontairement sont listés dans le test
    (`KNOWN_REFUSALS`) : un nouveau refus, ou un refus listé qui est accepté depuis, fait
    échouer le test.
+5. Lancer `cargo xtask catalogue-diff <dépôt C#>` : il liste chaque fichier qui diffère encore
+   des actions du C#, pack de nettoyage compris, et échoue s'il y en a un.
