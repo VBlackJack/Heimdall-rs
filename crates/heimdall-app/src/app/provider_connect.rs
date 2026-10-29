@@ -242,7 +242,10 @@ impl App {
                     .unwrap_or_default();
                 log::warn!("the credential provider gave no password for {name}: {failure:?}");
                 self.tell(match failure {
-                    ProviderFailure::Launch(detail) => Notice::ProviderFailed(detail),
+                    ProviderFailure::Launch { program, reason } => {
+                        Notice::ProviderFailed { program, reason }
+                    }
+                    ProviderFailure::CredentialStoreUnreadable => Notice::ProviderStoreUnreadable,
                     ProviderFailure::TimedOut { program, timeout } => Notice::ProviderTimedOut {
                         program,
                         milliseconds: crate::credential_provider::milliseconds(timeout),

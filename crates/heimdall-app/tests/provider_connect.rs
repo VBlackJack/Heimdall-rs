@@ -20,7 +20,7 @@
 
 use std::path::Path;
 
-use heimdall_app::credential_provider::{Provided, ProviderFailure};
+use heimdall_app::credential_provider::{LaunchReason, Provided, ProviderFailure};
 use heimdall_app::{
     Answer, App, AppConfig, AttemptId, ConnectionEvent, Effect, Message, Notice, ProviderAnswer,
     ProviderMessage, ProviderRequest, QuestionId, QuestionKind, SystemCredentials, TabId,
@@ -206,8 +206,18 @@ fn nothing_given_the_user_is_asked_and_told_why() {
             Notice::ProviderNoPassword("Web server".to_owned()),
         ),
         (
-            ProviderFailure::Launch("not found".to_owned()),
-            Notice::ProviderFailed("not found".to_owned()),
+            ProviderFailure::Launch {
+                program: "op".to_owned(),
+                reason: LaunchReason::NotFound,
+            },
+            Notice::ProviderFailed {
+                program: "op".to_owned(),
+                reason: LaunchReason::NotFound,
+            },
+        ),
+        (
+            ProviderFailure::CredentialStoreUnreadable,
+            Notice::ProviderStoreUnreadable,
         ),
         (
             ProviderFailure::TimedOut {
@@ -537,8 +547,14 @@ async fn away_from_windows_the_credential_manager_says_it_is_not_there() {
     let (tab, attempt) = open(&mut app);
     let (question, request) = ask(&mut app, tab, attempt, password("a.lab", 1));
     let answered = request.expect("asked").run().await;
-    assert!(matches!(answered.result, Err(ProviderFailure::Launch(_))));
+    assert!(matches!(
+        answered.result,
+        Err(ProviderFailure::CredentialStoreUnreadable)
+    ));
     app.update(Message::CredentialProvided(Box::new(answered)));
     assert!(shown(&app, tab, question), "the user is asked");
-    assert!(matches!(app.notice(), Some(Notice::ProviderFailed(_))));
+    assert!(matches!(
+        app.notice(),
+        Some(Notice::ProviderStoreUnreadable)
+    ));
 }

@@ -18,12 +18,14 @@
 //! and its quick setup presets, the unlock secret, the database, the key file and the Test
 //! button.
 
-use heimdall_app::credential_provider::{ProviderFailure, ProviderTest, milliseconds};
+use heimdall_app::credential_provider::{
+    LaunchReason, ProviderFailure, ProviderTest, milliseconds,
+};
 use heimdall_app::{App, Message as AppMessage, ProviderMessage};
 use std::time::Duration;
 
 use heimdall_core::credential_provider::{
-    MAX_TIMEOUT, MIN_TIMEOUT, PRESETS, ProviderKind, TemplateProblem,
+    MAX_TIMEOUT, MIN_TIMEOUT, PRESETS, ProviderKind, TemplateProblem, preset_index_of,
 };
 use iced::widget::{Column, button, checkbox, column, container, pick_list, radio, row, text};
 use iced::{Alignment, Element, Length};
@@ -39,6 +41,12 @@ const LABEL_WIDTH: f32 = 200.0;
 
 fn provider(message: ProviderMessage) -> Message {
     Message::App(AppMessage::CredentialProvider(message))
+}
+
+/// The preset the selector shows for `command`: the one whose command it is, or none (the
+/// "Custom" placeholder) when it is blank or was edited by hand, as in C#.
+fn selected_preset(command: &str) -> Option<Preset> {
+    preset_index_of(command).map(Preset)
 }
 
 /// A command's time limit in the list, in seconds.
@@ -151,7 +159,7 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
     card = card
         .push(field(
             fl!("ui-settings-provider-preset"),
-            pick_list(presets, None::<Preset>, |preset| {
+            pick_list(presets, selected_preset(&settings.command), |preset| {
                 provider(ProviderMessage::Preset(preset.0))
             })
             .style(styles::pick_list)
@@ -370,6 +378,25 @@ pub fn test_text(outcome: &ProviderTest) -> String {
     }
 }
 
+/// Why a program could not be started, in the user's language: its file name and the reason,
+/// never the OS error text.
+#[must_use]
+pub fn launch_reason_text(program: &str, reason: LaunchReason) -> String {
+    match reason {
+        LaunchReason::NotFound => fl!("ui-provider-launch-not-found", program = program),
+        LaunchReason::PermissionDenied => {
+            fl!("ui-provider-launch-permission-denied", program = program)
+        }
+        LaunchReason::Other => fl!("ui-provider-launch-other", program = program),
+    }
+}
+
+/// The Windows Credential Manager could not be read, in the user's language.
+#[must_use]
+pub fn credential_store_unreadable_text() -> String {
+    fl!("ui-provider-store-unreadable")
+}
+
 /// What a command that could not run is said to have done.
 fn failure_text(failure: &ProviderFailure) -> String {
     match failure {
@@ -397,9 +424,14 @@ fn failure_text(failure: &ProviderFailure) -> String {
             )
         }
         ProviderFailure::OutputTooLong => fl!("ui-settings-provider-test-output-too-long"),
-        ProviderFailure::Launch(detail) => {
-            fl!("ui-settings-provider-test-error", detail = detail.as_str())
-        }
+        ProviderFailure::Launch { program, reason } => fl!(
+            "ui-settings-provider-test-error",
+            detail = launch_reason_text(program, *reason)
+        ),
+        ProviderFailure::CredentialStoreUnreadable => fl!(
+            "ui-settings-provider-test-error",
+            detail = credential_store_unreadable_text()
+        ),
         // The test sorts these into "no result" with the entry looked up; one that comes here
         // has no entry to name, which is the C# no-entry case.
         ProviderFailure::Exit(_) | ProviderFailure::Empty => {
@@ -410,5 +442,23 @@ fn failure_text(failure: &ProviderFailure) -> String {
             program = program.as_str(),
             milliseconds = milliseconds(*timeout)
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_selector_shows_the_preset_picked_and_custom_once_the_command_is_edited() {
+        // Blank: Custom.
+        assert_eq!(selected_preset(""), None);
+        for (index, preset) in PRESETS.iter().enumerate() {
+            let shown = selected_preset(preset.command).expect("a preset");
+            assert_eq!(shown, Preset(index));
+            assert_eq!(shown.to_string(), preset.name);
+            // Edited by hand: back to Custom.
+            assert_eq!(selected_preset(&format!("{} --more", preset.command)), None);
+        }
     }
 }

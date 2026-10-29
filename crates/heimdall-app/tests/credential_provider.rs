@@ -104,6 +104,13 @@ fn a_preset_writes_its_command() {
         send(&mut app, ProviderMessage::Preset(index));
         let provider = saved(dir.path()).credential_provider;
         assert_eq!(provider.command, preset.command, "{}", preset.name);
+        // The selector finds the preset again from the command alone.
+        assert_eq!(
+            heimdall_core::credential_provider::preset_index_of(&provider.command),
+            Some(index),
+            "{}",
+            preset.name
+        );
         assert_eq!(
             provider.first_line_only, preset.first_line_only,
             "{}: first line only",
