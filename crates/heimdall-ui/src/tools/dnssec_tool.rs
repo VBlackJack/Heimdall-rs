@@ -32,10 +32,12 @@
 )]
 
 use heimdall_app::TabId;
+use heimdall_core::tools::dns_lookup;
 use heimdall_core::tools::dns_security::{
     self, DEFAULT_DKIM_SELECTORS, DnsCheckFinding, DnsCheckResult, DnsCheckStatus,
     DnsSecurityReport, DnsSummaryStatus,
 };
+use heimdall_core::tools::system_program::{self, ProgramError};
 use iced::futures::SinkExt;
 use iced::widget::{column, container, progress_bar, row, text, text_input};
 use iced::{Alignment, Background, Border, Element, Length, Task, Theme};
@@ -554,69 +556,41 @@ fn format_report_text(report: &DnsSecurityReport) -> String {
 /// matching the C# `DnsSecurityService.CommandTimeout`.
 const DNS_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
-/// Interval between child-exit polls while waiting for `nslookup`.
-const DNS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
-
 /// Why a DNS query could not produce output.
 enum DnsQueryError {
-    /// The `nslookup` binary was not found (e.g. Linux without bind-utils).
+    /// The `nslookup` binary was not found where the system keeps it (e.g. Linux without
+    /// bind-utils).
     NotFound,
     /// Any other spawn or wait failure.
     Other,
 }
 
-/// Executes `nslookup -type=<record_type> <query_target>` silently, with a timeout and no
-/// shell, and returns its raw output. Arguments are passed as separate items (never through
-/// a shell) and the target is validated by the caller, so no option or shell injection is
-/// possible. Returns [`DnsQueryError::NotFound`] when `nslookup` is absent.
+/// Executes `nslookup -type=<record_type> <query_target>` through the shared system program
+/// runner: the system's own `nslookup` by its full path (never one on the `PATH` or in the
+/// current folder), no window, no shell, within a time limit; and returns its raw output.
+/// Arguments are passed as separate items and the target is validated by the caller, so no
+/// option or shell injection is possible. Returns [`DnsQueryError::NotFound`] when the
+/// system has no `nslookup`; a query out of time gives no output, as an empty answer.
 fn query_dns(record_type: &str, query_target: &str) -> Result<String, DnsQueryError> {
-    use std::io::ErrorKind;
-    use std::process::{Command, Stdio};
-    use std::time::Instant;
-
-    let mut cmd = Command::new("nslookup");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt as _;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd.arg(format!("-type={record_type}"))
-        .arg(query_target)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Err(DnsQueryError::NotFound),
-        Err(_) => return Err(DnsQueryError::Other),
-    };
-
-    let deadline = Instant::now() + DNS_QUERY_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Ok(String::new());
-                }
-                std::thread::sleep(DNS_POLL_INTERVAL);
-            }
-            Err(_) => return Err(DnsQueryError::Other),
+    let program = dns_lookup::nslookup_program()
+        .filter(|program| program.is_file())
+        .ok_or(DnsQueryError::NotFound)?;
+    let mut command = std::process::Command::new(program);
+    command
+        .arg(format!("-type={record_type}"))
+        .arg(query_target);
+    match system_program::run(command, DNS_QUERY_TIMEOUT) {
+        Ok(finished) => {
+            let stdout = system_program::decode_text(&finished.stdout);
+            Ok(if stdout.trim().is_empty() {
+                system_program::decode_text(&finished.stderr)
+            } else {
+                stdout
+            })
         }
+        Err(ProgramError::TimedOut) => Ok(String::new()),
+        Err(_) => Err(DnsQueryError::Other),
     }
-
-    let output = child.wait_with_output().map_err(|_| DnsQueryError::Other)?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Ok(if stdout.trim().is_empty() {
-        stderr.to_string()
-    } else {
-        stdout.to_string()
-    })
 }
 
 /// Runs one `nslookup` query on a blocking thread. A task-join failure is reported as
