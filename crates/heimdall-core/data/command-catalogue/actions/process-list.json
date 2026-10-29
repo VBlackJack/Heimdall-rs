@@ -22,6 +22,7 @@
         "label": "Number of processes",
         "type": "int",
         "defaultValue": "20",
+        "flag": "-First",
         "required": false,
         "description": "Number of processes to show"
       }
@@ -39,6 +40,7 @@
         "label": "Number of processes",
         "type": "int",
         "defaultValue": "20",
+        "flag": "-n",
         "required": false,
         "description": "Number of processes to show"
       }
@@ -130,6 +132,10 @@
         "ps auxf": "Afficher l'arborescence des processus",
         "ps aux --sort=-%cpu | head": "Top CPU"
       }
+    },
+    "es": {
+      "title": "Listar los procesos en ejecución",
+      "description": "Muestra todos los procesos en ejecución."
     }
   }
 }
