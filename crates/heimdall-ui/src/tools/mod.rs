@@ -1070,7 +1070,8 @@ pub struct ToolPanes {
     panes: HashMap<TabId, ToolPane>,
     /// Tool tabs made whose opening work, as the C# view's `Initialize`, is still to start.
     opening: Vec<TabId>,
-    /// What the tool tabs just made were told of their context left to run.
+    /// What the tool tabs just made were told of their context left to run, and what the
+    /// tabs just closed left to finish.
     prefilled: Vec<Task<Message>>,
 }
 
@@ -1080,10 +1081,16 @@ impl ToolPanes {
     pub fn sync(&mut self, app: &App) {
         self.panes.retain(|id, state| {
             let open = app.tab(*id).and_then(heimdall_app::Tab::tool).is_some();
-            // A tab closing writes down what it keeps, as the C# views' `Unloaded`.
+            // A tab closing writes down what it keeps, as the C# views' `Unloaded`; a
+            // password still counting down to its clear is cleared now.
             if !open {
                 match &mut state.pane {
-                    Pane::Password(pane) => pane.closing(),
+                    Pane::Password(pane) => {
+                        if let Some(secret) = pane.closing() {
+                            self.prefilled
+                                .push(password_tool::clear_if_still_held(secret));
+                        }
+                    }
                     Pane::Notes(pane) => pane.closing(),
                     _ => {}
                 }
