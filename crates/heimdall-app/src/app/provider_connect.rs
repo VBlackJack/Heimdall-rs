@@ -108,6 +108,13 @@ fn provider_title(profile: &TabProfile) -> String {
 }
 
 impl App {
+    /// The attempt tab `id` is in, for a question to the provider to be dropped when the
+    /// attempt is given up while the tab stays open.
+    #[must_use]
+    pub fn tab_attempt(&self, id: TabId) -> Option<AttemptId> {
+        self.tab(id).map(|tab| tab.attempt)
+    }
+
     /// Whether opening profile `id` may ask the external credential provider for its
     /// server's password, for the properties panel to say so as the C# `BuildAuthSummary`
     /// adds "Credential provider" with the predicate its connect path uses: the provider on
@@ -240,6 +247,7 @@ impl App {
                         program,
                         milliseconds: crate::credential_provider::milliseconds(timeout),
                     },
+                    ProviderFailure::OutputTooLong => Notice::ProviderOutputTooLong(name),
                     ProviderFailure::Template(TemplateProblem::UnquotableValue(placeholder)) => {
                         Notice::ProviderUnquotableValue {
                             placeholder: placeholder.to_owned(),

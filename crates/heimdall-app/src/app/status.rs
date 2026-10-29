@@ -414,6 +414,8 @@ pub enum Notice {
     ProviderNoPassword(String),
     /// The external credential provider could not run, for this reason.
     ProviderFailed(String),
+    /// The external credential provider printed far more than a password, for this server.
+    ProviderOutputTooLong(String),
     /// The external credential provider took too long: the program's file name and the delay it
     /// was given, in milliseconds. Never its arguments, which may hold a token.
     ProviderTimedOut {

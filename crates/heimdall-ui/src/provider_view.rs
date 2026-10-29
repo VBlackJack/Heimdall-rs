@@ -396,6 +396,7 @@ fn failure_text(failure: &ProviderFailure) -> String {
                 placeholder = placeholder
             )
         }
+        ProviderFailure::OutputTooLong => fl!("ui-settings-provider-test-output-too-long"),
         ProviderFailure::Launch(detail) => {
             fl!("ui-settings-provider-test-error", detail = detail.as_str())
         }

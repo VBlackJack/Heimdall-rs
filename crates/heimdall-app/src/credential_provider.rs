@@ -57,18 +57,28 @@ const TASKKILL_PROGRAM: &str = "taskkill.exe";
 #[cfg(windows)]
 const TASKKILL_TREE_ARGS: [&str; 3] = ["/T", "/F", "/PID"];
 
-/// Elsewhere: where the program that signals a process group lives, the first that exists.
+/// Elsewhere: where the program that signals a process group lives, the first that exists
+/// (the last is NixOS's).
 #[cfg(unix)]
-const KILL_PROGRAMS: [&str; 2] = ["/bin/kill", "/usr/bin/kill"];
+const KILL_PROGRAMS: [&str; 3] = [
+    "/bin/kill",
+    "/usr/bin/kill",
+    "/run/current-system/sw/bin/kill",
+];
 /// `kill`'s arguments before the group: the signal that cannot be caught, then the end of the
 /// options, since the group is given as a negative number.
 #[cfg(unix)]
 const KILL_GROUP_ARGS: [&str; 3] = ["-s", "KILL", "--"];
 
-/// The most output of a command that is kept: a password is far shorter.
-const MAX_OUTPUT_BYTES: u64 = 64 * 1024;
-/// The room the output gets at first: the limit, and the probe `read_to_end` makes past it.
-const OUTPUT_CAPACITY: usize = 64 * 1024 + 1024;
+/// The most output of a command that is taken: a password is far shorter. More is an error,
+/// never a value cut short.
+const MAX_OUTPUT_BYTES: usize = 64 * 1024;
+/// The room the output gets at first: the limit, the byte that tells it is past, and the probe
+/// `read_to_end` makes after it. The vector never grows, so no earlier copy is left behind.
+const OUTPUT_CAPACITY: usize = MAX_OUTPUT_BYTES + 1 + 1024;
+/// How long a command dropped is waited for after its kill, and how often it is looked at.
+const REAP_POLL: Duration = Duration::from_millis(10);
+const REAP_TRIES: u32 = 300;
 
 /// One question to the vault at a time, in the order they were asked.
 static ONE_AT_A_TIME: Mutex<()> = Mutex::const_new(());
@@ -84,6 +94,9 @@ pub enum ProviderFailure {
     Exit(Option<i32>),
     /// It printed nothing.
     Empty,
+    /// It printed more than a password can be: not taken, since a value cut short would be a
+    /// wrong password.
+    OutputTooLong,
     /// It took longer than allowed and was stopped. Only the program's file name is kept, never
     /// its arguments: a template may hold a token there.
     TimedOut {
@@ -142,6 +155,10 @@ fn kill_tree(pid: u32) {
             .find(|path| std::path::Path::new(path).exists())
         else {
             // No `kill` to run: the direct child is still killed by the caller.
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            ONCE.call_once(|| {
+                log::debug!("no kill program found: only the command itself is stopped");
+            });
             return;
         };
         let mut command = std::process::Command::new(program);
@@ -156,25 +173,52 @@ fn kill_tree(pid: u32) {
         .status();
 }
 
-/// Ends a command's process tree when dropped while armed: the question was given up while the
-/// vault ran (the tab closed), or the command failed half way.
-struct TreeKill {
+/// A command started, with the process handle held until it is over: the tree is ended while
+/// the handle is open, so that no other process can have taken its number (Windows reuses them
+/// at once). Dropped while still held (the question was given up, the tab closed), it ends the
+/// tree and the command on a thread of its own, and only then releases the handle.
+struct Running {
+    child: Option<tokio::process::Child>,
     pid: Option<u32>,
 }
 
-impl TreeKill {
-    fn disarm(&mut self) {
+impl Running {
+    fn child(&mut self) -> &mut tokio::process::Child {
+        self.child.as_mut().expect("held until it is over")
+    }
+
+    /// The command is over and reaped: nothing is left to end.
+    fn finish(&mut self) {
+        self.child = None;
         self.pid = None;
     }
 }
 
-impl Drop for TreeKill {
+impl Drop for Running {
     fn drop(&mut self) {
-        if let Some(pid) = self.pid {
+        if let Some(child) = self.child.take() {
+            let pid = self.pid;
             // A thread of its own: a drop may run on the executor, which must not wait for a
-            // process to start and end. The command is dropped (and killed) at once after.
-            std::thread::spawn(move || kill_tree(pid));
+            // process to start and end.
+            std::thread::spawn(move || end_tree(child, pid));
         }
+    }
+}
+
+/// Ends `child` and its tree, with the handle held throughout, and waits for it to be reaped.
+fn end_tree(mut child: tokio::process::Child, pid: Option<u32>) {
+    // Windows: only a command still running is asked for by its number; elsewhere the group
+    // outlives its leader and is signalled whatever became of it.
+    let live = cfg!(not(windows)) || matches!(child.try_wait(), Ok(None));
+    if live && let Some(pid) = pid {
+        kill_tree(pid);
+    }
+    let _ = child.start_kill();
+    for _ in 0..REAP_TRIES {
+        if !matches!(child.try_wait(), Ok(None)) {
+            break;
+        }
+        std::thread::sleep(REAP_POLL);
     }
 }
 
@@ -205,15 +249,16 @@ async fn run(
     // Its own process group, so that the whole tree can be signalled at once.
     #[cfg(unix)]
     command.process_group(0);
-    let mut child = command
+    let child = command
         .spawn()
         .map_err(|error| ProviderFailure::Launch(error.to_string()))?;
-    // Declared after the child, so that it is dropped first: the tree goes before the child is
-    // reaped and its number can be taken by another process.
-    let mut tree = TreeKill { pid: child.id() };
-    let stdin = child.stdin.take();
-    let stdout = child.stdout.take();
-    let waiting = &mut child;
+    let mut running = Running {
+        pid: child.id(),
+        child: Some(child),
+    };
+    let stdin = running.child().stdin.take();
+    let stdout = running.child().stdout.take();
+    let waiting = running.child();
     let work = async move {
         if let (Some(mut stdin), Some(secret)) = (stdin, unlock) {
             let mut line = Zeroizing::new(secret.expose().as_bytes().to_vec());
@@ -224,46 +269,51 @@ async fn run(
         // Sized once and never grown: a vector that grows leaves its earlier copies behind,
         // freed but not zeroed, with the password in them.
         let mut output = Zeroizing::new(Vec::with_capacity(OUTPUT_CAPACITY));
+        let mut too_long = false;
         if let Some(mut stdout) = stdout {
             (&mut stdout)
-                .take(MAX_OUTPUT_BYTES)
+                .take(MAX_OUTPUT_BYTES as u64 + 1)
                 .read_to_end(&mut output)
                 .await
                 .map_err(|error| ProviderFailure::Launch(error.to_string()))?;
-            // What is past the limit is read and dropped, so that the command is not left
-            // blocked on a full pipe.
-            let _ = tokio::io::copy(&mut stdout, &mut tokio::io::sink()).await;
+            too_long = output.len() > MAX_OUTPUT_BYTES;
+            if too_long {
+                // Not kept; read to the end all the same, so the command is not left blocked
+                // on a full pipe.
+                output.clear();
+                let _ = tokio::io::copy(&mut stdout, &mut tokio::io::sink()).await;
+            }
         }
         let status = waiting
             .wait()
             .await
             .map_err(|error| ProviderFailure::Launch(error.to_string()))?;
-        if status.success() {
+        if too_long {
+            Err(ProviderFailure::OutputTooLong)
+        } else if status.success() {
             Ok(output)
         } else {
             Err(ProviderFailure::Exit(status.code()))
         }
     };
-    if let Ok(result) = tokio::time::timeout(timeout, work).await {
+    let outcome = tokio::time::timeout(timeout, work).await;
+    if let Ok(result) = outcome {
         if !matches!(result, Err(ProviderFailure::Launch(_))) {
             // Ended by itself: nothing is left to stop.
-            tree.disarm();
+            running.finish();
         }
         return result;
     }
     // Windows: only a command still running is asked for by its number, which another process
-    // could have taken once it ended and was reaped.
-    #[cfg(windows)]
-    if !matches!(child.try_wait(), Ok(None)) {
-        tree.disarm();
-    }
-    if let Some(pid) = tree.pid {
+    // could take once it ended and was reaped (it is held, so it is not reaped yet).
+    let live = cfg!(not(windows)) || matches!(running.child().try_wait(), Ok(None));
+    if live && let Some(pid) = running.pid {
         // Off the executor's thread: a process to start and wait for.
         let _ = tokio::task::spawn_blocking(move || kill_tree(pid)).await;
     }
     // The direct child too, whether or not the tree kill could run, and reaped.
-    let _ = child.kill().await;
-    tree.disarm();
+    let _ = running.child().kill().await;
+    running.finish();
     // The delay and the program's file name, never its arguments: a template may embed a token.
     Err(ProviderFailure::TimedOut {
         program: program_file_name(program).to_owned(),
@@ -558,6 +608,20 @@ mod tests {
                 "{Title}"
             )))
         );
+    }
+
+    #[tokio::test]
+    async fn an_output_past_the_cap_is_an_error_never_a_cut_value() {
+        // 70000 bytes of "a": more than a password can be.
+        let long = settings(r#"sh -c "yes aaaaaaaa | head -c 70000""#);
+        assert_eq!(
+            ask(&long, &lookup(None), None).await.err(),
+            Some(ProviderFailure::OutputTooLong)
+        );
+        // Just at the cap is a value.
+        let at_cap = settings(r#"sh -c "head -c 65536 /dev/zero | tr '\0' a""#);
+        let provided = ask(&at_cap, &lookup(None), None).await.expect("given");
+        assert_eq!(provided.password.expose().len(), 65536);
     }
 
     #[tokio::test]

@@ -1687,7 +1687,7 @@ pub struct Shell {
     connections: HashMap<TabId, Handle>,
     /// Running questions to the external credential provider, by tab and question: closing
     /// the tab drops them, which leaves the vault's queue and stops its command.
-    provider_questions: HashMap<(TabId, QuestionId), Handle>,
+    provider_questions: HashMap<(TabId, QuestionId), (AttemptId, Handle)>,
     /// What is typed into each open question, zeroed when dropped. iced keeps its own
     /// transient copies of a field's text, which this cannot reach.
     drafts: HashMap<QuestionId, Vec<Zeroizing<String>>>,
@@ -3830,6 +3830,11 @@ impl Shell {
     /// tabs' notes written first, as the C# Notes `CanClose`, so the core's close guard asks
     /// only about changes that could not be written.
     fn update_app(&mut self, message: AppMessage) -> Vec<Effect> {
+        // The vault answered: its task is over, its handle is not needed.
+        if let AppMessage::CredentialProvided(answer) = &message {
+            self.provider_questions
+                .remove(&(answer.tab, answer.question));
+        }
         if asks_to_close(&message) {
             self.tools.save_before_closing();
             self.tools.report_unsaved(&mut self.app);
@@ -4943,8 +4948,9 @@ impl Shell {
             self.gateway_passphrase = Zeroizing::default();
         }
         self.connections.retain(|tab, _| app.tab(*tab).is_some());
+        // Also when the attempt is given up while the tab stays open.
         self.provider_questions
-            .retain(|(tab, _), _| app.tab(*tab).is_some());
+            .retain(|(tab, _), (attempt, _)| app.tab_attempt(*tab) == Some(*attempt));
         self.desktop_fit.retain(|tab, _| app.tab(*tab).is_some());
         self.drafts.retain(|question, _| {
             app.tabs.iter().any(|tab| {
@@ -5633,12 +5639,14 @@ impl Shell {
             .discard(),
             Effect::AskCredentialProvider(request) => {
                 let key = (request.tab, request.question);
+                let attempt = request.attempt;
                 let (task, handle) = Task::perform(request.run(), |answer| {
                     Message::App(AppMessage::CredentialProvided(Box::new(answer)))
                 })
                 .abortable();
                 // Aborted with its tab, as a connection is.
-                self.provider_questions.insert(key, handle.abort_on_drop());
+                self.provider_questions
+                    .insert(key, (attempt, handle.abort_on_drop()));
                 task
             }
             Effect::TestCredentialProvider {

@@ -589,6 +589,9 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                     milliseconds = milliseconds
                 )
             }
+            Notice::ProviderOutputTooLong(name) => {
+                fl!("ui-status-provider-output-too-long", name = name.as_str())
+            }
             Notice::ProviderUnquotableValue { placeholder, name } => fl!(
                 "ui-status-provider-unquotable-value",
                 placeholder = placeholder.as_str(),
