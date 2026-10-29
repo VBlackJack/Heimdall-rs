@@ -2203,6 +2203,50 @@ mod tests {
     }
 
     #[test]
+    fn the_window_closing_hands_every_pending_secret_to_its_clear() {
+        use heimdall_app::tools::ToolId;
+        use heimdall_app::{App, AppConfig, Message as AppMessage, ToolsMessage};
+
+        let dir = tempfile::tempdir().expect("dir");
+        let mut app = App::new(AppConfig {
+            profiles_file: dir.path().join("profiles.toml"),
+            known_hosts: dir.path().join("known_hosts"),
+            legacy_dir: None,
+            agent: heimdall_ssh::AgentSource::Disabled,
+            initial_grid: heimdall_term::GridSize { cols: 80, rows: 24 },
+            files_start: dir.path().to_owned(),
+            system_credentials: heimdall_app::SystemCredentials::memory(),
+        });
+        let _ = app.update(AppMessage::Tools(ToolsMessage::Open {
+            tool: ToolId::Password,
+            title: String::new(),
+            context: heimdall_app::tools::ToolContext::default(),
+        }));
+        let mut panes = super::super::ToolPanes::default();
+        panes.sync(&app);
+        let tab = app.tabs.last().expect("its tab").id;
+        for message in [
+            PasswordMessage::Set(Setting::ClipboardAutoClear(true)),
+            PasswordMessage::Copy(PasswordCopy::Main),
+        ] {
+            let _ = panes.update(tab, ToolMessage::Password(message), None, &app);
+        }
+        let Some(super::super::Pane::Password(pane)) = panes.get(tab).map(|state| &state.pane)
+        else {
+            panic!("a password tab");
+        };
+        let password = pane.engine().password().to_owned();
+
+        // The window closes with its tabs still open: the tab hands over its secret all
+        // the same.
+        let owed = panes.secrets_owed();
+        let owed: Vec<&str> = owed.iter().map(|secret| secret.as_str()).collect();
+        assert_eq!(owed, [password.as_str()]);
+        assert!(panes.secrets_owed().is_empty(), "handed over once");
+        let _ = panes.exiting();
+    }
+
+    #[test]
     fn the_phonetic_reading_is_cleared_from_the_clipboard_as_the_password_is() {
         let mut pane = pane();
         pane.update(PasswordMessage::Set(Setting::ClipboardAutoClear(true)));

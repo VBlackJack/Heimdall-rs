@@ -3251,7 +3251,8 @@ impl Shell {
                 // Said, so that a log ending without it or another end of its own tells of a
                 // process ended from outside: killed, or a native crash.
                 log::info!("the main window closed: Heimdall stops");
-                return iced::exit();
+                // A password still counting down to its clear is cleared first.
+                return self.tools.exiting().chain(iced::exit());
             }
             Message::BringForward => return self.main_window.map_or_else(Task::none, focus_window),
             message @ (Message::DesktopFit { .. }
@@ -5647,7 +5648,12 @@ impl Shell {
                 self.tools.report_unsaved(&mut self.app);
                 task
             }
-            Effect::Exit => self.exit(),
+            Effect::Exit => {
+                // A password still counting down to its clear is cleared before the window
+                // goes, as closing its tab would.
+                let clear = self.tools.exiting();
+                clear.chain(self.exit())
+            }
         }
     }
 

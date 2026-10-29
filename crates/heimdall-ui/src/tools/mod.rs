@@ -1187,6 +1187,29 @@ impl ToolPanes {
         Task::batch(tasks)
     }
 
+    /// What the window closing leaves to finish, as each tool tab closing would: a password
+    /// still counting down to its clear is cleared before the process ends. The window
+    /// closes without its tabs being closed one by one, so [`ToolPanes::sync`] never sees
+    /// them go.
+    pub fn exiting(&mut self) -> Task<Message> {
+        Task::batch(
+            self.secrets_owed()
+                .into_iter()
+                .map(password_tool::clear_if_still_held),
+        )
+    }
+
+    /// The secrets the Password Generator tabs still owe a clear, each handed over once.
+    fn secrets_owed(&mut self) -> Vec<zeroize::Zeroizing<String>> {
+        self.panes
+            .values_mut()
+            .filter_map(|state| match &mut state.pane {
+                Pane::Password(pane) => pane.closing(),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The editor dialog of the command library `tab`, in a window leaving `room`, when one
     /// is open.
     #[must_use]
