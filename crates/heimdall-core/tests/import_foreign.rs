@@ -276,6 +276,94 @@ fn an_mremoteng_file_encrypted_whole_a_dtd_and_broken_xml_are_said() {
     ));
 }
 
+/// The C# `MRemoteNgImporterTests.InheritanceXml`, and a folder that sets an RD Gateway.
+const MREMOTENG_INHERITANCE: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<Connections Name="Test" FullFileEncryption="false" ConfVersion="2.6">
+  <Node Name="Prod" Type="Container" Protocol="SSH2" Port="2222" Username="admin" Domain="corp.local"
+        InheritProtocol="False" InheritPort="False" InheritUsername="False" InheritDomain="False">
+    <Node Name="Direct" Type="Connection" Hostname="direct.example.com" Protocol="RDP" Port="3390"
+          Username="own" InheritProtocol="False" InheritPort="False" InheritUsername="False" InheritDomain="False" />
+    <Node Name="Child" Type="Connection" Hostname="child.example.com" Protocol="RDP" Port="3389"
+          Username="stale" Domain="stale.local"
+          InheritProtocol="True" InheritPort="True" InheritUsername="True" InheritDomain="True" />
+    <Node Name="Inner" Type="Container" Protocol="VNC" Port="5999" Username="stale-inner"
+          InheritProtocol="True" InheritPort="True" InheritUsername="True" InheritDomain="True">
+      <Node Name="Grandchild" Type="Connection" Hostname="grandchild.example.com" Protocol="RDP"
+            Port="3389" Username="stale-leaf"
+            InheritProtocol="True" InheritPort="True" InheritUsername="True" InheritDomain="True" />
+    </Node>
+  </Node>
+  <Node Name="Orphan" Type="Connection" Hostname="orphan.example.com" Protocol="SSH2" Port="2200"
+        Username="stale-root" InheritUsername="True" InheritPort="False" InheritProtocol="False" />
+  <Node Name="Behind" Type="Container" RDGatewayUsageMethod="Always" RDGatewayHostname="gw.lab">
+    <Node Name="Desk" Type="Connection" Hostname="desk.lab" Protocol="RDP"
+          RDGatewayUsageMethod="Never" InheritRDGatewayUsageMethod="True"
+          InheritRDGatewayHostname="True" />
+  </Node>
+</Connections>
+"#;
+
+#[test]
+fn an_mremoteng_node_that_inherits_takes_the_value_of_the_first_container_that_sets_it() {
+    let parsed = mremoteng::parse(MREMOTENG_INHERITANCE);
+    assert!(parsed.warnings.is_empty());
+    let report = report(&parsed);
+    let ssh: Vec<String> = report.profiles.iter().map(ssh_line).collect();
+    assert_eq!(
+        ssh,
+        [
+            // Its own RDP, 3389 and "stale" ignored: the container says SSH on 2222.
+            "Child child.example.com:2222 admin@corp.local - c=false a=false f=false",
+            // "Inner" inherits too: the answer is "Prod", two levels up.
+            "Grandchild grandchild.example.com:2222 admin@corp.local - c=false a=false f=false",
+            // Nothing above it sets a user: the stale one is dropped, not kept.
+            "Orphan orphan.example.com:2200 - - c=false a=false f=false",
+        ]
+    );
+    let rdp: Vec<String> = report.rdp.iter().map(rdp_line).collect();
+    assert_eq!(
+        rdp,
+        [
+            "Direct direct.example.com:3390 Prod own -",
+            "Desk desk.lab:3389 Behind - -"
+        ],
+        "a node that does not inherit keeps its own values"
+    );
+    assert_eq!(
+        report.rdp[1].extras.rd_gateway(),
+        Some("gw.lab"),
+        "an RD Gateway its folder sets is kept, never gone around"
+    );
+    assert!(report.skipped.is_empty());
+}
+
+#[test]
+fn an_mremoteng_protocol_inherited_and_unknown_skips_the_node_and_spares_the_others() {
+    let parsed = mremoteng::parse(
+        r#"<Connections Name="Test" FullFileEncryption="false" ConfVersion="2.6">
+  <Node Name="Odd" Type="Container" Protocol="Gopher">
+    <Node Name="Leaf" Type="Connection" Hostname="leaf.example.com" Protocol="SSH2"
+          InheritProtocol="True" />
+  </Node>
+  <Node Name="Fine" Type="Connection" Hostname="fine.example.com" Protocol="SSH2" />
+</Connections>"#,
+    );
+    let report = report(&parsed);
+    let skipped: Vec<(&str, &SkipReason)> = report
+        .skipped
+        .iter()
+        .map(|s| (s.name.as_str(), &s.reason))
+        .collect();
+    assert_eq!(
+        skipped,
+        [("Leaf", &SkipReason::NotSsh("Gopher".to_owned()))],
+        "the protocol its container gives, said, not made RDP or SSH"
+    );
+    let kept: Vec<&str> = report.profiles.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(kept, ["Fine"]);
+    assert!(report.rdp.is_empty());
+}
+
 const RDCMAN_27: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <RDCMan programVersion="2.7" schemaVersion="3">
   <file>

@@ -480,13 +480,17 @@ PATH=/usr/bin:/bin
         );
         assert_eq!(entries[1].next_runs(now, 1), ["2026-10-18 00:00 (Sun)"]);
         assert_eq!(entries[1].next_runs(now, 1), entries[2].next_runs(now, 1));
-        assert!(
-            entries[3].next_runs(now, 1).is_empty(),
-            "a name is not read"
+        assert_eq!(
+            entries[3].next_runs(now, 1),
+            ["2026-10-19 00:00 (Mon)"],
+            "a day's name is read, as cron reads it"
         );
         assert_eq!(
             entries[3].description(),
-            Description::Custom("0 0 * * MON".to_owned())
+            Description::WeeklyAt(
+                cron_builder::WeekDay::Field("MON".to_owned()),
+                "00:00".to_owned()
+            )
         );
     }
 

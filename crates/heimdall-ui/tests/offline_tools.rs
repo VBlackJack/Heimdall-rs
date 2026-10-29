@@ -304,7 +304,8 @@ fn the_crontab_builder_applies_a_preset() {
     {
         let mut ui = simulator(&shell);
         ui.find("Runs every minute").expect("description");
-        ui.find("Next 5 executions").expect("runs");
+        ui.find("Next 5 executions (this workstation's local time)")
+            .expect("runs");
         ui.click("Weekdays 9am").expect("preset");
         assert!(sent(ui.into_messages(), |message| matches!(
             message,

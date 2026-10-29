@@ -172,18 +172,32 @@ pub async fn connect(
     config: &TelnetConfig,
     cancel: CancellationToken,
 ) -> Result<TelnetSession, TelnetError> {
-    let stream = tokio::select! {
-        () = cancel.cancelled() => return Err(TelnetError::Cancelled),
-        connected = tokio::time::timeout(
-            config.connect_timeout,
-            heimdall_net::connect(&config.host, config.port),
-        ) => connected
-            .map_err(|_| TelnetError::Timeout)?
-            .map_err(TelnetError::Network)?,
-    };
+    // Keepalive: a session idle on a path that died silently ends with an error, instead of
+    // showing connected until something is typed.
+    let stream = open(
+        heimdall_net::connect_kept_alive(&config.host, config.port),
+        config.connect_timeout,
+        &cancel,
+    )
+    .await?;
     // Keystrokes go out as typed, not batched.
     let _ = stream.set_nodelay(true);
     Ok(start(stream, config.size, cancel))
+}
+
+/// `dial` within `timeout`: the time running out is [`TelnetError::Timeout`], and only
+/// `cancel` is [`TelnetError::Cancelled`], so a timeout is never told as the user's cancel.
+async fn open<S>(
+    dial: impl Future<Output = io::Result<S>>,
+    timeout: Duration,
+    cancel: &CancellationToken,
+) -> Result<S, TelnetError> {
+    tokio::select! {
+        () = cancel.cancelled() => Err(TelnetError::Cancelled),
+        connected = tokio::time::timeout(timeout, dial) => connected
+            .map_err(|_| TelnetError::Timeout)?
+            .map_err(TelnetError::Network),
+    }
 }
 
 /// Starts a session over `stream`, already connected to the server.
@@ -291,5 +305,54 @@ async fn send<W: AsyncWrite + Unpin>(
             Ok(Err(error)) => Err(CloseReason::Failed(error.to_string())),
             Err(_) => Err(CloseReason::Failed("the server stopped reading".to_owned())),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A time limit short enough for a test, long against a dial that never ends.
+    const SHORT: Duration = Duration::from_millis(50);
+
+    /// A time limit no test reaches.
+    const NEVER: Duration = Duration::from_secs(3600);
+
+    /// A dial to an address that drops every packet: it never ends.
+    fn blackholed() -> impl Future<Output = io::Result<()>> {
+        std::future::pending()
+    }
+
+    #[tokio::test]
+    async fn a_connection_that_does_not_answer_in_time_is_a_timeout_not_a_cancel() {
+        let cancel = CancellationToken::new();
+        let outcome = open(blackholed(), SHORT, &cancel).await;
+        assert!(matches!(outcome, Err(TelnetError::Timeout)), "{outcome:?}");
+        assert!(!cancel.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn only_the_users_cancel_is_a_cancel() {
+        let cancel = CancellationToken::new();
+        let dial = open(blackholed(), NEVER, &cancel);
+        cancel.cancel();
+        let outcome = dial.await;
+        assert!(
+            matches!(outcome, Err(TelnetError::Cancelled)),
+            "{outcome:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_a_network_error() {
+        let refused = async { Err::<(), _>(io::Error::from(io::ErrorKind::ConnectionRefused)) };
+        let outcome = open(refused, NEVER, &CancellationToken::new()).await;
+        assert!(
+            matches!(
+                &outcome,
+                Err(TelnetError::Network(error)) if error.kind() == io::ErrorKind::ConnectionRefused
+            ),
+            "{outcome:?}"
+        );
     }
 }

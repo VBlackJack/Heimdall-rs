@@ -533,6 +533,37 @@ mod tests {
         CrontabPane::with_clock(fixed_now)
     }
 
+    /// The value of message `key` in a language file's `source`.
+    fn message_text(source: &str, key: &str) -> String {
+        source
+            .lines()
+            .find_map(|line| line.strip_prefix(key)?.strip_prefix(" = "))
+            .unwrap_or_else(|| panic!("{key} is in every language file"))
+            .trim()
+            .to_owned()
+    }
+
+    #[test]
+    fn the_next_runs_say_they_are_in_this_workstations_local_time_in_every_language() {
+        // Both lists are counted from this computer's clock, never the server's.
+        for (source, wording) in [
+            (include_str!("../../i18n/en/heimdall-ui.ftl"), "local time"),
+            (
+                include_str!("../../i18n/fr/heimdall-ui.ftl"),
+                "heure locale",
+            ),
+            (include_str!("../../i18n/es/heimdall-ui.ftl"), "hora local"),
+        ] {
+            for key in [
+                "ui-tool-crontab-next-runs",
+                "ui-tool-cronjob-detail-next-runs",
+            ] {
+                let text = message_text(source, key);
+                assert!(text.contains(wording), "{key}: {text}");
+            }
+        }
+    }
+
     #[test]
     fn a_new_tab_runs_every_minute() {
         let pane = pane();

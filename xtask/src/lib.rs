@@ -16,6 +16,7 @@
 
 //! Developer tooling for the Heimdall-rs workspace.
 
+pub mod bare_programs;
 pub mod catalogue_diff;
 pub mod crypto_deps;
 pub mod folder_sources;

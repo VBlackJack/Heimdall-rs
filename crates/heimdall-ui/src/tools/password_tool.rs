@@ -470,6 +470,21 @@ impl Outcome {
     }
 }
 
+/// The clipboard emptied when it still holds `secret`, as a closed tab's pending clear
+/// finishes: something copied since is left where it is. Nothing comes back, the tab being
+/// gone. iced's clipboard has no way to mark a copy as kept out of the clipboard history
+/// and cloud clipboard, so this clear is the protection a copy gets.
+#[must_use]
+pub fn clear_if_still_held(secret: Zeroizing<String>) -> Task<Message> {
+    iced::clipboard::read().then(move |content| {
+        if content.map(Zeroizing::new).as_ref() == Some(&secret) {
+            iced::clipboard::write(String::new())
+        } else {
+            Task::none()
+        }
+    })
+}
+
 /// `message` after `duration`, its timer made in the runtime that runs it.
 fn tick(duration: Duration, message: impl FnOnce() -> Message + Send + 'static) -> Task<Message> {
     Task::perform(
@@ -575,9 +590,15 @@ impl PasswordPane {
     }
 
     /// The tab closing: where the tool was left written down when it is to be remembered,
-    /// as the C# `OnViewUnloaded`.
-    pub fn closing(&mut self) {
+    /// as the C# `OnViewUnloaded`; and the secret whose clear was still counting down, for
+    /// [`clear_if_still_held`] to finish, as the C# `SecretClipboardGuard` does on close.
+    /// `None` when no clear is pending, auto-clear off included: then nothing is cleared.
+    #[must_use]
+    pub fn closing(&mut self) -> Option<Zeroizing<String>> {
         self.engine.persist_settings_if_remembering();
+        // The secret is kept only while its countdown runs: read back, it is let go.
+        self.countdown = Countdown::Idle;
+        self.copied.take()
     }
 
     /// Applies `message`; what is then to be done.
@@ -721,10 +742,11 @@ impl PasswordPane {
                 self.engine.password().to_owned(),
                 true,
             ),
+            // The phonetic reading spells the password out: cleared as the password is.
             PasswordCopy::Phonetic => (
                 CopySlot::PasswordPhonetic,
                 self.engine.phonetic().to_owned(),
-                false,
+                true,
             ),
             PasswordCopy::BatchAll => (
                 CopySlot::PasswordBatchAll,
@@ -2145,6 +2167,96 @@ mod tests {
             )),
             Outcome::Tick(_)
         ));
+    }
+
+    #[test]
+    fn closing_the_tab_hands_over_a_password_still_counting_down_to_its_clear() {
+        let mut pane = pane();
+        pane.update(PasswordMessage::Set(Setting::ClipboardAutoClear(true)));
+        let Outcome::Copy(_, copied, Some(_)) =
+            pane.update(PasswordMessage::Copy(PasswordCopy::Main))
+        else {
+            panic!("a countdown");
+        };
+        assert_eq!(
+            pane.closing().as_deref().map(String::as_str),
+            Some(copied.as_str()),
+            "the clear still owed is finished on close"
+        );
+        assert_eq!(pane.countdown, Countdown::Idle);
+        assert!(pane.closing().is_none(), "handed over once");
+
+        // Already cleared: nothing is owed.
+        let Outcome::Copy(_, copied, Some(timer)) =
+            pane.update(PasswordMessage::Copy(PasswordCopy::Main))
+        else {
+            panic!("a countdown");
+        };
+        pane.update(PasswordMessage::ClipboardRead(timer, Some(copied)));
+        assert!(pane.closing().is_none());
+
+        // Auto-clear off: nothing is cleared on close either.
+        let mut pane = self::pane();
+        pane.update(PasswordMessage::Set(Setting::ClipboardAutoClear(false)));
+        pane.update(PasswordMessage::Copy(PasswordCopy::Main));
+        assert!(pane.closing().is_none());
+    }
+
+    #[test]
+    fn the_window_closing_hands_every_pending_secret_to_its_clear() {
+        use heimdall_app::tools::ToolId;
+        use heimdall_app::{App, AppConfig, Message as AppMessage, ToolsMessage};
+
+        let dir = tempfile::tempdir().expect("dir");
+        let mut app = App::new(AppConfig {
+            profiles_file: dir.path().join("profiles.toml"),
+            known_hosts: dir.path().join("known_hosts"),
+            legacy_dir: None,
+            agent: heimdall_ssh::AgentSource::Disabled,
+            initial_grid: heimdall_term::GridSize { cols: 80, rows: 24 },
+            files_start: dir.path().to_owned(),
+            system_credentials: heimdall_app::SystemCredentials::memory(),
+        });
+        let _ = app.update(AppMessage::Tools(ToolsMessage::Open {
+            tool: ToolId::Password,
+            title: String::new(),
+            context: heimdall_app::tools::ToolContext::default(),
+        }));
+        let mut panes = super::super::ToolPanes::default();
+        panes.sync(&app);
+        let tab = app.tabs.last().expect("its tab").id;
+        for message in [
+            PasswordMessage::Set(Setting::ClipboardAutoClear(true)),
+            PasswordMessage::Copy(PasswordCopy::Main),
+        ] {
+            let _ = panes.update(tab, ToolMessage::Password(message), None, &app);
+        }
+        let Some(super::super::Pane::Password(pane)) = panes.get(tab).map(|state| &state.pane)
+        else {
+            panic!("a password tab");
+        };
+        let password = pane.engine().password().to_owned();
+
+        // The window closes with its tabs still open: the tab hands over its secret all
+        // the same.
+        let owed = panes.secrets_owed();
+        let owed: Vec<&str> = owed.iter().map(|secret| secret.as_str()).collect();
+        assert_eq!(owed, [password.as_str()]);
+        assert!(panes.secrets_owed().is_empty(), "handed over once");
+        let _ = panes.exiting();
+    }
+
+    #[test]
+    fn the_phonetic_reading_is_cleared_from_the_clipboard_as_the_password_is() {
+        let mut pane = pane();
+        pane.update(PasswordMessage::Set(Setting::ClipboardAutoClear(true)));
+        let Outcome::Copy(CopySlot::PasswordPhonetic, copied, Some(_)) =
+            pane.update(PasswordMessage::Copy(PasswordCopy::Phonetic))
+        else {
+            panic!("the phonetic reading starts a countdown");
+        };
+        assert_eq!(copied, pane.engine().phonetic());
+        assert!(matches!(pane.countdown, Countdown::Running(_)));
     }
 
     #[test]
