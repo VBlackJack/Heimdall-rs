@@ -543,6 +543,18 @@ pub struct ValueShape {
     pub edge_space: bool,
 }
 
+/// The index in [`PRESETS`] of the preset whose command is `command`, compared trimmed and
+/// ordinal, as the C# `CredentialProviderPresetService` finds the preset to show. `None` is
+/// "Custom": a blank command, or one that matches no preset (edited by hand).
+#[must_use]
+pub fn preset_index_of(command: &str) -> Option<usize> {
+    let command = command.trim();
+    if command.is_empty() {
+        return None;
+    }
+    PRESETS.iter().position(|preset| preset.command == command)
+}
+
 /// The shape of `value`, as the C# Test button describes it.
 #[must_use]
 pub fn value_shape(value: &str) -> ValueShape {
@@ -659,6 +671,29 @@ mod tests {
             command_line("tool -k {keyfile}", &lookup("t"), &no_key),
             Err(TemplateProblem::NoKeyFile)
         );
+    }
+
+    #[test]
+    fn the_preset_shown_is_the_one_whose_command_is_set() {
+        for (index, preset) in PRESETS.iter().enumerate() {
+            assert_eq!(preset_index_of(preset.command), Some(index));
+            // Trimmed, as the C# does.
+            let padded = format!(
+                "  {}	
+",
+                preset.command
+            );
+            assert_eq!(preset_index_of(&padded), Some(index));
+        }
+        // Custom: blank, hand-edited, or only the case differs (ordinal comparison).
+        assert_eq!(preset_index_of(""), None);
+        assert_eq!(preset_index_of("   "), None);
+        assert_eq!(preset_index_of("my-tool get {Title}"), None);
+        assert_eq!(
+            preset_index_of(&format!("{} --extra", PRESETS[0].command)),
+            None
+        );
+        assert_eq!(preset_index_of(&PRESETS[4].command.to_uppercase()), None);
     }
 
     #[test]

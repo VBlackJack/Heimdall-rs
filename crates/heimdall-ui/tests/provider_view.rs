@@ -22,7 +22,7 @@ mod common;
 use std::path::Path;
 use std::time::Duration;
 
-use heimdall_app::credential_provider::{ProviderFailure, ProviderTest};
+use heimdall_app::credential_provider::{LaunchReason, ProviderFailure, ProviderTest};
 use heimdall_app::{App, AppConfig, Message as AppMessage, ProviderMessage, SystemCredentials};
 use heimdall_core::credential_provider::{TemplateProblem, ValueShape};
 use heimdall_ssh::AgentSource;
@@ -214,8 +214,29 @@ fn test_asks_the_core_and_shows_what_it_found() {
             "Select a key file first.".to_owned(),
         ),
         (
-            ProviderTest::Failed(ProviderFailure::Launch("not found".to_owned())),
-            "Test failed: not found".to_owned(),
+            ProviderTest::Failed(ProviderFailure::Launch {
+                program: "op".to_owned(),
+                reason: LaunchReason::NotFound,
+            }),
+            "Test failed: program not found: op".to_owned(),
+        ),
+        (
+            ProviderTest::Failed(ProviderFailure::CredentialStoreUnreadable),
+            "Test failed: could not read the Windows Credential Manager".to_owned(),
+        ),
+        (
+            ProviderTest::Failed(ProviderFailure::Launch {
+                program: "op".to_owned(),
+                reason: LaunchReason::PermissionDenied,
+            }),
+            "Test failed: permission denied: op".to_owned(),
+        ),
+        (
+            ProviderTest::Failed(ProviderFailure::Launch {
+                program: "op".to_owned(),
+                reason: LaunchReason::Other,
+            }),
+            "Test failed: could not start op".to_owned(),
         ),
     ] {
         let _ = shell.update(Message::App(AppMessage::CredentialProvider(
@@ -292,8 +313,15 @@ fn the_status_bar_says_why_the_provider_gave_nothing() {
              Check the command configuration in Settings > Security.",
         ),
         (
-            Notice::ProviderFailed("not found".to_owned()),
-            "External credential provider failed: not found",
+            Notice::ProviderFailed {
+                program: "op".to_owned(),
+                reason: heimdall_app::credential_provider::LaunchReason::NotFound,
+            },
+            "External credential provider failed: program not found: op",
+        ),
+        (
+            Notice::ProviderStoreUnreadable,
+            "External credential provider failed: could not read the Windows Credential Manager",
         ),
         (
             Notice::ProviderTimedOut {
