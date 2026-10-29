@@ -578,7 +578,30 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::ProviderFailed(detail) => {
                 fl!("ui-status-provider-failed", detail = detail.as_str())
             }
-            Notice::ProviderTimedOut => fl!("ui-status-provider-timed-out"),
+            Notice::ProviderTimedOut {
+                program,
+                milliseconds,
+            } => {
+                let milliseconds: u64 = *milliseconds;
+                fl!(
+                    "ui-status-provider-timed-out",
+                    program = program.as_str(),
+                    milliseconds = milliseconds
+                )
+            }
+            Notice::ProviderOutputTooLong(name) => {
+                fl!("ui-status-provider-output-too-long", name = name.as_str())
+            }
+            Notice::ProviderUnquotableValue { placeholder, name } => fl!(
+                "ui-status-provider-unquotable-value",
+                placeholder = placeholder.as_str(),
+                name = name.as_str()
+            ),
+            Notice::ProviderOptionLikeValue { placeholder, name } => fl!(
+                "ui-status-provider-option-like-value",
+                placeholder = placeholder.as_str(),
+                name = name.as_str()
+            ),
             Notice::WindowsHelloRefused(refusal) => match refusal {
                 HelloRefusal::Unavailable => fl!("ui-status-windows-hello-unavailable"),
                 HelloRefusal::NotVerified => fl!("ui-status-windows-hello-failed"),
