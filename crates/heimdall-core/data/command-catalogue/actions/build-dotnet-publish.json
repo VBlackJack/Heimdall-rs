@@ -32,6 +32,7 @@
         "label": "Output folder",
         "type": "string",
         "defaultValue": "./publish",
+        "flag": "--output",
         "required": false,
         "description": "Folder to publish to"
       }
@@ -57,6 +58,7 @@
         "label": "Output folder",
         "type": "string",
         "defaultValue": "./publish",
+        "flag": "--output",
         "required": false,
         "description": "Folder to publish to"
       }
@@ -127,6 +129,10 @@
         "dotnet publish \"./MyApp\" --configuration Release --output \"./publish\"": "Publie un projet .NET en mode Release",
         "dotnet publish -c Release": "Publier en mode Release"
       }
+    },
+    "es": {
+      "title": "Publicar un proyecto .NET",
+      "description": "Publica un proyecto de .NET para su implementación."
     }
   }
 }

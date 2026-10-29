@@ -85,6 +85,7 @@ pub mod profile_import_view;
 pub mod profile_tabs;
 mod properties_panel;
 mod provider_view;
+pub use provider_view::test_text;
 pub mod rdp_diagnostic;
 pub mod rdp_options;
 pub mod rdp_status;

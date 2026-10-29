@@ -22,7 +22,7 @@
 //! When it gives nothing, the question is asked of the user as it would have been, and the
 //! status bar says why, where the C# one shows a warning and connects without a password.
 
-use heimdall_core::credential_provider::{Lookup, ProviderKind, ProviderSettings};
+use heimdall_core::credential_provider::{Lookup, ProviderKind, ProviderSettings, TemplateProblem};
 use heimdall_core::profile::ProfileId;
 use heimdall_ssh::Secret;
 
@@ -108,6 +108,13 @@ fn provider_title(profile: &TabProfile) -> String {
 }
 
 impl App {
+    /// The attempt tab `id` is in, for a question to the provider to be dropped when the
+    /// attempt is given up while the tab stays open.
+    #[must_use]
+    pub fn tab_attempt(&self, id: TabId) -> Option<AttemptId> {
+        self.tab(id).map(|tab| tab.attempt)
+    }
+
     /// Whether opening profile `id` may ask the external credential provider for its
     /// server's password, for the properties panel to say so as the C# `BuildAuthSummary`
     /// adds "Credential provider" with the predicate its connect path uses: the provider on
@@ -236,7 +243,23 @@ impl App {
                 log::warn!("the credential provider gave no password for {name}: {failure:?}");
                 self.tell(match failure {
                     ProviderFailure::Launch(detail) => Notice::ProviderFailed(detail),
-                    ProviderFailure::TimedOut => Notice::ProviderTimedOut,
+                    ProviderFailure::TimedOut { program, timeout } => Notice::ProviderTimedOut {
+                        program,
+                        milliseconds: crate::credential_provider::milliseconds(timeout),
+                    },
+                    ProviderFailure::OutputTooLong => Notice::ProviderOutputTooLong(name),
+                    ProviderFailure::Template(TemplateProblem::UnquotableValue(placeholder)) => {
+                        Notice::ProviderUnquotableValue {
+                            placeholder: placeholder.to_owned(),
+                            name,
+                        }
+                    }
+                    ProviderFailure::Template(TemplateProblem::OptionLikeValue(placeholder)) => {
+                        Notice::ProviderOptionLikeValue {
+                            placeholder: placeholder.to_owned(),
+                            name,
+                        }
+                    }
                     _ => Notice::ProviderNoPassword(name),
                 });
                 self.apply_connection_event(tab_id, ConnectionEvent::Question { question, kind })

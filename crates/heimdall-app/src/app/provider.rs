@@ -48,13 +48,16 @@ pub enum ProviderMessage {
     FirstLineOnly(bool),
     /// How long a command is given; refused out of the C# range.
     Timeout(Duration),
-    /// The command of the preset at this place in [`PRESETS`].
+    /// The command and the "first line only" option of the preset at this place in
+    /// [`PRESETS`], as the C# quick setup applies both.
     Preset(usize),
     /// Keep this unlock secret.
     SaveUnlockSecret(Secret),
     /// Forget the unlock secret.
     ForgetUnlockSecret,
-    /// Run the password command with test values.
+    /// The vault entry the Test button looks up; not saved.
+    TestEntry(String),
+    /// Run the password command for the vault entry typed.
     Test,
     /// The test ended.
     Tested(ProviderTest),
@@ -75,8 +78,10 @@ impl std::fmt::Debug for ProviderMessage {
             Self::Preset(index) => write!(f, "Preset({index})"),
             Self::SaveUnlockSecret(_) => f.write_str("SaveUnlockSecret(..)"),
             Self::ForgetUnlockSecret => f.write_str("ForgetUnlockSecret"),
+            // An entry name and a user name are the vault's: kept out of the logs.
+            Self::TestEntry(_) => f.write_str("TestEntry(..)"),
             Self::Test => f.write_str("Test"),
-            Self::Tested(outcome) => write!(f, "Tested({outcome:?})"),
+            Self::Tested(_) => f.write_str("Tested(..)"),
         }
     }
 }
@@ -86,6 +91,12 @@ impl App {
     #[must_use]
     pub fn provider_test(&self) -> Option<&ProviderTest> {
         self.provider_test.as_ref()
+    }
+
+    /// The vault entry typed for the Test button.
+    #[must_use]
+    pub fn provider_test_entry(&self) -> &str {
+        &self.provider_test_entry
     }
 
     /// Whether an unlock secret is kept.
@@ -120,10 +131,13 @@ impl App {
                 provider.timeout = timeout;
             }
             ProviderMessage::Preset(index) => {
-                let Some((_, template)) = PRESETS.get(index) else {
+                let Some(preset) = PRESETS.get(index) else {
                     return Vec::new();
                 };
-                (*template).clone_into(&mut provider.command);
+                preset.command.clone_into(&mut provider.command);
+                // The tool prints more than the value (KPScript's status line, pass's notes):
+                // only its first line is read. Every other preset turns it off.
+                provider.first_line_only = preset.first_line_only;
             }
             ProviderMessage::SaveUnlockSecret(secret) => {
                 let bytes = (!secret.expose().is_empty()).then(|| secret.expose().as_bytes());
@@ -132,6 +146,10 @@ impl App {
             }
             ProviderMessage::ForgetUnlockSecret => {
                 self.write_unlock_secret(None);
+                return Vec::new();
+            }
+            ProviderMessage::TestEntry(entry) => {
+                self.provider_test_entry = entry;
                 return Vec::new();
             }
             ProviderMessage::Test => return self.test_provider(),
@@ -162,7 +180,7 @@ impl App {
         }
     }
 
-    /// Runs the password command with the Test button's values, the settings as they are.
+    /// Runs the password command for the entry typed, the settings as they are.
     fn test_provider(&mut self) -> Vec<Effect> {
         if self.provider_test == Some(ProviderTest::Running) {
             return Vec::new();
@@ -170,6 +188,7 @@ impl App {
         self.provider_test = Some(ProviderTest::Running);
         vec![Effect::TestCredentialProvider {
             settings: self.settings.credential_provider.clone(),
+            entry: self.provider_test_entry.clone(),
             unlock: self.provider_unlock_secret(),
         }]
     }

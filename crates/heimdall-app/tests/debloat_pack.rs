@@ -32,12 +32,12 @@ const PACK_ACTIONS: usize = 72;
 /// The action of the pack the hardened import refuses: the default value of its `Path`
 /// parameter holds parentheses (`Program Files (x86)`), which the value generator will not
 /// put in a command. The pack stays as the C# ships it; the refusal is the import doing its job.
-const REFUSED_TITLE: &str = "Configurer exclusions Windows Defender";
+const REFUSED_TITLE: &str = "Configure Windows Defender exclusions";
 
 /// SHA-256 of the pack with its line ends as LF (the repository stores text with LF; the C#
-/// file on disk has CRLF, SHA-256 59f7504227be3a7887c86108ddf6f28510448875a988570d0609de61c11880c4).
+/// file on disk has CRLF, SHA-256 b3e93933f773a0626f3ef9711cb59b20c10eeb739e0ebb6c7cd1972569d54462).
 /// A change to the pack, which must stay as the C# ships it, fails here and asks for a decision.
-const PACK_SHA256: &str = "b731b20dbf31e2c9e990914538667d7a5feab62483e4e22c807827caef86eec9";
+const PACK_SHA256: &str = "a3c4ee53abd1705dfed8039e5ed246bc74fa8d3721d15af589741f8e4af4dbc9";
 
 /// Actions the pack marks dangerous itself (level 2 in the C# file).
 const PACK_DANGEROUS: usize = 12;
