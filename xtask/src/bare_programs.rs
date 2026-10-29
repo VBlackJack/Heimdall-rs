@@ -19,10 +19,11 @@
 //! `Command::new("nslookup")` is looked up on the `PATH`, and on Windows in the current
 //! folder first: a program of that name planted there runs in its place. Every system
 //! program goes by its full path instead (`heimdall_core::tools::system_program`, the system
-//! folder, fixed folders elsewhere). The guard reads every `Command::new(...)` whose program
-//! is written as a string, or as a string constant (`XDG_OPEN_PROGRAM`, local or named by
-//! its path), and refuses a name without a folder; a program computed at run time is the
-//! code's own business and is not judged. The exceptions are [`ALLOWED`], each with why.
+//! folder, fixed folders elsewhere). The guard reads every `Command::new(...)` of the crates'
+//! sources and build scripts whose program is written as a string, or as a string constant
+//! or static (`XDG_OPEN_PROGRAM`, local or named by its path), and refuses a name without a
+//! folder; a program computed at run time is the code's own business and is not judged. The
+//! exceptions are [`ALLOWED`], each with why.
 //!
 //! Tests may start what they like: the test modules at the end of a file (`#[cfg(test)]`
 //! then `mod`, closed at the first column), the test modules in files of their own
@@ -55,7 +56,14 @@ const XDG_OPEN_REASON: &str = "Linux only: xdg-open is the desktop's own opener,
      where each distribution puts it, and resolved on the session's PATH by design";
 
 /// Every program allowed to start by its bare name, with its file and reason.
-pub const ALLOWED: [Allowed; 3] = [
+pub const ALLOWED: [Allowed; 4] = [
+    Allowed {
+        file: "crates/heimdall-ui/build.rs",
+        program: "git",
+        reason: "build time only, on the developer's machine: the developer's own git reads \
+                 the commit hash for the version string; a build without git leaves it out, \
+                 and nothing of it runs in the program shipped",
+    },
     Allowed {
         file: "crates/heimdall-app/src/citrix.rs",
         program: "xdg-open",
@@ -76,11 +84,14 @@ pub const ALLOWED: [Allowed; 3] = [
 /// What starts a program.
 const LAUNCH: &str = "Command::new(";
 
-/// What a string constant's declaration holds between its name and its value.
-const STRING_CONSTANT: &str = ": &str = \"";
+/// The keywords of a declaration that may name a program, after its visibility.
+const DECLARATION_KEYWORDS: [&str; 2] = ["const ", "static "];
 
-/// The keyword of a constant, after its visibility.
-const CONSTANT_KEYWORD: &str = "const ";
+/// The types of a string declared so.
+const STRING_TYPES: [&str; 2] = ["&str", "&'static str"];
+
+/// A crate's build script, beside its `src`.
+const BUILD_SCRIPT: &str = "build.rs";
 
 /// The line that opens a test module, at the first column.
 const TEST_GATE: &str = "#[cfg(test)]";
@@ -120,16 +131,23 @@ pub struct Scan {
     pub scanned: Vec<PathBuf>,
 }
 
-/// The string constants `text` declares on one line, as name and value.
+/// The string constants and statics `text` declares on one line, as name and value: `const`
+/// or `static`, of type `&str` or `&'static str`, whatever their visibility.
 #[must_use]
 pub fn string_constants(text: &str) -> Vec<(String, String)> {
     text.lines()
         .filter_map(|line| {
             let line = line.trim_start();
-            let declaration = &line[line.find(CONSTANT_KEYWORD)?..];
-            let rest = declaration.strip_prefix(CONSTANT_KEYWORD)?;
-            let (name, value) = rest.split_once(STRING_CONSTANT)?;
-            let (value, _) = value.split_once('"')?;
+            let rest = DECLARATION_KEYWORDS.iter().find_map(|keyword| {
+                let at = line.find(keyword)?;
+                (at == 0 || line[..at].ends_with(' ')).then(|| &line[at + keyword.len()..])
+            })?;
+            let (name, rest) = rest.split_once(':')?;
+            let (kind, value) = rest.split_once('=')?;
+            if !STRING_TYPES.contains(&kind.trim()) {
+                return None;
+            }
+            let (value, _) = value.trim_start().strip_prefix('"')?.split_once('"')?;
             let name = name.trim();
             is_constant_name(name).then(|| (name.to_owned(), value.to_owned()))
         })
@@ -249,14 +267,35 @@ pub fn is_allowed(root: &Path, file: &Path, program: &str) -> bool {
         .any(|allowed| root.join(allowed.file) == file && allowed.program == program)
 }
 
-/// Every application source of the workspace at `root` checked.
+/// The build scripts of the crates of the workspace at `root`, `crates/*/build.rs`: they
+/// run on every build, so they start programs as the application does.
+///
+/// # Errors
+///
+/// A directory that cannot be read.
+pub fn build_scripts(root: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut found = Vec::new();
+    for entry in fs::read_dir(root.join("crates"))? {
+        let script = entry?.path().join(BUILD_SCRIPT);
+        if script.is_file() {
+            found.push(script);
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
+/// Every application source and build script of the workspace at `root` checked.
 ///
 /// # Errors
 ///
 /// A file or directory that cannot be read.
 pub fn scan(root: &Path) -> io::Result<Scan> {
     let mut texts = Vec::new();
-    for file in folder_sources::sources(root)? {
+    for file in folder_sources::sources(root)?
+        .into_iter()
+        .chain(build_scripts(root)?)
+    {
         if !is_test_file(&file) {
             let text = fs::read_to_string(&file)?;
             texts.push((file, text));
