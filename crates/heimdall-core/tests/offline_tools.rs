@@ -893,9 +893,10 @@ fn crontab_fields(text: &str) -> [String; cron_builder::FIELD_COUNT] {
 /// Saturday 2026-04-18 10:00, the C# `CronScheduleCalculatorTests.Anchor`.
 const CRON_ANCHOR: i64 = 1_776_506_400;
 
-/// The C# `CronScheduleCalculatorTests.ScheduleTable`: a schedule, how many runs to ask for
-/// from [`CRON_ANCHOR`], and the runs.
-const CRONTAB_TABLE: [(&str, usize, &[&str]); 13] = [
+/// The C# `CronScheduleCalculatorTests.ScheduleTable`, and the edges where Rust, the C# and
+/// Vixie cron part ways, each with its decision: a schedule, how many runs to ask for from
+/// [`CRON_ANCHOR`], and the runs.
+const CRONTAB_TABLE: [(&str, usize, &[&str]); 16] = [
     // Both day fields restricted: the 1st or any Monday.
     (
         "0 0 1 * 1",
@@ -969,7 +970,8 @@ const CRONTAB_TABLE: [(&str, usize, &[&str]); 13] = [
             "2026-04-26 09:00 (Sun)",
         ],
     ),
-    // Sunday closes a range that starts after it.
+    // Sunday closes a range that starts after it, as the C# reads it; Vixie cron refuses a
+    // range whose start is after its end, so this previews runs for a line cron rejects.
     (
         "0 9 * * FRI-SUN",
         4,
@@ -978,6 +980,38 @@ const CRONTAB_TABLE: [(&str, usize, &[&str]); 13] = [
             "2026-04-24 09:00 (Fri)",
             "2026-04-25 09:00 (Sat)",
             "2026-04-26 09:00 (Sun)",
+        ],
+    ),
+    // Same reading as FRI-SUN (C#), refused by Vixie cron: Saturday then Sunday.
+    (
+        "0 9 * * SAT-SUN",
+        3,
+        &[
+            "2026-04-19 09:00 (Sun)",
+            "2026-04-25 09:00 (Sat)",
+            "2026-04-26 09:00 (Sun)",
+        ],
+    ),
+    // Numbers read as names do: 5-0 is FRI-SUN (as the C#), not refused; Vixie refuses it.
+    (
+        "0 9 * * 5-0",
+        3,
+        &[
+            "2026-04-19 09:00 (Sun)",
+            "2026-04-24 09:00 (Fri)",
+            "2026-04-25 09:00 (Sat)",
+        ],
+    ),
+    // A start with a step runs to 7, Sunday, as cron's day field ends there: Mon, Wed, Fri
+    // and Sun (the C# stops at Saturday, so it leaves Sunday out).
+    (
+        "0 9 * * MON/2",
+        4,
+        &[
+            "2026-04-19 09:00 (Sun)",
+            "2026-04-20 09:00 (Mon)",
+            "2026-04-22 09:00 (Wed)",
+            "2026-04-24 09:00 (Fri)",
         ],
     ),
     // Month names in a list and in a range.
@@ -1072,6 +1106,11 @@ fn a_crontab_name_unknown_or_out_of_its_field_and_a_bad_step_run_nothing() {
             "{text}"
         );
     }
+    // The builder's day of the week ends at 6 and takes no range that runs backwards.
+    assert_eq!(
+        cron_builder::validate("0 9 * * 5-0"),
+        Some(CronProblem::OutOfRange { field: 4 })
+    );
     // The builder, as the C# `CrontabBuilderView`, takes numbers only.
     assert_eq!(
         cron_builder::validate("0 9 * * MON"),
