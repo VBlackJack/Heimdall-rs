@@ -77,6 +77,7 @@ mod regex_tool;
 mod route_bar;
 mod route_table_tool;
 mod secnumcloud_tool;
+mod sensitive_clipboard;
 mod service_status_tool;
 mod smb_tool;
 mod snmp_walker_tool;
@@ -1018,6 +1019,18 @@ impl ToolPane {
         Task::batch([iced::clipboard::write(content), self.check_mark(tab, slot)])
     }
 
+    /// As [`Self::copy`] for a secret: kept out of the clipboard history, the cloud clipboard
+    /// and the monitors where the system allows it, as the C# `SetSensitiveText`.
+    fn copy_secret(&mut self, tab: TabId, slot: CopySlot, content: String) -> Task<Message> {
+        if content.is_empty() {
+            return Task::none();
+        }
+        Task::batch([
+            sensitive_clipboard::write(content),
+            self.check_mark(tab, slot),
+        ])
+    }
+
     /// The check mark of the button of `slot` shown for [`COPY_FEEDBACK`].
     fn check_mark(&mut self, tab: TabId, slot: CopySlot) -> Task<Message> {
         self.copies += 1;
@@ -1434,7 +1447,7 @@ impl ToolPanes {
             (ToolMessage::Password(message), Pane::Password(pane)) => {
                 return match pane.update(message) {
                     password_tool::Outcome::Copy(slot, content, timer) => {
-                        let copied = state.copy(tab, slot, content);
+                        let copied = state.copy_secret(tab, slot, content);
                         match timer {
                             Some(timer) => Task::batch([
                                 copied,
