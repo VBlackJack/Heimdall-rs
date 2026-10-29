@@ -229,10 +229,10 @@ fn the_patterns_with_a_line_break_are_the_known_ones() {
 }
 
 #[test]
-fn the_french_text_shows_in_french_and_spanish_shows_the_pivot() {
+fn the_french_and_spanish_texts_show_in_their_language_and_any_other_shows_the_pivot() {
     let entry = shipped().get("ad-check-fsmo-roles").expect("shipped");
     assert_eq!(entry.command().title, "Check the FSMO roles");
-    for pivot in ["en", "EN", "es", "es-ES", "", "de"] {
+    for pivot in ["en", "EN", "", "de"] {
         assert!(
             matches!(entry.localized(pivot), Cow::Borrowed(_)),
             "{pivot}"
@@ -246,16 +246,85 @@ fn the_french_text_shows_in_french_and_spanish_shows_the_pivot() {
             "{french}"
         );
     }
+    for spanish in ["es", "ES", "es-ES"] {
+        assert_eq!(
+            entry.localized(spanish).title,
+            "Comprobar los roles FSMO",
+            "{spanish}"
+        );
+    }
     assert!(
         entry
             .notes("fr")
             .is_some_and(|notes| notes.starts_with("Les 5 rôles"))
     );
+    // The Spanish block has no notes: they show the pivot's.
     assert!(
         entry
             .notes("es")
             .is_some_and(|notes| notes.starts_with("The 5 FSMO"))
     );
+}
+
+#[test]
+fn the_flags_of_a_shipped_action_survive_its_export() {
+    const ID: &str = "ad-set-user-properties";
+    let flags = |action: &Value| -> Vec<Value> {
+        action["windowsCommandTemplate"]["parameters"]
+            .as_array()
+            .expect("parameters")
+            .iter()
+            .map(|parameter| parameter.get("flag").cloned().unwrap_or(Value::Null))
+            .collect()
+    };
+    let source = raw_files()
+        .into_iter()
+        .find(|file| file["id"] == ID)
+        .expect("shipped");
+    let entry = shipped().get(ID).expect("shipped");
+    let exported = entry.to_value();
+    assert_eq!(flags(&exported), flags(&source));
+    assert!(flags(&exported).contains(&Value::from("-Department")));
+    // A parameter that declares no flag writes none.
+    assert_eq!(flags(&exported)[0], Value::Null);
+    let again = CatalogueEntry::parse(&exported.to_string()).expect("read back");
+    assert_eq!(again.command(), entry.command());
+}
+
+#[test]
+fn a_user_command_shows_the_translations_it_carries_and_the_pivot_otherwise() {
+    let mut command: UserCommand = serde_json::from_str(
+        r#"{"id":"u","title":"Remove the app","description":"Removes it.",
+            "windowsCommandTemplate":{"commandPattern":"hostname"},
+            "translations":{
+                "FR":{"title":"Supprimer l'application","description":"La supprime."},
+                "es":{"title":"Eliminar la aplicación"}}}"#,
+    )
+    .expect("a command");
+    command.is_user_created = true;
+    for french in ["fr", "fr-FR"] {
+        let shown = localize_user(&command, french);
+        assert_eq!(shown.title, "Supprimer l'application", "{french}");
+        assert_eq!(shown.description, "La supprime.", "{french}");
+    }
+    let spanish = localize_user(&command, "es");
+    assert_eq!(spanish.title, "Eliminar la aplicación");
+    // A part the language does not translate shows the pivot.
+    assert_eq!(spanish.description, "Removes it.");
+    for pivot in ["en", "", "de"] {
+        assert!(
+            matches!(localize_user(&command, pivot), Cow::Borrowed(_)),
+            "{pivot}"
+        );
+    }
+    // The translations stay in the command, so an export writes them back.
+    assert!(
+        localize_user(&command, "fr")
+            .extra
+            .contains_key("translations")
+    );
+    command.extra.clear();
+    assert!(matches!(localize_user(&command, "fr"), Cow::Borrowed(_)));
 }
 
 #[test]
@@ -279,11 +348,16 @@ fn a_translated_parameter_label_replaces_the_pivot_and_the_name_stays() {
 }
 
 #[test]
-fn every_action_is_translated_into_french_and_titles_are_not_blank() {
+fn every_action_is_translated_into_french_and_spanish_and_titles_are_not_blank() {
     for entry in shipped().entries() {
         let id = &entry.command().id;
-        assert_eq!(entry.languages().collect::<Vec<_>>(), ["fr"], "{id}");
-        assert!(!entry.localized("fr").title.trim().is_empty(), "{id}");
+        assert_eq!(entry.languages().collect::<Vec<_>>(), ["es", "fr"], "{id}");
+        for language in ["fr", "es"] {
+            assert!(
+                !entry.localized(language).title.trim().is_empty(),
+                "{id}: {language}"
+            );
+        }
     }
 }
 

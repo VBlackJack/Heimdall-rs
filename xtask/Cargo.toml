@@ -18,5 +18,9 @@ serde_json.workspace = true
 # toml: the manifests the crypto dependency guard reads.
 toml.workspace = true
 
+[dev-dependencies]
+# tempfile: the folders the catalogue drift check compares in its tests.
+tempfile.workspace = true
+
 [lints]
 workspace = true

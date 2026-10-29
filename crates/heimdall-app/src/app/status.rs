@@ -414,8 +414,32 @@ pub enum Notice {
     ProviderNoPassword(String),
     /// The external credential provider could not run, for this reason.
     ProviderFailed(String),
-    /// The external credential provider took too long.
-    ProviderTimedOut,
+    /// The external credential provider printed far more than a password, for this server.
+    ProviderOutputTooLong(String),
+    /// The external credential provider took too long: the program's file name and the delay it
+    /// was given, in milliseconds. Never its arguments, which may hold a token.
+    ProviderTimedOut {
+        /// The program's file name.
+        program: String,
+        /// The delay, in milliseconds.
+        milliseconds: u64,
+    },
+    /// The external credential provider was not run: the value of this placeholder, for this
+    /// server, cannot be held as one word by the shell that reads the command.
+    ProviderUnquotableValue {
+        /// The placeholder, braces included.
+        placeholder: String,
+        /// The server.
+        name: String,
+    },
+    /// The external credential provider was not run: the value of this placeholder, for this
+    /// server, starts with `-` and would have been read as an option of the tool.
+    ProviderOptionLikeValue {
+        /// The placeholder, braces included.
+        placeholder: String,
+        /// The server.
+        name: String,
+    },
     /// Windows Hello refused the connections waiting for it, for this reason.
     WindowsHelloRefused(crate::windows_hello::HelloRefusal),
     /// Embedded RDP sessions were refused: the settings require Credential Guard, which does

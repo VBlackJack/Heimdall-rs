@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use heimdall_app::credential_provider::{ProviderFailure, ProviderTest};
 use heimdall_app::{App, AppConfig, Message as AppMessage, ProviderMessage, SystemCredentials};
-use heimdall_core::credential_provider::TemplateProblem;
+use heimdall_core::credential_provider::{TemplateProblem, ValueShape};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, ProfileTab, Shell};
@@ -111,6 +111,7 @@ fn on_it_shows_the_csharp_fields() {
         "Unlock secret",
         "Database path",
         "Key file path",
+        "Vault entry to look up",
         "Test",
         "Use only the first line of output",
     ] {
@@ -185,17 +186,24 @@ fn test_asks_the_core_and_shows_what_it_found() {
     );
     for (outcome, said) in [
         (
-            ProviderTest::Success,
-            "Connection successful - password retrieved.".to_owned(),
+            success("srv", None, 1, false),
+            "Password retrieved for \"srv\".".to_owned(),
         ),
         (
-            ProviderTest::NoResult,
-            "Command returned no output. Check the command and database path.".to_owned(),
+            success("srv", Some("deploy"), 1, false),
+            "Password and username (deploy) retrieved for \"srv\".".to_owned(),
         ),
         (
-            ProviderTest::TimedOut,
-            "Command timed out (10s). Check that the CLI tool is installed and responsive."
+            ProviderTest::NoResult {
+                entry: "srv".to_owned(),
+            },
+            "No password for \"srv\": the command failed or printed nothing. Check the entry \
+             name, the unlock secret and the database path."
                 .to_owned(),
+        ),
+        (
+            ProviderTest::NoEntry,
+            "Enter the name of an entry in your vault first.".to_owned(),
         ),
         (
             ProviderTest::Failed(ProviderFailure::Template(TemplateProblem::Empty)),
@@ -214,35 +222,62 @@ fn test_asks_the_core_and_shows_what_it_found() {
             ProviderMessage::Test,
         )));
         let _ = shell.update(Message::App(AppMessage::CredentialProvider(
-            ProviderMessage::Tested(outcome),
+            ProviderMessage::Tested(outcome.clone()),
         )));
-        simulator(&shell).find(said.as_str()).expect(&said);
+        assert_eq!(said_by(&outcome), said);
     }
 }
 
+/// A test that read a password.
+fn success(entry: &str, username: Option<&str>, lines: usize, edge_space: bool) -> ProviderTest {
+    ProviderTest::Success {
+        entry: entry.to_owned(),
+        username: username.map(str::to_owned),
+        shape: ValueShape { lines, edge_space },
+    }
+}
+
+/// What the card says of `outcome`, less the marks Fluent puts around the values placed.
+fn said_by(outcome: &ProviderTest) -> String {
+    heimdall_ui::test_text(outcome)
+        .chars()
+        .filter(|c| !matches!(c, '\u{2068}' | '\u{2069}'))
+        .collect()
+}
+
 #[test]
-fn the_timeout_said_is_the_one_set() {
-    let dir = tempfile::tempdir().expect("dir");
-    let settings_file = dir.path().join("settings.toml");
-    std::fs::write(
-        &settings_file,
-        "version = 1\n[credential_provider]\nenabled = true\ntimeout_ms = 30000\n",
-    )
-    .expect("settings");
-    let mut shell = shell(dir.path());
+fn the_test_warns_of_a_value_that_is_not_plain_never_showing_it() {
+    // C# `CredProvTestShapeEdgeSpace` and `CredProvTestShapeMultiline`.
     assert_eq!(
-        shell.app().settings().credential_provider.timeout,
-        Duration::from_secs(30)
+        said_by(&success("srv", None, 1, true)),
+        "Password retrieved for \"srv\". The value read begins or ends with a space: it is sent \
+         as is."
     );
-    let _ = shell.update(Message::App(AppMessage::CredentialProvider(
-        ProviderMessage::Test,
-    )));
-    let _ = shell.update(Message::App(AppMessage::CredentialProvider(
-        ProviderMessage::Tested(ProviderTest::TimedOut),
-    )));
-    simulator(&shell)
-        .find("Command timed out (30s). Check that the CLI tool is installed and responsive.")
-        .expect("30 seconds");
+    assert_eq!(
+        said_by(&success("srv", Some("deploy"), 1, true)),
+        "Password and username (deploy) retrieved for \"srv\". The value read begins or ends \
+         with a space: it is sent as is."
+    );
+    assert_eq!(
+        said_by(&success("srv", None, 3, false)),
+        "Password retrieved for \"srv\". The value read spans 3 lines: if the tool prints more \
+         than the password, turn on \"Use only the first line of output\"."
+    );
+    // Several lines say the lines, not the space.
+    assert!(!said_by(&success("srv", None, 2, true)).contains("begins or ends"));
+}
+
+#[test]
+fn the_timeout_said_is_the_delay_and_the_program_only() {
+    let said = said_by(&ProviderTest::TimedOut {
+        program: "bw".to_owned(),
+        timeout: Duration::from_secs(30),
+    });
+    assert_eq!(
+        said,
+        "The command (bw) did not answer within 30000 ms. Check that the CLI tool is installed \
+         and responsive."
+    );
 }
 
 #[test]
@@ -261,8 +296,21 @@ fn the_status_bar_says_why_the_provider_gave_nothing() {
             "External credential provider failed: not found",
         ),
         (
-            Notice::ProviderTimedOut,
-            "External credential provider timed out.",
+            Notice::ProviderTimedOut {
+                program: "bw".to_owned(),
+                milliseconds: 10000,
+            },
+            "The external credential provider (bw) did not answer within 10000 ms. Raise the \
+             timeout in Settings > Security if your vault asks you to confirm each request.",
+        ),
+        (
+            Notice::ProviderOptionLikeValue {
+                placeholder: "{Title}".to_owned(),
+                name: "Web server".to_owned(),
+            },
+            "The external credential provider was not run: the value of {Title} for \"Web \
+             server\" starts with a dash and the tool would read it as an option. Rename the \
+             vault entry or the path.",
         ),
     ] {
         let text = status_text(&SessionStatus::Ready, Some(&notice), 0);

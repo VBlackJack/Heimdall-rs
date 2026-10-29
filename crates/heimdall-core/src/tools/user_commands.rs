@@ -360,6 +360,13 @@ pub struct UserParameter {
     /// How it is put in; the default when none.
     #[serde(default)]
     pub quoting: Option<Quoting>,
+    /// The flag that introduces its value in the pattern (`-Department` in
+    /// `Set-ADUser -Identity {username} -Department {department}`), as the C#
+    /// `TemplateParameter.Flag`: left empty, the parameter is dropped together with that flag,
+    /// so the command does not end in a bare flag the shell refuses. Declared, not guessed: in
+    /// `fdisk -l {device}` the token before the placeholder is a switch of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flag: Option<String>,
 }
 
 fn default_type() -> String {
@@ -379,6 +386,7 @@ impl UserParameter {
             description: None,
             allowed_values: None,
             quoting: None,
+            flag: None,
         }
     }
 
@@ -460,8 +468,8 @@ pub struct UserCommand {
     /// Always set for the commands of this library.
     #[serde(default)]
     pub is_user_created: bool,
-    /// What the C# keeps that this build does not edit (examples, links, notes): kept as it
-    /// came, so a command goes back to the C# whole.
+    /// What the C# keeps that this build does not edit (examples, links, notes, translations):
+    /// kept as it came, so a command goes back to the C# whole.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -553,7 +561,9 @@ pub enum GenerateError {
 /// The command of `template` with the values `value_of` gives, each put in as its type and
 /// quoting say for the shell of `platform`, as the C# `CommandGeneratorService.GenerateCommand`;
 /// a blank value is its default. An optional value still blank is left out of the command
-/// together with the space it leaves, instead of being quoted into an empty argument.
+/// together with the space it leaves, instead of being quoted into an empty argument, and
+/// with the flag it declares ([`UserParameter::flag`]) when that flag is the token just before
+/// its placeholder.
 ///
 /// The leaving out happens first, and every value is judged against the pattern that is left
 /// (`echo ${empty}'{v}'` becomes `echo $'{v}'`, a bash string that reads backslash escapes).
@@ -594,6 +604,7 @@ pub fn generate<'v>(
         .map(|(parameter, _)| Substitution {
             placeholder: placeholder_text(&parameter.name),
             replacement: None,
+            flag: parameter.flag.clone(),
         })
         .collect();
     let pattern = substitute(&template.command_pattern, &left_out);
@@ -618,6 +629,7 @@ pub fn generate<'v>(
                 substitutions.push(Substitution {
                     placeholder,
                     replacement: Some(replacement),
+                    flag: None,
                 });
             }
             Err(error) => refused.push(error),
@@ -644,6 +656,8 @@ struct Substitution {
     placeholder: String,
     /// The value as it goes into the command; `None` leaves the argument out.
     replacement: Option<String>,
+    /// The flag left out with the argument, when it is the token just before the placeholder.
+    flag: Option<String>,
 }
 
 /// `pattern` with every placeholder of `substitutions` replaced in one pass.
@@ -651,7 +665,9 @@ struct Substitution {
 /// A placeholder left out takes with it the run of spaces it leaves, as the C#
 /// `RemoveEmptyPlaceholder`: only the spaces next to it are touched (two spaces the author
 /// wrote inside a quoted grep expression stay), and one that ends the command takes the
-/// space before it along, so `hostname {name}` becomes `hostname`.
+/// space before it along, so `hostname {name}` becomes `hostname`. Its flag goes too when it
+/// is exactly the token written before it, as the C# `DropTrailingFlag`: `-Title {title}`
+/// loses `-Title`, a flag glued to other text or not there leaves the pattern as it was.
 fn substitute(pattern: &str, substitutions: &[Substitution]) -> String {
     let mut result = String::with_capacity(pattern.len());
     let mut rest = pattern;
@@ -663,6 +679,7 @@ fn substitute(pattern: &str, substitutions: &[Substitution]) -> String {
             Some(Substitution {
                 placeholder,
                 replacement: Some(value),
+                ..
             }) => {
                 result.push_str(value);
                 rest = &rest[placeholder.len()..];
@@ -670,8 +687,12 @@ fn substitute(pattern: &str, substitutions: &[Substitution]) -> String {
             Some(Substitution {
                 placeholder,
                 replacement: None,
+                flag,
             }) => {
                 rest = &rest[placeholder.len()..];
+                if let Some(flag) = flag {
+                    drop_trailing_flag(&mut result, flag);
+                }
                 if result.is_empty() || result.ends_with(WORD_SEPARATOR) {
                     rest = rest.trim_start_matches(WORD_SEPARATOR);
                 }
@@ -687,6 +708,19 @@ fn substitute(pattern: &str, substitutions: &[Substitution]) -> String {
         }
     }
     result
+}
+
+/// `result` without `flag` when it is its last token, the spaces after it included: the
+/// token starts the text or follows a space, so a flag glued to other text stays.
+fn drop_trailing_flag(result: &mut String, flag: &str) {
+    let end = result.trim_end_matches(WORD_SEPARATOR).len();
+    if flag.is_empty() || !result[..end].ends_with(flag) {
+        return;
+    }
+    let start = end - flag.len();
+    if start == 0 || result[..start].ends_with(WORD_SEPARATOR) {
+        result.truncate(start);
+    }
 }
 
 /// Checks `value` against `parameter`, as the C# `ValidateParameterValue` and
@@ -1277,6 +1311,9 @@ pub struct ParameterDraft {
     /// How the value is put in the command; not edited, but kept through a rename, an edit and
     /// a copy of the command.
     pub quoting: Option<Quoting>,
+    /// The flag that introduces the value ([`UserParameter::flag`]); not edited, but kept as
+    /// `quoting` is, as the C# `ParameterEntryVm.Flag`.
+    pub flag: Option<String>,
 }
 
 impl Default for ParameterDraft {
@@ -1290,6 +1327,7 @@ impl Default for ParameterDraft {
             description: String::new(),
             allowed_values: String::new(),
             quoting: None,
+            flag: None,
         }
     }
 }
@@ -1315,6 +1353,7 @@ impl ParameterDraft {
                 .map(|values| values.join(", "))
                 .unwrap_or_default(),
             quoting: parameter.quoting,
+            flag: parameter.flag.clone(),
         }
     }
 
@@ -1355,6 +1394,7 @@ impl ParameterDraft {
             description: some(&self.description),
             allowed_values: (!allowed.is_empty()).then_some(allowed),
             quoting: self.quoting,
+            flag: self.flag.clone(),
         }
     }
 

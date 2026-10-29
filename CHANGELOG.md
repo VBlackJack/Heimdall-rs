@@ -36,7 +36,31 @@ work can be followed. It is not usable yet and no official release is published.
   checks of an import. A copy newer here than the repository's is kept and listed. See
   `docs/command-library-git-sync.md`.
 - RDP and VNC: remote desktop sessions, with an `mstsc` fallback on Windows.
-- Tools: the network and security tools ported from the C#.
+- Protocols: SSH tunnels, jump hosts, agents (Pageant and the Windows OpenSSH agent included)
+  and X11 forwarding; FTP/FTPS file panes and a sudo mode in the file panes; the built-in RDP
+  client with clipboard, drives and audio, `mstsc.exe` kept for the options it lacks; Telnet;
+  WinRM (PowerShell remoting in a local ConPTY); local shell; Citrix launched in Citrix
+  Workspace, not embedded; web consoles opened in the system's browser, through the gateway's
+  tunnel when one is set.
+- Credentials: Windows Credential Manager and Secret Service, Windows Hello, external
+  credential provider commands (KeePassXC, Bitwarden, 1Password and pass presets), PIN and
+  lockout, folder ACLs.
+- Tools: the network and security tools ported from the C#; 57 built-in tools in all, the
+  C#'s 58th, the Privilege Launcher, not ported.
+- Command Library: the 527 shipped actions, runbooks, history, import and export.
+- Command Library: the shipped catalogue and the debloat pack resynchronised with the C# seed
+  as of its commit `edb753df` (2026-10-28, the v2026.102702 seed plus its later fixes);
+  Spanish titles and descriptions for every shipped action; `xtask catalogue-diff` measures
+  the drift.
+- Imports: the C# Heimdall's data, MobaXterm, mRemoteNG, RDCMan, PuTTY sessions, OpenSSH
+  config, `.rdp` files, `known_hosts`; shared MobaXterm session sources with an offline copy
+  and an import report.
+- Sessions: tree with folders, colours, drag and drop, search and filters, favourites,
+  reachability; split panes, floating windows, tab drag; macros with expect steps; scheduled
+  connections; session logs and transcripts; screenshot; quick connect (Ctrl+K); HTTP file
+  share.
+- Appearance: 17 themes with accent colours, terminal colour schemes and font choice, high
+  contrast, reduced motion.
 - Localisation: English, French and Spanish, every string a Fluent key.
 - `--data-dir <full path>` in every build: an alternate instance (a hand test, a demo
   profile) with its own configuration, data and saved passwords, as the C# `--data-dir`. The
@@ -55,5 +79,11 @@ work can be followed. It is not usable yet and no official release is published.
   C# theme is kept as it is. Reset to defaults on the theme goes back to Magellan.
 - No official release is published until the build artifacts are signed (issue #454).
   Unsigned pre-release builds exist for personal testing only.
+- Not in place: signed release artifacts and a first official release (#454, #514); Citrix
+  window embedding (#449); built-in RDP smart cards, RD Gateway, microphone, printers (#443 to
+  #446); TFTP in the file share (#494); gsudo in-tab elevation (#448); OCSP/CRL revocation
+  checks (#447); Sysinternals/NirSoft/NanaRun detection (#450); WYSIWYG notes and a diagram
+  canvas (#451, #452, by design: no embedded web engine); projects (#498); the C#'s timing
+  settings (#499); screen reader support (iced has no AccessKit integration yet).
 
 [Unreleased]: https://github.com/VBlackJack/Heimdall-rs/commits/master

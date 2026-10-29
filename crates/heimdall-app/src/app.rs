@@ -1965,11 +1965,13 @@ pub enum Effect {
         /// The try it answers, handed back with the result.
         ticket: VaultTicket,
     },
-    /// Run the external credential provider's password command with test values; then send
-    /// [`ProviderMessage::Tested`].
+    /// Run the external credential provider's password command for a vault entry typed; then
+    /// send [`ProviderMessage::Tested`].
     TestCredentialProvider {
         /// The provider's settings as they are.
         settings: heimdall_core::credential_provider::ProviderSettings,
+        /// The vault entry to look up, as typed.
+        entry: String,
         /// The unlock secret, when one is kept and can be read.
         unlock: Option<Secret>,
     },
@@ -3609,6 +3611,8 @@ pub struct App {
     trusted_keys: TrustedKeys,
     /// What the Settings page's provider Test found.
     provider_test: Option<crate::credential_provider::ProviderTest>,
+    /// The vault entry the Test button looks up: typed, never saved.
+    provider_test_entry: String,
     viewport: GridSize,
     /// Physical pixels per logical one on the window's screen: RDP desktops ask for that
     /// scale, as mstsc does on a high-density screen.
@@ -3780,6 +3784,7 @@ impl App {
             announcements: status::Announcements::default(),
             trusted_keys: TrustedKeys::default(),
             provider_test: None,
+            provider_test_entry: String::new(),
             pending_paste: None,
             pending_plans: std::collections::VecDeque::new(),
             pending_operation: None,
