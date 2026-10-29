@@ -221,6 +221,10 @@ fn test_asks_the_core_and_shows_what_it_found() {
             "Test failed: program not found: op".to_owned(),
         ),
         (
+            ProviderTest::Failed(ProviderFailure::CredentialStoreUnreadable),
+            "Test failed: could not read the Windows Credential Manager".to_owned(),
+        ),
+        (
             ProviderTest::Failed(ProviderFailure::Launch {
                 program: "op".to_owned(),
                 reason: LaunchReason::PermissionDenied,
@@ -314,6 +318,10 @@ fn the_status_bar_says_why_the_provider_gave_nothing() {
                 reason: heimdall_app::credential_provider::LaunchReason::NotFound,
             },
             "External credential provider failed: program not found: op",
+        ),
+        (
+            Notice::ProviderStoreUnreadable,
+            "External credential provider failed: could not read the Windows Credential Manager",
         ),
         (
             Notice::ProviderTimedOut {

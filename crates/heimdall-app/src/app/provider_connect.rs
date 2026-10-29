@@ -245,6 +245,7 @@ impl App {
                     ProviderFailure::Launch { program, reason } => {
                         Notice::ProviderFailed { program, reason }
                     }
+                    ProviderFailure::CredentialStoreUnreadable => Notice::ProviderStoreUnreadable,
                     ProviderFailure::TimedOut { program, timeout } => Notice::ProviderTimedOut {
                         program,
                         milliseconds: crate::credential_provider::milliseconds(timeout),

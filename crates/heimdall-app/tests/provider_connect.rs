@@ -216,6 +216,10 @@ fn nothing_given_the_user_is_asked_and_told_why() {
             },
         ),
         (
+            ProviderFailure::CredentialStoreUnreadable,
+            Notice::ProviderStoreUnreadable,
+        ),
+        (
             ProviderFailure::TimedOut {
                 program: "vault".to_owned(),
                 timeout: std::time::Duration::from_secs(5),
@@ -545,9 +549,12 @@ async fn away_from_windows_the_credential_manager_says_it_is_not_there() {
     let answered = request.expect("asked").run().await;
     assert!(matches!(
         answered.result,
-        Err(ProviderFailure::Launch { .. })
+        Err(ProviderFailure::CredentialStoreUnreadable)
     ));
     app.update(Message::CredentialProvided(Box::new(answered)));
     assert!(shown(&app, tab, question), "the user is asked");
-    assert!(matches!(app.notice(), Some(Notice::ProviderFailed { .. })));
+    assert!(matches!(
+        app.notice(),
+        Some(Notice::ProviderStoreUnreadable)
+    ));
 }

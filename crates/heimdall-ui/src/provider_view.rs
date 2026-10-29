@@ -391,6 +391,12 @@ pub fn launch_reason_text(program: &str, reason: LaunchReason) -> String {
     }
 }
 
+/// The Windows Credential Manager could not be read, in the user's language.
+#[must_use]
+pub fn credential_store_unreadable_text() -> String {
+    fl!("ui-provider-store-unreadable")
+}
+
 /// What a command that could not run is said to have done.
 fn failure_text(failure: &ProviderFailure) -> String {
     match failure {
@@ -421,6 +427,10 @@ fn failure_text(failure: &ProviderFailure) -> String {
         ProviderFailure::Launch { program, reason } => fl!(
             "ui-settings-provider-test-error",
             detail = launch_reason_text(program, *reason)
+        ),
+        ProviderFailure::CredentialStoreUnreadable => fl!(
+            "ui-settings-provider-test-error",
+            detail = credential_store_unreadable_text()
         ),
         // The test sorts these into "no result" with the entry looked up; one that comes here
         // has no entry to name, which is the C# no-entry case.

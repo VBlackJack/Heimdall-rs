@@ -307,6 +307,7 @@ ui-settings-provider-test-unclosed-quote = Una comilla del comando no está cerr
 ui-settings-provider-test-error = Falló la prueba: { $detail }
 ui-provider-launch-not-found = programa no encontrado: { $program }
 ui-provider-launch-permission-denied = permiso denegado: { $program }
+ui-provider-store-unreadable = no se pudo leer el Administrador de credenciales de Windows
 ui-provider-launch-other = no se pudo iniciar { $program }
 ui-settings-provider-first-line = Usar solo la primera línea de la salida
 ui-settings-provider-first-line-help = Toma solo la primera línea no vacía de la salida del comando, ignorando el texto de estado final. Necesario para KeePass2 KPScript (que añade una línea "OK: ...") y útil para pass (notas después de la contraseña).

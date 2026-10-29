@@ -307,6 +307,7 @@ ui-settings-provider-test-unclosed-quote = Un guillemet de la commande n'est pas
 ui-settings-provider-test-error = Échec du test : { $detail }
 ui-provider-launch-not-found = programme introuvable : { $program }
 ui-provider-launch-permission-denied = autorisation refusée : { $program }
+ui-provider-store-unreadable = impossible de lire le Gestionnaire d'identification Windows
 ui-provider-launch-other = impossible de lancer { $program }
 ui-settings-provider-first-line = Utiliser uniquement la première ligne de sortie
 ui-settings-provider-first-line-help = Ne conserver que la première ligne non vide de la sortie de la commande, en ignorant le texte d'état final. Requis pour KeePass2 KPScript (qui ajoute une ligne "OK: ...") et utile pour pass (notes après le mot de passe).

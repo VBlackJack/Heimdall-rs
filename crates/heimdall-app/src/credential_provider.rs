@@ -80,9 +80,6 @@ const OUTPUT_CAPACITY: usize = MAX_OUTPUT_BYTES + 1 + 1024;
 const REAP_POLL: Duration = Duration::from_millis(10);
 const REAP_TRIES: u32 = 300;
 
-/// How the credential store is named when it cannot be read.
-const CREDENTIAL_MANAGER_NAME: &str = "Windows Credential Manager";
-
 /// One question to the vault at a time, in the order they were asked.
 static ONE_AT_A_TIME: Mutex<()> = Mutex::const_new(());
 
@@ -100,6 +97,9 @@ pub enum ProviderFailure {
         /// Why, sorted so that the UI can say it in the user's language.
         reason: LaunchReason,
     },
+    /// The Windows Credential Manager could not be read (or this is not Windows). Carries no
+    /// text: the UI names the store in the user's language.
+    CredentialStoreUnreadable,
     /// It ended with this exit code, or was ended by a signal.
     Exit(Option<i32>),
     /// It printed nothing.
@@ -421,27 +421,19 @@ pub async fn ask(
 /// # Errors
 ///
 /// [`ProviderFailure::Empty`] when there is no such credential, or its password is empty;
-/// [`ProviderFailure::Launch`] when the store cannot be read, or away from Windows.
+/// [`ProviderFailure::CredentialStoreUnreadable`] when the store cannot be read, or away from Windows.
 pub async fn from_credential_manager(target: String) -> Result<Provided, ProviderFailure> {
     let target = heimdall_core::paths::credential_target(&target);
     let read = tokio::task::spawn_blocking(move || heimdall_keyring::read_generic(&target))
         .await
-        .map_err(|_| credential_manager_failure())?;
+        .map_err(|_| ProviderFailure::CredentialStoreUnreadable)?;
     match read {
         Ok(Some(credential)) => Ok(Provided {
             password: Secret::new(String::clone(&credential.password)),
             username: credential.username,
         }),
         Ok(None) => Err(ProviderFailure::Empty),
-        Err(_) => Err(credential_manager_failure()),
-    }
-}
-
-/// The store cannot be read: named like a program, since the message names what failed.
-fn credential_manager_failure() -> ProviderFailure {
-    ProviderFailure::Launch {
-        program: CREDENTIAL_MANAGER_NAME.to_owned(),
-        reason: LaunchReason::Other,
+        Err(_) => Err(ProviderFailure::CredentialStoreUnreadable),
     }
 }
 

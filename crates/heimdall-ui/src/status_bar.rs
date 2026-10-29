@@ -590,6 +590,10 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                     milliseconds = milliseconds
                 )
             }
+            Notice::ProviderStoreUnreadable => fl!(
+                "ui-status-provider-failed",
+                detail = crate::provider_view::credential_store_unreadable_text()
+            ),
             Notice::ProviderOutputTooLong(name) => {
                 fl!("ui-status-provider-output-too-long", name = name.as_str())
             }

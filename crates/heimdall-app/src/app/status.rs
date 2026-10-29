@@ -421,6 +421,8 @@ pub enum Notice {
         /// Why it could not run.
         reason: LaunchReason,
     },
+    /// The external credential provider could not read the Windows Credential Manager.
+    ProviderStoreUnreadable,
     /// The external credential provider printed far more than a password, for this server.
     ProviderOutputTooLong(String),
     /// The external credential provider took too long: the program's file name and the delay it
