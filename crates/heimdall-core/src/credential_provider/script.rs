@@ -255,7 +255,14 @@ pub(super) fn quote(
     value: &str,
     token: &'static str,
 ) -> Result<String, TemplateProblem> {
-    if !value.chars().all(allowed) {
+    // A Windows shell reads a backslash as part of a path; a POSIX one (also behind `wsl`,
+    // `env`, `sudo`) reads it as an escape. Ending a `cmd` value with one would escape the
+    // closing quote of the template.
+    let windows_path = matches!(dialect, Dialect::Cmd | Dialect::PowerShell);
+    let backslash = |c: char| windows_path && c == BACKSLASH;
+    if !value.chars().all(|c| allowed(c) || backslash(c))
+        || (dialect == Dialect::Cmd && value.ends_with(BACKSLASH))
+    {
         return Err(TemplateProblem::UnquotableValue(token));
     }
     // On top of the list, a POSIX shell or PowerShell holds the value in single quotes unless

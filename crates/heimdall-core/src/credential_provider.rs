@@ -989,6 +989,9 @@ mod tests {
             "pwsh -Command",
         ] {
             for (class, value) in refused {
+                if class == "backslash" && matches!(program, "cmd /c" | "pwsh -Command") {
+                    continue;
+                }
                 assert_eq!(
                     command_line(
                         &format!(r#"{program} "get {{Title}}""#),
@@ -1094,6 +1097,48 @@ b",
         // Words of cmd that are not its script keep the old stripping.
         let line = command_line("cmd get {Title}", &lookup("a&b"), &settings()).expect("runs");
         assert_eq!(line[2], "ab");
+    }
+
+    #[test]
+    fn a_windows_path_passes_in_cmd_and_powershell_scripts_only() {
+        // C:\Vaults\Team Vault.kdbx is the test settings' database.
+        let line = command_line(
+            r#"cmd /c keepassxc-cli show -s -q -a Password "{Database}" "{Title}""#,
+            &lookup("web"),
+            &settings(),
+        )
+        .expect("runs");
+        assert_eq!(line[8], r"C:\Vaults\Team Vault.kdbx");
+        let keyed = ProviderSettings {
+            key_file: r"C:\keys\team.keyx".to_owned(),
+            ..settings()
+        };
+        let line = command_line(
+            r#"pwsh -Command "Get-Secret {KeyFile}""#,
+            &lookup("t"),
+            &keyed,
+        )
+        .expect("runs");
+        assert_eq!(line[2], r"Get-Secret 'C:\keys\team.keyx'");
+        // POSIX, and anything behind a wrapper, keeps refusing it.
+        for template in [
+            r#"wsl -- sh -c "get {KeyFile}""#,
+            r#"sh -c "get {KeyFile}""#,
+            r#"env bash -c "get {KeyFile}""#,
+        ] {
+            assert_eq!(
+                command_line(template, &lookup("t"), &keyed),
+                Err(TemplateProblem::UnquotableValue("{KeyFile}")),
+                "{template}"
+            );
+        }
+        // A cmd value ending in a backslash would eat the template's closing quote.
+        assert_eq!(
+            command_line(r#"cmd /c get "{Title}""#, &lookup(r"dir\"), &settings()),
+            Err(TemplateProblem::UnquotableValue("{Title}"))
+        );
+        // PowerShell holds it in single quotes: no such risk.
+        assert!(command_line(r#"pwsh -c "get {Title}""#, &lookup(r"dir\"), &settings()).is_ok());
     }
 
     #[test]
