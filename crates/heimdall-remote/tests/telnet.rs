@@ -161,6 +161,42 @@ async fn a_resize_reaches_a_server_that_asked_for_sizes() {
 }
 
 #[tokio::test]
+async fn a_negotiation_reply_never_lands_inside_what_is_typed() {
+    // Typed as many writes, while the server's offer comes in: the reply may fall between
+    // two writes, never inside one, and never split.
+    const CHUNKS: usize = 64;
+    const CHUNK: usize = 1024;
+    let reply = [IAC, WILL, NAWS, IAC, SB, NAWS, 0, 80, 0, 24, IAC, SE];
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accepted");
+        stream.write_all(&[IAC, DO, NAWS]).await.expect("offer");
+        read_exactly(&mut stream, reply.len() + CHUNKS * CHUNK).await
+    });
+
+    let session = connect(&config(port), CancellationToken::new())
+        .await
+        .expect("connected");
+    for _ in 0..CHUNKS {
+        session.input.write(vec![b'a'; CHUNK]).expect("typed");
+    }
+    let received = server.await.expect("server");
+    let at = received
+        .windows(reply.len())
+        .position(|window| window == reply)
+        .expect("the reply whole");
+    assert_eq!(at % CHUNK, 0, "between two writes, at {at}");
+    let mut typed = received[..at].to_vec();
+    typed.extend_from_slice(&received[at + reply.len()..]);
+    assert_eq!(
+        typed,
+        vec![b'a'; CHUNKS * CHUNK],
+        "what was typed, in order"
+    );
+}
+
+#[tokio::test]
 async fn closing_ends_the_session_on_both_sides() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
     let port = listener.local_addr().expect("address").port();

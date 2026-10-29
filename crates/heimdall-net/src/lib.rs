@@ -44,7 +44,7 @@ use std::pin::{Pin, pin};
 use std::task::Poll;
 use std::time::Duration;
 
-use tokio::net::TcpStream;
+use tokio::net::{TcpSocket, TcpStream};
 use tokio::time::Instant;
 
 /// How long an attempt runs alone before the next one starts beside it, as RFC 8305 section
@@ -163,6 +163,35 @@ pub async fn connect(host: &str, port: u16) -> io::Result<TcpStream> {
         .await
         .map(|connected| connected.stream)
         .map_err(io::Error::from)
+}
+
+/// [`connect`], each socket asking the system for TCP keepalive before it dials, so that a
+/// session idle on a path that died silently (a NAT or a firewall that dropped its state)
+/// reads an error instead of waiting for ever. The probes' timing is the system's own: the
+/// standard library and tokio set no other.
+///
+/// # Errors
+///
+/// As [`connect`]; also a socket that could not be made or set.
+pub async fn connect_kept_alive(host: &str, port: u16) -> io::Result<TcpStream> {
+    let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host, port)).await?.collect();
+    race(&addresses, CONNECTION_ATTEMPT_DELAY, None, |address| {
+        Box::pin(dial_kept_alive(address))
+    })
+    .await
+    .map(|(stream, _)| stream)
+    .map_err(io::Error::from)
+}
+
+/// One attempt at `address` from a socket with TCP keepalive on.
+async fn dial_kept_alive(address: SocketAddr) -> io::Result<TcpStream> {
+    let socket = if address.is_ipv6() {
+        TcpSocket::new_v6()?
+    } else {
+        TcpSocket::new_v4()?
+    };
+    socket.set_keepalive(true)?;
+    socket.connect(address).await
 }
 
 /// Connects to the first of `addresses` that answers, as the module says, within `timeout`
@@ -670,5 +699,33 @@ mod tests {
             stream.peer_addr().expect("peer"),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
         );
+    }
+
+    /// Whether the system sends keepalive probes on `stream`.
+    fn keepalive(stream: TcpStream) -> bool {
+        let socket = TcpSocket::from_std_stream(stream.into_std().expect("std"));
+        socket.keepalive().expect("read back")
+    }
+
+    #[tokio::test]
+    async fn a_connection_kept_alive_asks_the_system_for_probes_and_a_plain_one_does_not() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("address").port();
+        let kept = tokio::time::timeout(LIMIT + SLACK, connect_kept_alive("localhost", port))
+            .await
+            .expect("in time")
+            .expect("connected");
+        assert_eq!(
+            kept.peer_addr().expect("peer"),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+        );
+        assert!(keepalive(kept));
+        let plain = tokio::time::timeout(LIMIT + SLACK, connect("localhost", port))
+            .await
+            .expect("in time")
+            .expect("connected");
+        assert!(!keepalive(plain), "the system's default, left alone");
     }
 }
