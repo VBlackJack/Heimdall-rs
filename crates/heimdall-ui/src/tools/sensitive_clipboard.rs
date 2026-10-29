@@ -66,13 +66,15 @@ fn marker_formats() -> [(&'static str, [u8; 4]); 3] {
     ]
 }
 
-/// `text` written to the clipboard as a secret. Where the clipboard cannot carry the markers
-/// (not Windows, or the write failed) it is written as plain text, as before.
+/// `text` written to the clipboard as a secret. On Windows it is written with its markers or
+/// not at all: a copy without them would reach the clipboard history and the cloud clipboard,
+/// so a failure is logged and nothing is copied, as the C# `SecretClipboardGuard.TryCopy`
+/// returns false (the generator shows nothing then). Elsewhere, where the clipboard cannot
+/// carry the markers, it is written as plain text.
 pub fn write(text: String) -> Task<Message> {
     #[cfg(windows)]
     {
         let secret = zeroize::Zeroizing::new(text);
-        let fallback = secret.clone();
         Task::perform(
             async move {
                 tokio::task::spawn_blocking(move || write_marked(&secret))
@@ -81,12 +83,11 @@ pub fn write(text: String) -> Task<Message> {
             },
             |written| written,
         )
-        .then(move |written| match written {
-            Ok(()) => Task::none(),
-            Err(error) => {
-                log::warn!("the secret did not reach the clipboard with its markers: {error}");
-                iced::clipboard::write(fallback.to_string())
+        .then(|written| {
+            if let Err(error) = written {
+                log::warn!("the secret was not copied, its markers could not be set: {error}");
             }
+            Task::none()
         })
     }
     #[cfg(not(windows))]
@@ -97,7 +98,7 @@ pub fn write(text: String) -> Task<Message> {
 
 /// `text` and its markers put on the clipboard in place of what it held. The markers are
 /// registered before anything is written, and the clipboard is emptied again when one cannot
-/// be set, so the text never stays without them.
+/// be set, so the text never stays without them. The caller copies nothing else then.
 #[cfg(windows)]
 fn write_marked(text: &str) -> Result<(), String> {
     use clipboard_win::{Clipboard, raw};
