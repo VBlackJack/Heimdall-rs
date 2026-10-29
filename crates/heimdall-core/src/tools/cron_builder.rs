@@ -59,6 +59,50 @@ const INVARIANT_DAY_ABBREVIATIONS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu
 /// The characters a field may hold, as the C# `IsValidCronField`: digits and these.
 const FIELD_SYMBOLS: [char; 4] = ['*', '/', '-', ','];
 
+/// The month names a crontab takes, any case, January first, as Vixie cron and the C#
+/// `CronScheduleCalculator.MonthNames`.
+const MONTH_NAMES: [&str; 12] = [
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+];
+
+/// The day names a crontab takes, any case, Sunday first, as the C# `DayNames`.
+const DAY_NAMES: [&str; 7] = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+
+/// What a field reads besides numbers.
+#[derive(Debug, Clone, Copy)]
+struct Words {
+    /// The names it takes, each standing for the field's lowest value plus its place.
+    names: &'static [&'static str],
+    /// Whether a range may end on Sunday, written 0 or `SUN`, after its start (`FRI-SUN`):
+    /// Sunday then closes the week, as day 7, as the C# reads it.
+    sunday_closes: bool,
+}
+
+/// A field of numbers only.
+const NUMBERS_ONLY: Words = Words {
+    names: &[],
+    sunday_closes: false,
+};
+
+/// What each field of the builder reads: numbers only, as the C# `CrontabBuilderView`.
+const BUILDER_WORDS: [Words; FIELD_COUNT] = [NUMBERS_ONLY; FIELD_COUNT];
+
+/// What each field of a crontab reads: the month and the day of the week take their names
+/// too, as cron does.
+const CRONTAB_WORDS: [Words; FIELD_COUNT] = [
+    NUMBERS_ONLY,
+    NUMBERS_ONLY,
+    NUMBERS_ONLY,
+    Words {
+        names: &MONTH_NAMES,
+        sunday_closes: false,
+    },
+    Words {
+        names: &DAY_NAMES,
+        sunday_closes: true,
+    },
+];
+
 /// What is wrong with a typed expression, as the C# `OnManualInputChanged`
 /// (`CrontabBuilderView.xaml.cs:252-312`) checks it in turn.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,10 +168,11 @@ pub fn validate(text: &str) -> Option<CronProblem> {
             text: (*part).to_owned(),
         });
     }
-    check_values(&parts, &FIELD_RANGES)
+    check_values(&parts, &FIELD_RANGES, &BUILDER_WORDS)
 }
 
-/// [`validate`] as a crontab reads its fields, a day of the week of 7 being Sunday.
+/// [`validate`] as a crontab reads its fields, a day of the week of 7 being Sunday, and
+/// the month and the day of the week taking their names (`JAN`, `mon`), as cron does.
 #[must_use]
 pub fn crontab_validate(text: &str) -> Option<CronProblem> {
     let parts = split(text);
@@ -136,26 +181,32 @@ pub fn crontab_validate(text: &str) -> Option<CronProblem> {
     }
     if let Some((field, part)) = parts
         .iter()
+        .zip(CRONTAB_WORDS)
         .enumerate()
-        .find(|(_, part)| !is_valid_field(part))
+        .find(|(_, (part, words))| !is_valid_crontab_field(part, *words))
+        .map(|(field, (part, _))| (field, part))
     {
         return Some(CronProblem::InvalidField {
             field,
             text: (*part).to_owned(),
         });
     }
-    check_values(&parts, &CRONTAB_FIELD_RANGES)
+    check_values(&parts, &CRONTAB_FIELD_RANGES, &CRONTAB_WORDS)
 }
 
 /// The first field of `parts` that is malformed, or whose values leave its bounds in
-/// `ranges`, each checked before anything is expanded.
-fn check_values(parts: &[&str], ranges: &[(i64, i64); FIELD_COUNT]) -> Option<CronProblem> {
+/// `ranges`, each checked before anything is expanded; a name not in `words` is malformed.
+fn check_values(
+    parts: &[&str],
+    ranges: &[(i64, i64); FIELD_COUNT],
+    words: &[Words; FIELD_COUNT],
+) -> Option<CronProblem> {
     parts
         .iter()
-        .zip(ranges)
+        .zip(ranges.iter().zip(words))
         .enumerate()
         .find_map(
-            |(field, (part, (min, max)))| match expand(part, *min, *max) {
+            |(field, (part, ((min, max), words)))| match expand(part, *min, *max, *words) {
                 Ok(_) => None,
                 Err(FieldError::Syntax) => Some(CronProblem::Malformed {
                     field,
@@ -178,6 +229,17 @@ fn is_valid_field(field: &str) -> bool {
         && field
             .chars()
             .all(|c| c.is_ascii_digit() || FIELD_SYMBOLS.contains(&c))
+}
+
+/// [`is_valid_field`], letters too in a field that takes names; which names is checked as
+/// the field is expanded.
+fn is_valid_crontab_field(field: &str, words: Words) -> bool {
+    !field.is_empty()
+        && field.chars().all(|c| {
+            c.is_ascii_digit()
+                || FIELD_SYMBOLS.contains(&c)
+                || (!words.names.is_empty() && c.is_ascii_alphabetic())
+        })
 }
 
 /// `text` as .NET's `int.TryParse` reads it here: digits only, as the field holds no sign
@@ -207,14 +269,29 @@ fn value(text: &str) -> Result<i64, FieldError> {
     Ok(text.parse::<i64>().unwrap_or(i64::MAX))
 }
 
+/// A value of a field that takes `words`: a number, or one of its names in any case, which
+/// stands for `min` plus its place.
+fn named_value(text: &str, words: Words, min: i64) -> Result<i64, FieldError> {
+    if let Some(place) = words
+        .names
+        .iter()
+        .position(|name| name.eq_ignore_ascii_case(text))
+    {
+        return i64::try_from(place)
+            .map(|place| min + place)
+            .map_err(|_| FieldError::Syntax);
+    }
+    value(text)
+}
+
 /// The values `field` matches between `min` and `max`, as the C# `ExpandField`
 /// (`CrontabBuilderView.xaml.cs:518-562`) reads it, without its leniencies: each part of the
 /// list is `*`, a number or a range `a-b`, with a step `/n` or not; `a/n` runs from `a` to
 /// the field's end, as the C#. Every bound is checked before a value is expanded, so
 /// `0-2147483647` is refused, not counted out; a malformed part is refused, never read as
 /// the field's start as the C# does with `10-20/5`; a step is 1 to the field's largest
-/// value.
-fn expand(field: &str, min: i64, max: i64) -> Result<BTreeSet<i64>, FieldError> {
+/// value. A value may be one of the names of `words`, as the C# `CronScheduleCalculator`.
+fn expand(field: &str, min: i64, max: i64, words: Words) -> Result<BTreeSet<i64>, FieldError> {
     let mut values = BTreeSet::new();
     for part in field.split(',') {
         let (base, step) = match part.split_once('/') {
@@ -224,9 +301,18 @@ fn expand(field: &str, min: i64, max: i64) -> Result<BTreeSet<i64>, FieldError> 
         let (start, end) = if base == ANY {
             (min, max)
         } else if let Some((first, last)) = base.split_once('-') {
-            (value(first)?, value(last)?)
+            let (start, end) = (
+                named_value(first, words, min)?,
+                named_value(last, words, min)?,
+            );
+            // `FRI-SUN`: Sunday closes the week, as 7, where the field takes 7.
+            if words.sunday_closes && end == min && start > end && max >= SUNDAY_AS_SEVEN {
+                (start, SUNDAY_AS_SEVEN)
+            } else {
+                (start, end)
+            }
         } else {
-            let single = value(base)?;
+            let single = named_value(base, words, min)?;
             (single, if step.is_some() { max } else { single })
         };
         if start < min || end > max || start > end {
@@ -289,23 +375,23 @@ pub fn crontab_next_runs(fields: &[String; FIELD_COUNT], now: Minute, count: usi
 /// The day of the week a crontab may write Sunday as, besides 0.
 const SUNDAY_AS_SEVEN: i64 = 7;
 
-/// The next `count` minutes after `now` that `fields` match; with `sunday_seven`, a day of
-/// the week of 7 matches Sunday.
+/// The next `count` minutes after `now` that `fields` match; with `sunday_seven`, read as a
+/// crontab: a day of the week of 7 matches Sunday, and months and days take their names.
 fn runs(
     fields: &[String; FIELD_COUNT],
     now: Minute,
     count: usize,
     sunday_seven: bool,
 ) -> Vec<String> {
-    let ranges = if sunday_seven {
-        CRONTAB_FIELD_RANGES
+    let (ranges, words) = if sunday_seven {
+        (CRONTAB_FIELD_RANGES, CRONTAB_WORDS)
     } else {
-        FIELD_RANGES
+        (FIELD_RANGES, BUILDER_WORDS)
     };
     let expanded: Result<Vec<BTreeSet<i64>>, FieldError> = fields
         .iter()
-        .zip(ranges)
-        .map(|(field, (min, max))| expand(field, min, max))
+        .zip(ranges.into_iter().zip(words))
+        .map(|(field, ((min, max), words))| expand(field, min, max, words))
         .collect();
     let Ok(mut sets) = expanded else {
         return Vec::new();
@@ -315,7 +401,7 @@ fn runs(
     }
     // When both days are restricted, a day matching either runs, as Vixie cron reads them
     // (`0 9 1 * 1`: every 1st and every Monday); a field starting with `*` counts as
-    // unrestricted, as there. The C# requires both.
+    // unrestricted, as there and in the C# `CronScheduleCalculator`.
     let either_day =
         !fields[DAY_OF_MONTH].starts_with(ANY) && !fields[DAY_OF_WEEK].starts_with(ANY);
     let mut runs = Vec::new();

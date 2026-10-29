@@ -884,6 +884,204 @@ fn both_days_restricted_run_on_either_as_cron_reads_them() {
     );
 }
 
+/// A crontab's five fields as written, names left as they are.
+fn crontab_fields(text: &str) -> [String; cron_builder::FIELD_COUNT] {
+    let parts: Vec<String> = text.split(' ').map(str::to_owned).collect();
+    parts.try_into().expect(text)
+}
+
+/// Saturday 2026-04-18 10:00, the C# `CronScheduleCalculatorTests.Anchor`.
+const CRON_ANCHOR: i64 = 1_776_506_400;
+
+/// The C# `CronScheduleCalculatorTests.ScheduleTable`: a schedule, how many runs to ask for
+/// from [`CRON_ANCHOR`], and the runs.
+const CRONTAB_TABLE: [(&str, usize, &[&str]); 13] = [
+    // Both day fields restricted: the 1st or any Monday.
+    (
+        "0 0 1 * 1",
+        4,
+        &[
+            "2026-04-20 00:00 (Mon)",
+            "2026-04-27 00:00 (Mon)",
+            "2026-05-01 00:00 (Fri)",
+            "2026-05-04 00:00 (Mon)",
+        ],
+    ),
+    // One a star: the other alone decides.
+    (
+        "0 0 1 * *",
+        2,
+        &["2026-05-01 00:00 (Fri)", "2026-06-01 00:00 (Mon)"],
+    ),
+    (
+        "0 0 * * 1",
+        2,
+        &["2026-04-20 00:00 (Mon)", "2026-04-27 00:00 (Mon)"],
+    ),
+    // A step on a star is still a star: both must match.
+    (
+        "0 0 */10 * 1",
+        3,
+        &[
+            "2026-05-11 00:00 (Mon)",
+            "2026-06-01 00:00 (Mon)",
+            "2026-08-31 00:00 (Mon)",
+        ],
+    ),
+    // A range with a step starts at its first value and stops at its last.
+    (
+        "1-10/2 * * * *",
+        6,
+        &[
+            "2026-04-18 10:01 (Sat)",
+            "2026-04-18 10:03 (Sat)",
+            "2026-04-18 10:05 (Sat)",
+            "2026-04-18 10:07 (Sat)",
+            "2026-04-18 10:09 (Sat)",
+            "2026-04-18 11:01 (Sat)",
+        ],
+    ),
+    (
+        "55/3 * * * *",
+        3,
+        &[
+            "2026-04-18 10:55 (Sat)",
+            "2026-04-18 10:58 (Sat)",
+            "2026-04-18 11:55 (Sat)",
+        ],
+    ),
+    // Day names, any case, and a range of them.
+    (
+        "0 9 * * MON-FRI",
+        3,
+        &[
+            "2026-04-20 09:00 (Mon)",
+            "2026-04-21 09:00 (Tue)",
+            "2026-04-22 09:00 (Wed)",
+        ],
+    ),
+    (
+        "0 9 * * mon,sun",
+        3,
+        &[
+            "2026-04-19 09:00 (Sun)",
+            "2026-04-20 09:00 (Mon)",
+            "2026-04-26 09:00 (Sun)",
+        ],
+    ),
+    // Sunday closes a range that starts after it.
+    (
+        "0 9 * * FRI-SUN",
+        4,
+        &[
+            "2026-04-19 09:00 (Sun)",
+            "2026-04-24 09:00 (Fri)",
+            "2026-04-25 09:00 (Sat)",
+            "2026-04-26 09:00 (Sun)",
+        ],
+    ),
+    // Month names in a list and in a range.
+    (
+        "0 0 * JAN,JUL *",
+        2,
+        &["2026-07-01 00:00 (Wed)", "2026-07-02 00:00 (Thu)"],
+    ),
+    (
+        "30 6 1 JUN-AUG *",
+        3,
+        &[
+            "2026-06-01 06:30 (Mon)",
+            "2026-07-01 06:30 (Wed)",
+            "2026-08-01 06:30 (Sat)",
+        ],
+    ),
+    // Names and numbers read the same.
+    (
+        "0 9 * 7 1",
+        2,
+        &["2026-07-06 09:00 (Mon)", "2026-07-13 09:00 (Mon)"],
+    ),
+    (
+        "0 9 * jul Mon",
+        2,
+        &["2026-07-06 09:00 (Mon)", "2026-07-13 09:00 (Mon)"],
+    ),
+];
+
+#[test]
+fn a_crontab_schedule_runs_as_cron_runs_it_names_included() {
+    let now = Minute::of(&Instant::from_unix_seconds(CRON_ANCHOR).wall_clock(0));
+    for (text, count, runs) in CRONTAB_TABLE {
+        assert_eq!(cron_builder::crontab_validate(text), None, "{text}");
+        assert_eq!(
+            cron_builder::crontab_next_runs(&crontab_fields(text), now, count),
+            runs,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn a_crontab_name_unknown_or_out_of_its_field_and_a_bad_step_run_nothing() {
+    let now = Minute::of(&Instant::from_unix_seconds(CRON_ANCHOR).wall_clock(0));
+    for (text, problem) in [
+        (
+            "0 9 * * XYZ",
+            CronProblem::Malformed {
+                field: 4,
+                text: "XYZ".to_owned(),
+            },
+        ),
+        (
+            "0 9 * FOO *",
+            CronProblem::Malformed {
+                field: 3,
+                text: "FOO".to_owned(),
+            },
+        ),
+        (
+            "0 9 JAN * *",
+            CronProblem::InvalidField {
+                field: 2,
+                text: "JAN".to_owned(),
+            },
+        ),
+        (
+            "0 9 * * MON-",
+            CronProblem::Malformed {
+                field: 4,
+                text: "MON-".to_owned(),
+            },
+        ),
+        ("*/0 * * * *", CronProblem::OutOfRange { field: 0 }),
+        (
+            "1-10/x * * * *",
+            CronProblem::InvalidField {
+                field: 0,
+                text: "1-10/x".to_owned(),
+            },
+        ),
+    ] {
+        assert_eq!(
+            cron_builder::crontab_validate(text),
+            Some(problem),
+            "{text}"
+        );
+        assert!(
+            cron_builder::crontab_next_runs(&crontab_fields(text), now, 1).is_empty(),
+            "{text}"
+        );
+    }
+    // The builder, as the C# `CrontabBuilderView`, takes numbers only.
+    assert_eq!(
+        cron_builder::validate("0 9 * * MON"),
+        Some(CronProblem::InvalidField {
+            field: 4,
+            text: "MON".to_owned()
+        })
+    );
+}
+
 #[test]
 fn a_cron_expression_is_described_as_the_csharp_describes_it() {
     for (text, description) in [
