@@ -23,7 +23,7 @@ Include in the report:
 | --- | --- |
 | Suspected vulnerability | [Private vulnerability reporting](https://github.com/VBlackJack/Heimdall-rs/security/advisories/new) |
 | Bug, crash, regression | [Issues](https://github.com/VBlackJack/Heimdall-rs/issues) |
-| Question, idea, feedback | [Discussions](https://github.com/VBlackJack/Heimdall-rs/discussions) |
+| Question, idea, feedback | [Issues](https://github.com/VBlackJack/Heimdall-rs/issues) |
 
 ## There is no mail channel
 
@@ -37,8 +37,8 @@ mail sent to them receives no reply. Use one of the GitHub channels above.
 What this build does:
 
 - **Secrets at rest**: saved passwords go to the vault, a file sealed with AES-256-GCM under a key derived from the master password by Argon2id, or, when no master password is set, to the system's credential store (Windows Credential Manager, the Secret Service on Linux). Windows Hello can unlock the vault; any failure falls back to the master password. Secrets the C# Heimdall protected with DPAPI are never imported.
-- **Host keys and certificates**: an unknown SSH host key is shown and asked about; a changed key, a key of another algorithm or a host certificate refuses the connection. An FTPS or VNC (VeNCrypt) certificate the system does not trust is pinned only once you accept it, checked again at every connection, and decided before any password is sent; a new key raises the key-changed alarm.
-- **Process execution**: programs are started from a path and a list of arguments, never through a command line a shell reads. The system programs the tools run are named by their full path, never looked up on the `PATH`; the Git sync of the command library allows only the `https` and `ssh` transports, without hooks.
+- **Host keys and certificates**: an unknown SSH host key is shown and asked about; a changed key, a key of another algorithm or a host certificate refuses the connection. An FTPS or VNC (VeNCrypt) certificate the system does not trust is pinned only once you accept it, checked again at every connection, and decided before any password is sent; a new key raises the key-changed alarm. An RDP server's certificate is pinned whole at the first acceptance, with no certificate authority consulted, and another key refuses the connection.
+- **Process execution**: programs are started from a path and a list of arguments, never through a command line a shell reads. The system programs the tools run through the shared runner (`system_program`) are named by their full path, in the system's own folder, never looked up on the `PATH`; the Git sync of the command library allows only the `https` and `ssh` transports, without hooks.
 - **Imported data**: a command that comes from an import or a shared session file never runs before you confirm it (see [Differences on purpose](docs/migration-from-csharp.md#differences-on-purpose)).
 - **File share**: read-only, a random 256-bit token per share, the loopback address by default and every interface at once refused. A link, junction or other reparse point under the shared folder is never served nor followed.
 - **Logs**: messages, typed input and clipboard text are logged in redacted forms, and terminal output is never logged. The masked copy of a terminal's output replaces the secrets its rules recognise; it is a heuristic, to be reviewed before the text is shared.
@@ -50,4 +50,4 @@ Known limitations:
 - No signed release yet (#454).
 - The vault holds the decrypted secrets in memory while it is unlocked (#536).
 - No certificate revocation check, neither OCSP nor CRL (#447).
-- The share folder serves 16 connections at once, and idle connections can hold all of them (#505).
+- The share folder serves 16 connections at once, and idle connections can hold all of them (#505). Its token is also accepted as a `token` query parameter, so it can land in a browser's history or a proxy's log, and outside the loopback address the traffic is plain HTTP.
