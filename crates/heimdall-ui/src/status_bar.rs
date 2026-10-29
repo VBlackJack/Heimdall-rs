@@ -589,6 +589,11 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                     milliseconds = milliseconds
                 )
             }
+            Notice::ProviderUnquotableValue { placeholder, name } => fl!(
+                "ui-status-provider-unquotable-value",
+                placeholder = placeholder.as_str(),
+                name = name.as_str()
+            ),
             Notice::ProviderOptionLikeValue { placeholder, name } => fl!(
                 "ui-status-provider-option-like-value",
                 placeholder = placeholder.as_str(),

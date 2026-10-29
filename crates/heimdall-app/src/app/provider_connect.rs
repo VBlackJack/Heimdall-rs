@@ -240,6 +240,12 @@ impl App {
                         program,
                         milliseconds: crate::credential_provider::milliseconds(timeout),
                     },
+                    ProviderFailure::Template(TemplateProblem::UnquotableValue(placeholder)) => {
+                        Notice::ProviderUnquotableValue {
+                            placeholder: placeholder.to_owned(),
+                            name,
+                        }
+                    }
                     ProviderFailure::Template(TemplateProblem::OptionLikeValue(placeholder)) => {
                         Notice::ProviderOptionLikeValue {
                             placeholder: placeholder.to_owned(),

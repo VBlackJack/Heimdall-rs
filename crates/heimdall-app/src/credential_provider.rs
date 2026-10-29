@@ -40,20 +40,35 @@ use zeroize::Zeroizing;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// Windows: the program that ends a process and the processes it started.
+/// Windows: the environment variable holding the Windows directory.
 #[cfg(windows)]
-const TASKKILL_PROGRAM: &str = "taskkill";
+const SYSTEM_ROOT_VARIABLE: &str = "SystemRoot";
+/// Windows: the Windows directory when that variable is not set.
+#[cfg(windows)]
+const DEFAULT_SYSTEM_ROOT: &str = r"C:\Windows";
+/// Windows: the system directory inside the Windows directory.
+#[cfg(windows)]
+const SYSTEM_DIRECTORY: &str = "System32";
+/// Windows: the program that ends a process and the processes it started, in the system
+/// directory: never found through `PATH` or the application's folder.
+#[cfg(windows)]
+const TASKKILL_PROGRAM: &str = "taskkill.exe";
 /// `taskkill`'s arguments before the process number: the tree below it, by force.
 #[cfg(windows)]
 const TASKKILL_TREE_ARGS: [&str; 3] = ["/T", "/F", "/PID"];
 
-/// Elsewhere: the program that signals a process group.
+/// Elsewhere: where the program that signals a process group lives, the first that exists.
 #[cfg(unix)]
-const KILL_PROGRAM: &str = "kill";
+const KILL_PROGRAMS: [&str; 2] = ["/bin/kill", "/usr/bin/kill"];
 /// `kill`'s arguments before the group: the signal that cannot be caught, then the end of the
 /// options, since the group is given as a negative number.
 #[cfg(unix)]
 const KILL_GROUP_ARGS: [&str; 3] = ["-s", "KILL", "--"];
+
+/// The most output of a command that is kept: a password is far shorter.
+const MAX_OUTPUT_BYTES: u64 = 64 * 1024;
+/// The room the output gets at first: the limit, and the probe `read_to_end` makes past it.
+const OUTPUT_CAPACITY: usize = 64 * 1024 + 1024;
 
 /// One question to the vault at a time, in the order they were asked.
 static ONE_AT_A_TIME: Mutex<()> = Mutex::const_new(());
@@ -95,21 +110,41 @@ pub fn milliseconds(timeout: Duration) -> u64 {
 }
 
 /// Ends the process `pid` and every process it started.
+///
+/// Windows: `taskkill /T /F /PID`, which finds the children by their parent's number alone and
+/// does not check when they were created. A job object would be exact, but needs FFI or a new
+/// direct dependency. The remaining limit: a process started by a command that has already
+/// ended, whose number was then given to another process, could be taken for a child. The
+/// caller keeps the window small by asking only for a command it still holds and that has not
+/// ended (`Child::try_wait`).
+///
+/// Unix: the command leads a process group of its own (see `run`), and its number is the
+/// group's; the group is signalled with `kill`.
 fn kill_tree(pid: u32) {
     #[cfg(windows)]
     let mut command = {
         use std::os::windows::process::CommandExt as _;
-        let mut command = std::process::Command::new(TASKKILL_PROGRAM);
+        let root =
+            std::env::var_os(SYSTEM_ROOT_VARIABLE).unwrap_or_else(|| DEFAULT_SYSTEM_ROOT.into());
+        let directory = std::path::Path::new(&root).join(SYSTEM_DIRECTORY);
+        let mut command = std::process::Command::new(directory.join(TASKKILL_PROGRAM));
         command
             .args(TASKKILL_TREE_ARGS)
             .arg(pid.to_string())
+            .current_dir(&directory)
             .creation_flags(CREATE_NO_WINDOW);
         command
     };
     #[cfg(unix)]
     let mut command = {
-        // The command leads a process group of its own (see `run`): its number is the group's.
-        let mut command = std::process::Command::new(KILL_PROGRAM);
+        let Some(program) = KILL_PROGRAMS
+            .iter()
+            .find(|path| std::path::Path::new(path).exists())
+        else {
+            // No `kill` to run: the direct child is still killed by the caller.
+            return;
+        };
+        let mut command = std::process::Command::new(program);
         command.args(KILL_GROUP_ARGS).arg(format!("-{pid}"));
         command
     };
@@ -136,7 +171,9 @@ impl TreeKill {
 impl Drop for TreeKill {
     fn drop(&mut self) {
         if let Some(pid) = self.pid {
-            kill_tree(pid);
+            // A thread of its own: a drop may run on the executor, which must not wait for a
+            // process to start and end. The command is dropped (and killed) at once after.
+            std::thread::spawn(move || kill_tree(pid));
         }
     }
 }
@@ -184,12 +221,18 @@ async fn run(
             // A program that does not read its input closes it: not a failure.
             let _ = stdin.write_all(&line).await;
         }
-        let mut output = Zeroizing::new(Vec::new());
+        // Sized once and never grown: a vector that grows leaves its earlier copies behind,
+        // freed but not zeroed, with the password in them.
+        let mut output = Zeroizing::new(Vec::with_capacity(OUTPUT_CAPACITY));
         if let Some(mut stdout) = stdout {
-            stdout
+            (&mut stdout)
+                .take(MAX_OUTPUT_BYTES)
                 .read_to_end(&mut output)
                 .await
                 .map_err(|error| ProviderFailure::Launch(error.to_string()))?;
+            // What is past the limit is read and dropped, so that the command is not left
+            // blocked on a full pipe.
+            let _ = tokio::io::copy(&mut stdout, &mut tokio::io::sink()).await;
         }
         let status = waiting
             .wait()
@@ -207,6 +250,12 @@ async fn run(
             tree.disarm();
         }
         return result;
+    }
+    // Windows: only a command still running is asked for by its number, which another process
+    // could have taken once it ended and was reaped.
+    #[cfg(windows)]
+    if !matches!(child.try_wait(), Ok(None)) {
+        tree.disarm();
     }
     if let Some(pid) = tree.pid {
         // Off the executor's thread: a process to start and wait for.
@@ -585,6 +634,58 @@ mod tests {
             .collect();
         for task in tasks {
             assert!(task.await.expect("joined"), "two commands ran side by side");
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_question_given_up_leaves_the_queue_and_stops_its_command() {
+        let dir = tempfile::tempdir().expect("dir");
+        let pid_file = dir.path().join("running.pid");
+        let running = ProviderSettings {
+            database: pid_file.display().to_string(),
+            ..settings(r#"sh -c "sleep 30 & echo $! > {Database}; wait""#)
+        };
+        let first = tokio::spawn({
+            let running = running.clone();
+            async move { ask(&running, &lookup(None), None).await }
+        });
+        // Wait until the first command is in the vault.
+        for _ in 0..100 {
+            if pid_file.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(pid_file.exists(), "the first question never started");
+        // A second question queues behind it, and a third.
+        let queued = tokio::spawn({
+            let running = running.clone();
+            async move { ask(&running, &lookup(None), None).await }
+        });
+        let waiting = tokio::spawn(async move {
+            ask(&settings("printf pw"), &lookup(None), None)
+                .await
+                .is_ok()
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        // The tab of the second one closes: its task is aborted, and leaves the queue.
+        queued.abort();
+        assert!(queued.await.expect_err("aborted").is_cancelled());
+        // The first one is abandoned too: its whole tree goes, and the third one gets its turn.
+        first.abort();
+        assert!(first.await.expect_err("aborted").is_cancelled());
+        let answered = tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .expect("the queue moved on")
+            .expect("joined");
+        assert!(answered, "the third question was answered");
+        let pid = std::fs::read_to_string(&pid_file).expect("the grandchild's number");
+        let pid = pid.trim();
+        let mut tries = 0;
+        while !gone(pid) {
+            tries += 1;
+            assert!(tries < 60, "the abandoned command's child {pid} still runs");
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 

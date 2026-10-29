@@ -423,6 +423,14 @@ pub enum Notice {
         milliseconds: u64,
     },
     /// The external credential provider was not run: the value of this placeholder, for this
+    /// server, cannot be held as one word by the shell that reads the command.
+    ProviderUnquotableValue {
+        /// The placeholder, braces included.
+        placeholder: String,
+        /// The server.
+        name: String,
+    },
+    /// The external credential provider was not run: the value of this placeholder, for this
     /// server, starts with `-` and would have been read as an option of the tool.
     ProviderOptionLikeValue {
         /// The placeholder, braces included.

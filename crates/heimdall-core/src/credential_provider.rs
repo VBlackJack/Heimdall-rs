@@ -24,6 +24,10 @@
 
 use std::time::Duration;
 
+mod script;
+
+use script::Dialect;
+
 /// Where the password comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ProviderKind {
@@ -118,9 +122,10 @@ pub struct Preset {
 /// The command templates offered, as the C# quick setup lists them.
 ///
 /// Where a tool reads `--` as the end of its options, the entry names follow it, so that a
-/// name starting with `-` is never read as a flag. The others (`KPScript`, `op`) cannot have it
-/// there (`KPScript` has no such marker, and `op item get` takes its flags after the name, as the
-/// C# preset writes it): a value starting with `-` is refused for them, see [`command_line`].
+/// name starting with `-` is never read as a flag. `KPScript` has no such marker: a value
+/// starting with `-` is refused for it, see [`command_line`]. The 1Password preset has the C#
+/// words with the flags moved before the name, since `op` (cobra) reads what follows `--` as
+/// operands.
 ///
 /// `KPScript` prints an `OK: ...` status line after the value and `pass` prints the notes after
 /// the password, so both turn "first line only" on; `KPScript` also takes `-FailIfNoEntry`, so
@@ -153,7 +158,7 @@ pub const PRESETS: [Preset; 7] = [
     },
     Preset {
         name: "1Password CLI",
-        command: r#"op item get "{Title}" --fields label=password --reveal"#,
+        command: r#"op item get --fields label=password --reveal -- "{Title}""#,
         first_line_only: false,
     },
     Preset {
@@ -206,6 +211,9 @@ pub enum TemplateProblem {
     /// The value of this placeholder starts with `-` and would stand where the tool reads an
     /// option, with no `--` before it to end them. Refused: it could be a flag of the tool.
     OptionLikeValue(&'static str),
+    /// The value of this placeholder cannot be held as one word by the shell that reads the
+    /// script it stands in (a `cmd` metacharacter, a quote the template already opened...).
+    UnquotableValue(&'static str),
 }
 
 /// The program and arguments `template` runs for `lookup`, placeholders filled.
@@ -213,14 +221,19 @@ pub enum TemplateProblem {
 /// The placeholders are filled in one pass, so that a value holding another placeholder's name
 /// (`{KeyFile}` in an entry name) is kept as it is, as the C# `ArgumentTemplate.Expand`.
 ///
-/// A value starting with `-` that would open an argument is refused unless a `--` argument of
-/// the template comes before it: the tool would read it as an option, and a vault entry named
-/// `--output=x` must not be able to change what the tool does.
+/// A value starting with `-` (or a Unicode dash) that would open an argument is refused unless
+/// a `--` argument of the template comes before it: the tool would read it as an option, and a
+/// vault entry named `--output=x` must not be able to change what the tool does.
+///
+/// A script a shell reads (the word after `sh -c`, the words after `cmd /c`...) gets each value
+/// quoted for that shell, so that it stays one word whatever it holds; where the shell has no
+/// safe quoting the value is refused. The check for a leading dash runs on the words of the
+/// script too, and an outer `--` (`wsl -- sh -c "..."`) does not end the inner options.
 ///
 /// # Errors
 ///
 /// [`TemplateProblem`] when there is nothing to run, a quote is not closed, a key file is
-/// asked for and none is chosen, or a value would be read as an option.
+/// asked for and none is chosen, or a value would be read as an option or cannot be quoted.
 pub fn command_line(
     template: &str,
     lookup: &Lookup,
@@ -233,39 +246,58 @@ pub fn command_line(
     if contains_placeholder(template, "{KeyFile}") && settings.key_file.trim().is_empty() {
         return Err(TemplateProblem::NoKeyFile);
     }
-    let shell = is_shell_target(program);
-    let clean = |value: &str| {
-        if shell {
-            strip_for_shell(value)
-        } else {
-            // One argument whatever it holds; a line break is never a value's.
-            value
-                .chars()
-                .filter(|c| !matches!(c, '\r' | '\n'))
-                .collect()
-        }
-    };
     let port = lookup.port.to_string();
     let values = [
-        ("{Host}", clean(&lookup.host)),
+        ("{Host}", lookup.host.clone()),
         ("{Port}", port),
-        ("{User}", clean(lookup.user.as_deref().unwrap_or_default())),
-        ("{Title}", clean(&lookup.title)),
-        ("{Database}", clean(settings.database.trim())),
-        ("{KeyFile}", clean(settings.key_file.trim())),
+        ("{User}", lookup.user.clone().unwrap_or_default()),
+        ("{Title}", lookup.title.clone()),
+        ("{Database}", settings.database.trim().to_owned()),
+        ("{KeyFile}", settings.key_file.trim().to_owned()),
     ];
-    let mut line = Vec::with_capacity(words.len());
+    let shell = is_shell_target(program);
+    let mut owner = script::dialect_of(program);
+    let mut script_rest: Option<Dialect> = None;
+    let mut script_next: Option<Dialect> = None;
     let mut options_ended = false;
+    let mut outer_ended = false;
+    let mut line = Vec::with_capacity(words.len());
     for (index, word) in words.iter().enumerate() {
         // The program itself is the template's, never a value's.
         if index == 0 {
             line.push(word.clone());
             continue;
         }
-        let expanded = expand(word, &values, options_ended)?;
-        // Only a `--` the template wrote ends the options, never a value.
-        options_ended |= word == END_OF_OPTIONS;
-        line.push(expanded);
+        let script = script_rest.or_else(|| script_next.take());
+        let context = Context {
+            script,
+            shell,
+            options_ended,
+        };
+        line.push(expand(word, &values, &context)?);
+        if script.is_none() {
+            if let Some(dialect) = owner {
+                match script::script_follows(dialect, word) {
+                    Some(true) => script_rest = Some(dialect),
+                    Some(false) => script_next = Some(dialect),
+                    None => {}
+                }
+            }
+            if !word.contains('{')
+                && let Some(dialect) = script::dialect_of(word)
+            {
+                owner = Some(dialect);
+            }
+        }
+        // Only a `--` the template wrote ends the options, never a value. Behind a shell the
+        // first one is the shell's own (`wsl --`): the command it runs has its options still.
+        if word == END_OF_OPTIONS {
+            if owner.is_some() && !outer_ended {
+                outer_ended = true;
+            } else {
+                options_ended = true;
+            }
+        }
     }
     Ok(line)
 }
@@ -273,12 +305,31 @@ pub fn command_line(
 /// The argument that ends a tool's options.
 const END_OF_OPTIONS: &str = "--";
 
+/// Where a word of the template stands.
+struct Context {
+    /// The shell reading the word as its script, when it is one.
+    script: Option<Dialect>,
+    /// The program is a shell: its other words lose what a shell reads.
+    shell: bool,
+    /// A `--` of the template came before.
+    options_ended: bool,
+}
+
+/// Whether `value` opens with a dash: the ASCII one, a Unicode hyphen or dash (U+2010 to
+/// U+2015), or the minus sign (U+2212), which some tools normalise to it.
+fn starts_with_dash(value: &str) -> bool {
+    value
+        .chars()
+        .next()
+        .is_some_and(|c| c == '-' || ('\u{2010}'..='\u{2015}').contains(&c) || c == '\u{2212}')
+}
+
 /// `word` with each placeholder of `values`, whatever its case, replaced by its value in one
 /// pass over `word`: what is put in is never scanned again.
 fn expand(
     word: &str,
     values: &[(&'static str, String)],
-    options_ended: bool,
+    context: &Context,
 ) -> Result<String, TemplateProblem> {
     let mut out = String::with_capacity(word.len());
     let mut at = 0;
@@ -288,10 +339,27 @@ fn expand(
                 .is_some_and(|head| head.eq_ignore_ascii_case(name))
         });
         if let Some((name, value)) = found {
-            if out.is_empty() && !options_ended && value.starts_with('-') {
+            // One argument whatever it holds; a line break is never a value's.
+            let raw: String = value
+                .chars()
+                .filter(|c| !matches!(c, '\r' | '\n'))
+                .collect();
+            let (begins, ended) = match context.script {
+                Some(_) => (
+                    script::begins_word(&out),
+                    context.options_ended || script::has_end_of_options(&out),
+                ),
+                None => (out.is_empty(), context.options_ended),
+            };
+            if begins && !ended && starts_with_dash(&raw) {
                 return Err(TemplateProblem::OptionLikeValue(name));
             }
-            out.push_str(value);
+            let text = match context.script {
+                Some(dialect) => script::quote(dialect, &out, &raw, name)?,
+                None if context.shell => strip_for_shell(&raw),
+                None => raw,
+            };
+            out.push_str(&text);
             at += name.len();
         } else if let Some(c) = rest.chars().next() {
             out.push(c);
@@ -392,6 +460,8 @@ fn strip_for_shell(value: &str) -> String {
 /// The prefixes of `KPScript`'s status lines, printed after the value.
 const KPSCRIPT_OK_PREFIX: &str = "OK: ";
 const KPSCRIPT_ERROR_PREFIX: &str = "E: ";
+/// The start of a one-time password URI, which is a secret seed and never a password.
+const OTPAUTH_PREFIX: &str = "otpauth://";
 
 /// The password in a command's `output`, as the C# `CommandCredentialProvider` reads it: only
 /// the line breaks around the value are removed, never a space or a tab (a password may begin or
@@ -415,7 +485,13 @@ fn first_value_line(text: &str) -> &str {
         .map(|line| line.trim_end_matches('\r'))
         .find(|line| !line.trim().is_empty())
         .filter(|line| {
-            !line.starts_with(KPSCRIPT_OK_PREFIX) && !line.starts_with(KPSCRIPT_ERROR_PREFIX)
+            // Deliberately stricter than the C#: a tool that prints its one-time password URI
+            // first (pass with a `otpauth://` line, an entry's notes) must not hand the seed
+            // over as the password of the server.
+            let head = line.trim_start().to_ascii_lowercase();
+            !line.starts_with(KPSCRIPT_OK_PREFIX)
+                && !line.starts_with(KPSCRIPT_ERROR_PREFIX)
+                && !head.starts_with(OTPAUTH_PREFIX)
         })
         .unwrap_or_default()
 }
@@ -502,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn a_shell_loses_what_it_would_read() {
+    fn a_shell_s_own_arguments_lose_what_it_would_read() {
         for program in [
             "cmd",
             "cmd.exe",
@@ -512,7 +588,7 @@ mod tests {
             r"C:\x\y.CMD. ",
         ] {
             let line = command_line(
-                &format!("{program} /c get {{Title}}"),
+                &format!("{program} get {{Title}}"),
                 &lookup(r#"a&b|c$(d)"e'f%g^h!i;j<k>l`m"#),
                 &settings(),
             )
@@ -573,7 +649,8 @@ mod tests {
     }
 
     /// The preset table of the C# `CredentialProviderPresetService`, command and "first line
-    /// only" side by side, less the `--` this port adds where the tool reads it.
+    /// only" side by side. The words are the C# ones, less the `--` this port adds and the
+    /// place of the 1Password flags (moved before the name so that `--` can end them).
     #[test]
     fn the_presets_are_the_csharp_ones() {
         let csharp = [
@@ -606,14 +683,22 @@ mod tests {
             ("pass (GPG)", r#"pass show "{Title}""#, true),
         ];
         assert_eq!(PRESETS.len(), csharp.len());
+        let words = |command: &str, drop_dashes: bool| {
+            let mut words: Vec<String> = split(command)
+                .expect("splits")
+                .into_iter()
+                .filter(|word| !(drop_dashes && word == "--"))
+                .collect();
+            words.sort();
+            words
+        };
         for (preset, (name, command, first_line)) in PRESETS.iter().zip(csharp) {
             assert_eq!(preset.name, name);
             assert_eq!(
                 preset.first_line_only, first_line,
                 "{name}: first line only"
             );
-            // Dropping the `--` this port adds gives the C# text back.
-            assert_eq!(preset.command.replace(" -- ", " "), command, "{name}");
+            assert_eq!(words(preset.command, true), words(command, false), "{name}");
         }
     }
 
@@ -654,6 +739,7 @@ mod tests {
             "KeePassXC (key file)",
             "KeePassXC (key file only)",
             "Bitwarden CLI",
+            "1Password CLI",
             "pass (GPG)",
         ] {
             let line = command_line(by_name(name), &dashed, &settings()).expect(name);
@@ -664,11 +750,6 @@ mod tests {
         // KPScript: the title is inside `-ref-Title:`, a flag of its own already.
         let line = command_line(by_name("KeePass2 (KPScript)"), &dashed, &settings()).expect("ok");
         assert!(line.contains(&"-ref-Title:-weird".to_owned()), "{line:?}");
-        // `op` has no `--` in the C# preset: refused, named.
-        assert_eq!(
-            command_line(by_name("1Password CLI"), &dashed, &settings()),
-            Err(TemplateProblem::OptionLikeValue("{Title}"))
-        );
     }
 
     #[test]
@@ -821,6 +902,172 @@ mod tests {
         assert_eq!(program_file_name("keepassxc-cli"), "keepassxc-cli");
         assert_eq!(program_file_name(r"C:\Tools\KPScript.exe"), "KPScript.exe");
         assert_eq!(program_file_name("/usr/bin/pass"), "pass");
+    }
+
+    #[test]
+    fn a_script_a_shell_reads_gets_each_value_as_one_word() {
+        // The word after `sh -c`: `x -c` stays one argument of `pass`.
+        let line = command_line(r#"sh -c "pass show {Title}""#, &lookup("x -c"), &settings())
+            .expect("runs");
+        assert_eq!(line, ["sh", "-c", "pass show 'x -c'"]);
+        for (title, quoted) in [
+            ("two words", "'two words'"),
+            ("it's", r"'it'\''s'"),
+            ("a;b", "'a;b'"),
+            ("a&b|c", "'a&b|c'"),
+            ("$(touch x)", "'$(touch x)'"),
+            ("`id`", "'`id`'"),
+            (r#"say "hi""#, r#"'say "hi"'"#),
+            ("", "''"),
+        ] {
+            let line = command_line(r#"bash -c "get {Title}""#, &lookup(title), &settings())
+                .expect("runs");
+            assert_eq!(line[2], format!("get {quoted}"), "{title}");
+        }
+        // Behind `wsl`, and with the program not a shell at all.
+        let line = command_line(
+            r#"wsl -- sh -c "pass show -- {Title}""#,
+            &lookup("x y"),
+            &settings(),
+        )
+        .expect("runs");
+        assert_eq!(line[line.len() - 1], "pass show -- 'x y'");
+        let line =
+            command_line(r#"env sh -c "get {Title}""#, &lookup("a b"), &settings()).expect("runs");
+        assert_eq!(line[line.len() - 1], "get 'a b'");
+    }
+
+    #[test]
+    fn an_outer_dashes_does_not_end_the_options_of_the_inner_script() {
+        // `wsl --` ends wsl's options; `pass` still reads `-x` as a flag.
+        assert_eq!(
+            command_line(
+                r#"wsl -- sh -c "pass show {Title}""#,
+                &lookup("-x"),
+                &settings()
+            ),
+            Err(TemplateProblem::OptionLikeValue("{Title}"))
+        );
+        assert_eq!(
+            command_line(r"wsl -- pass show {Title}", &lookup("-x"), &settings()),
+            Err(TemplateProblem::OptionLikeValue("{Title}"))
+        );
+        // The inner one does.
+        let line =
+            command_line(r"wsl -- pass show -- {Title}", &lookup("-x"), &settings()).expect("runs");
+        assert_eq!(line.last().map(String::as_str), Some("-x"));
+        // A quoted placeholder at the start of a word is the start of a word all the same.
+        assert_eq!(
+            command_line(r#"sh -c "pass show '{Title}'""#, &lookup("-x"), &settings()),
+            Err(TemplateProblem::OptionLikeValue("{Title}"))
+        );
+    }
+
+    #[test]
+    fn a_value_in_a_quote_the_template_opened_keeps_to_it() {
+        let single = r#"sh -c "echo '{Title}'""#;
+        let line = command_line(single, &lookup("a b;c"), &settings()).expect("runs");
+        assert_eq!(line[2], "echo 'a b;c'");
+        assert_eq!(
+            command_line(single, &lookup("it's"), &settings()),
+            Err(TemplateProblem::UnquotableValue("{Title}"))
+        );
+        // A double-quoted region (a template cannot spell one, `split` has no escape): the
+        // quoting itself holds the line.
+        let open = "echo \"";
+        assert_eq!(
+            script::quote(Dialect::Posix, open, "a b", "{Title}"),
+            Ok("a b".to_owned())
+        );
+        for bad in ["$HOME", "`id`", "a\"b", r"back\slash"] {
+            assert_eq!(
+                script::quote(Dialect::Posix, open, bad, "{Title}"),
+                Err(TemplateProblem::UnquotableValue("{Title}")),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn powershell_values_are_single_quoted_with_every_quote_doubled() {
+        let line = command_line(
+            r#"pwsh -Command "Get-Secret {Title}""#,
+            &lookup("it's \u{2019}x"),
+            &settings(),
+        )
+        .expect("runs");
+        assert_eq!(line[2], "Get-Secret 'it''s \u{2019}\u{2019}x'");
+        let line = command_line(
+            r"powershell.exe -NoProfile -c Get-Secret {Title}",
+            &lookup("a b; calc"),
+            &settings(),
+        )
+        .expect("runs");
+        assert_eq!(line[4], "'a b; calc'");
+    }
+
+    #[test]
+    fn cmd_values_are_quoted_when_they_split_and_refused_when_they_cannot_be_held() {
+        let line =
+            command_line("cmd /c get {Title}", &lookup("two words"), &settings()).expect("runs");
+        assert_eq!(line, ["cmd", "/c", "get", "\"two words\""]);
+        let line = command_line("cmd /c get {Title}", &lookup("plain"), &settings()).expect("runs");
+        assert_eq!(line[3], "plain");
+        for bad in [
+            "a&b", "a|b", "a<b", "a>b", "a^b", "50%", "a!b", "a(b)", "a\"b",
+        ] {
+            assert_eq!(
+                command_line("cmd.exe /c get {Title}", &lookup(bad), &settings()),
+                Err(TemplateProblem::UnquotableValue("{Title}")),
+                "{bad}"
+            );
+        }
+        assert_eq!(
+            command_line("run.bat /c get {Title}", &lookup("dir \\"), &settings()),
+            Err(TemplateProblem::UnquotableValue("{Title}")),
+            "a trailing backslash would eat the closing quote"
+        );
+        // Words of cmd that are not its script keep the old stripping.
+        let line = command_line("cmd get {Title}", &lookup("a&b"), &settings()).expect("runs");
+        assert_eq!(line[2], "ab");
+    }
+
+    #[test]
+    fn a_unicode_dash_is_refused_like_the_ascii_one() {
+        for dash in [
+            '\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}', '\u{2014}', '\u{2015}', '\u{2212}',
+        ] {
+            let title = format!("{dash}weird");
+            assert_eq!(
+                command_line("tool {Title}", &lookup(&title), &settings()),
+                Err(TemplateProblem::OptionLikeValue("{Title}")),
+                "U+{:04X}",
+                u32::from(dash)
+            );
+            assert_eq!(
+                command_line(r#"sh -c "get {Title}""#, &lookup(&title), &settings()),
+                Err(TemplateProblem::OptionLikeValue("{Title}")),
+                "script, U+{:04X}",
+                u32::from(dash)
+            );
+            // Inside the argument, after `--`: no flag.
+            assert!(command_line("tool -- {Title}", &lookup(&title), &settings()).is_ok());
+        }
+    }
+
+    #[test]
+    fn a_one_time_password_uri_is_never_a_password() {
+        assert_eq!(password_in("otpauth://totp/x?secret=ABC\npw\n", true), None);
+        assert_eq!(password_in("  OTPAUTH://totp/x?secret=ABC\n", true), None);
+        // Only the first line decides, and only in this mode.
+        assert_eq!(
+            password_in("pw\notpauth://totp/x\n", true),
+            Some("pw".to_owned())
+        );
+        assert_eq!(
+            password_in("otpauth://totp/x", false),
+            Some("otpauth://totp/x".to_owned())
+        );
     }
 
     #[test]

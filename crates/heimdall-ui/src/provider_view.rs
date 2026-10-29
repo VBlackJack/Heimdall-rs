@@ -389,12 +389,20 @@ fn failure_text(failure: &ProviderFailure) -> String {
                 placeholder = placeholder
             )
         }
+        ProviderFailure::Template(TemplateProblem::UnquotableValue(placeholder)) => {
+            let placeholder: &str = placeholder;
+            fl!(
+                "ui-settings-provider-test-unquotable-value",
+                placeholder = placeholder
+            )
+        }
         ProviderFailure::Launch(detail) => {
             fl!("ui-settings-provider-test-error", detail = detail.as_str())
         }
-        // Sorted by the test itself already; said as a failure all the same if one comes here.
+        // The test sorts these into "no result" with the entry looked up; one that comes here
+        // has no entry to name, which is the C# no-entry case.
         ProviderFailure::Exit(_) | ProviderFailure::Empty => {
-            fl!("ui-settings-provider-test-no-result", entry = "")
+            fl!("ui-settings-provider-test-no-entry")
         }
         ProviderFailure::TimedOut { program, timeout } => fl!(
             "ui-settings-provider-test-timeout",

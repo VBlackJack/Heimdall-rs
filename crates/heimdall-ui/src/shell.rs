@@ -1685,6 +1685,9 @@ pub struct Shell {
     registry: AnswerRegistry,
     /// Running connection attempts; dropping a handle aborts its task.
     connections: HashMap<TabId, Handle>,
+    /// Running questions to the external credential provider, by tab and question: closing
+    /// the tab drops them, which leaves the vault's queue and stops its command.
+    provider_questions: HashMap<(TabId, QuestionId), Handle>,
     /// What is typed into each open question, zeroed when dropped. iced keeps its own
     /// transient copies of a field's text, which this cannot reach.
     drafts: HashMap<QuestionId, Vec<Zeroizing<String>>>,
@@ -2123,6 +2126,7 @@ impl Shell {
             editors: crate::integrated_editor::Editors::default(),
             registry: AnswerRegistry::default(),
             connections: HashMap::new(),
+            provider_questions: HashMap::new(),
             drafts: HashMap::new(),
             font_sizes: HashMap::new(),
             focused: None,
@@ -4939,6 +4943,8 @@ impl Shell {
             self.gateway_passphrase = Zeroizing::default();
         }
         self.connections.retain(|tab, _| app.tab(*tab).is_some());
+        self.provider_questions
+            .retain(|(tab, _), _| app.tab(*tab).is_some());
         self.desktop_fit.retain(|tab, _| app.tab(*tab).is_some());
         self.drafts.retain(|question, _| {
             app.tabs.iter().any(|tab| {
@@ -5625,9 +5631,16 @@ impl Shell {
                 name,
             ))
             .discard(),
-            Effect::AskCredentialProvider(request) => Task::perform(request.run(), |answer| {
-                Message::App(AppMessage::CredentialProvided(Box::new(answer)))
-            }),
+            Effect::AskCredentialProvider(request) => {
+                let key = (request.tab, request.question);
+                let (task, handle) = Task::perform(request.run(), |answer| {
+                    Message::App(AppMessage::CredentialProvided(Box::new(answer)))
+                })
+                .abortable();
+                // Aborted with its tab, as a connection is.
+                self.provider_questions.insert(key, handle.abort_on_drop());
+                task
+            }
             Effect::TestCredentialProvider {
                 settings,
                 entry,
