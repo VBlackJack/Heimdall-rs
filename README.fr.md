@@ -186,3 +186,5 @@ ont.
 ## Licence
 
 Apache License 2.0, voir [LICENSE](LICENSE).
+
+Politique de sécurité : [SECURITY.fr.md](SECURITY.fr.md).

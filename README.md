@@ -170,3 +170,5 @@ fails when a language misses a key the others have.
 ## License
 
 Apache License 2.0, see [LICENSE](LICENSE).
+
+Security policy: [SECURITY.md](SECURITY.md).
