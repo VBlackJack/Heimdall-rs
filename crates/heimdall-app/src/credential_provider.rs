@@ -80,6 +80,9 @@ const OUTPUT_CAPACITY: usize = MAX_OUTPUT_BYTES + 1 + 1024;
 const REAP_POLL: Duration = Duration::from_millis(10);
 const REAP_TRIES: u32 = 300;
 
+/// How the credential store is named when it cannot be read.
+const CREDENTIAL_MANAGER_NAME: &str = "Windows Credential Manager";
+
 /// One question to the vault at a time, in the order they were asked.
 static ONE_AT_A_TIME: Mutex<()> = Mutex::const_new(());
 
@@ -88,8 +91,15 @@ static ONE_AT_A_TIME: Mutex<()> = Mutex::const_new(());
 pub enum ProviderFailure {
     /// The template cannot run.
     Template(TemplateProblem),
-    /// The program could not be started.
-    Launch(String),
+    /// The program could not be started, or its answer could not be read. Only the program's
+    /// file name is kept, with a classified reason: the OS error text is English and may name a
+    /// path, and it is never shown.
+    Launch {
+        /// The program's file name.
+        program: String,
+        /// Why, sorted so that the UI can say it in the user's language.
+        reason: LaunchReason,
+    },
     /// It ended with this exit code, or was ended by a signal.
     Exit(Option<i32>),
     /// It printed nothing.
@@ -105,6 +115,39 @@ pub enum ProviderFailure {
         /// How long it was given.
         timeout: Duration,
     },
+}
+
+/// Why a provider command could not be started, as far as the user can act on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchReason {
+    /// No such program (not installed, or not on the PATH).
+    NotFound,
+    /// The program exists but may not be run.
+    PermissionDenied,
+    /// Anything else.
+    Other,
+}
+
+impl LaunchReason {
+    /// Sorts an OS error by its kind alone, never by its text.
+    #[must_use]
+    pub fn of(error: &std::io::Error) -> Self {
+        match error.kind() {
+            std::io::ErrorKind::NotFound => Self::NotFound,
+            std::io::ErrorKind::PermissionDenied => Self::PermissionDenied,
+            _ => Self::Other,
+        }
+    }
+}
+
+impl ProviderFailure {
+    /// A launch failure of `program` (its file name is taken), for this OS error.
+    fn launch(program: &str, error: &std::io::Error) -> Self {
+        Self::Launch {
+            program: program_file_name(program).to_owned(),
+            reason: LaunchReason::of(error),
+        }
+    }
 }
 
 /// What the provider gave.
@@ -251,7 +294,7 @@ async fn run(
     command.process_group(0);
     let child = command
         .spawn()
-        .map_err(|error| ProviderFailure::Launch(error.to_string()))?;
+        .map_err(|error| ProviderFailure::launch(program, &error))?;
     let mut running = Running {
         pid: child.id(),
         child: Some(child),
@@ -275,7 +318,7 @@ async fn run(
                 .take(MAX_OUTPUT_BYTES as u64 + 1)
                 .read_to_end(&mut output)
                 .await
-                .map_err(|error| ProviderFailure::Launch(error.to_string()))?;
+                .map_err(|error| ProviderFailure::launch(program, &error))?;
             too_long = output.len() > MAX_OUTPUT_BYTES;
             if too_long {
                 // Not kept; read to the end all the same, so the command is not left blocked
@@ -287,7 +330,7 @@ async fn run(
         let status = waiting
             .wait()
             .await
-            .map_err(|error| ProviderFailure::Launch(error.to_string()))?;
+            .map_err(|error| ProviderFailure::launch(program, &error))?;
         if too_long {
             Err(ProviderFailure::OutputTooLong)
         } else if status.success() {
@@ -298,7 +341,7 @@ async fn run(
     };
     let outcome = tokio::time::timeout(timeout, work).await;
     if let Ok(result) = outcome {
-        if !matches!(result, Err(ProviderFailure::Launch(_))) {
+        if !matches!(result, Err(ProviderFailure::Launch { .. })) {
             // Ended by itself: nothing is left to stop.
             running.finish();
         }
@@ -383,14 +426,22 @@ pub async fn from_credential_manager(target: String) -> Result<Provided, Provide
     let target = heimdall_core::paths::credential_target(&target);
     let read = tokio::task::spawn_blocking(move || heimdall_keyring::read_generic(&target))
         .await
-        .map_err(|error| ProviderFailure::Launch(error.to_string()))?;
+        .map_err(|_| credential_manager_failure())?;
     match read {
         Ok(Some(credential)) => Ok(Provided {
             password: Secret::new(String::clone(&credential.password)),
             username: credential.username,
         }),
         Ok(None) => Err(ProviderFailure::Empty),
-        Err(error) => Err(ProviderFailure::Launch(error.to_string())),
+        Err(_) => Err(credential_manager_failure()),
+    }
+}
+
+/// The store cannot be read: named like a program, since the message names what failed.
+fn credential_manager_failure() -> ProviderFailure {
+    ProviderFailure::Launch {
+        program: CREDENTIAL_MANAGER_NAME.to_owned(),
+        reason: LaunchReason::Other,
     }
 }
 
@@ -582,12 +633,44 @@ mod tests {
                 .err(),
             Some(ProviderFailure::Empty)
         );
+        // The reason of a bare name depends on the PATH (an unreadable directory on it makes it
+        // "permission denied"): only the name is checked here.
         assert!(matches!(
             ask(&settings("no-such-program-heimdall"), &lookup(None), None)
                 .await
                 .err(),
-            Some(ProviderFailure::Launch(_))
+            Some(ProviderFailure::Launch { program, .. }) if program == "no-such-program-heimdall"
         ));
+        // Only the file name is kept, never the directory or the arguments.
+        assert_eq!(
+            ask(
+                &settings("/no/such/dir/op --token hunter2"),
+                &lookup(None),
+                None
+            )
+            .await
+            .err(),
+            Some(ProviderFailure::Launch {
+                program: "op".to_owned(),
+                reason: LaunchReason::NotFound,
+            })
+        );
+    }
+
+    #[test]
+    fn an_os_error_is_sorted_by_its_kind_alone() {
+        use std::io::{Error, ErrorKind};
+        for (kind, reason) in [
+            (ErrorKind::NotFound, LaunchReason::NotFound),
+            (ErrorKind::PermissionDenied, LaunchReason::PermissionDenied),
+            (ErrorKind::InvalidInput, LaunchReason::Other),
+        ] {
+            assert_eq!(LaunchReason::of(&Error::new(kind, "secret path")), reason);
+        }
+    }
+
+    #[tokio::test]
+    async fn template_problems_come_before_any_launch() {
         assert_eq!(
             ask(&settings(r#"tool "{Title}"#), &lookup(None), None)
                 .await

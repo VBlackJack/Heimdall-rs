@@ -28,6 +28,7 @@ use heimdall_core::settings::BroadcastScope;
 
 use super::reconnect::Reopen;
 use super::{App, Phase, Tab};
+use crate::credential_provider::LaunchReason;
 use crate::error::UiError;
 use crate::ids::TabId;
 
@@ -412,8 +413,14 @@ pub enum Notice {
     /// The external credential provider gave no password for this session: the user is
     /// asked.
     ProviderNoPassword(String),
-    /// The external credential provider could not run, for this reason.
-    ProviderFailed(String),
+    /// The external credential provider could not run: the program's file name and why.
+    /// Never the OS error text, which is English and may name a path.
+    ProviderFailed {
+        /// The program's file name.
+        program: String,
+        /// Why it could not run.
+        reason: LaunchReason,
+    },
     /// The external credential provider printed far more than a password, for this server.
     ProviderOutputTooLong(String),
     /// The external credential provider took too long: the program's file name and the delay it

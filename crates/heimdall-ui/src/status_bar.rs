@@ -575,9 +575,10 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::ProviderNoPassword(name) => {
                 fl!("ui-status-provider-no-password", name = name.as_str())
             }
-            Notice::ProviderFailed(detail) => {
-                fl!("ui-status-provider-failed", detail = detail.as_str())
-            }
+            Notice::ProviderFailed { program, reason } => fl!(
+                "ui-status-provider-failed",
+                detail = crate::provider_view::launch_reason_text(program, *reason)
+            ),
             Notice::ProviderTimedOut {
                 program,
                 milliseconds,
