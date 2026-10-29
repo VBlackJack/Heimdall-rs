@@ -21,7 +21,8 @@
 use std::path::{Path, PathBuf};
 
 use xtask::bare_programs::{
-    ALLOWED, Constants, build_scripts, check_source, is_allowed, is_bare, scan, string_constants,
+    ALLOWED, Constants, build_scripts, check_source, is_allowed, is_bare, is_test_gate, scan,
+    string_constants,
 };
 use xtask::folder_sources::sources;
 
@@ -184,4 +185,48 @@ fn a_program_with_a_folder_is_not_bare() {
     assert!(!is_bare("/usr/bin/nslookup"));
     assert!(!is_bare(r"C:\Windows\System32\nslookup.exe"));
     assert!(!is_bare(""));
+}
+
+#[test]
+fn only_a_gate_that_holds_in_test_builds_alone_opens_a_test_module() {
+    assert!(is_test_gate("#[cfg(test)]"));
+    assert!(is_test_gate("#[cfg(all(test, unix))]"));
+    assert!(is_test_gate("#[cfg(all(unix, test))]"));
+    assert!(is_test_gate("#[cfg(all(unix,test,target_os = \"linux\"))]"));
+    assert!(!is_test_gate("#[cfg(any(test, feature = \"x\"))]"));
+    assert!(!is_test_gate("#[cfg(not(test))]"));
+    assert!(!is_test_gate("#[cfg(all(unix, not(test)))]"));
+    assert!(!is_test_gate("#[cfg(all(unix, feature = \"test\"))]"));
+    assert!(!is_test_gate("#[cfg(unix)]"));
+    assert!(!is_test_gate("    #[cfg(test)]"));
+    assert!(!is_test_gate("#[test]"));
+    assert!(!is_test_gate(""));
+}
+
+#[test]
+fn a_module_under_an_all_test_gate_is_skipped() {
+    let text = "fn a() { let _ = Command::new(\"git\"); }
+#[cfg(all(test, unix))]
+mod tests {
+    fn b() { let _ = Command::new(\"ps\"); }
+}
+fn c() { let _ = Command::new(\"nslookup\"); }
+";
+    assert_eq!(
+        check_source(text, &Constants::new()),
+        [(1, "git".to_owned()), (6, "nslookup".to_owned())]
+    );
+}
+
+#[test]
+fn code_under_an_any_test_gate_is_still_scanned() {
+    let text = "#[cfg(any(test, feature = \"x\"))]
+mod helpers {
+    fn a() { let _ = Command::new(\"ps\"); }
+}
+";
+    assert_eq!(
+        check_source(text, &Constants::new()),
+        [(3, "ps".to_owned())]
+    );
 }

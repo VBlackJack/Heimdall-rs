@@ -25,8 +25,9 @@
 //! folder; a program computed at run time is the code's own business and is not judged. The
 //! exceptions are [`ALLOWED`], each with why.
 //!
-//! Tests may start what they like: the test modules at the end of a file (`#[cfg(test)]`
-//! then `mod`, closed at the first column), the test modules in files of their own
+//! Tests may start what they like: the test modules at the end of a file (a test gate such
+//! as `#[cfg(test)]` or `#[cfg(all(test, unix))]`, see [`is_test_gate`], then `mod`, closed
+//! at the first column), the test modules in files of their own
 //! (`tests.rs`, `*_tests.rs`) and the `tests` folders are not read, nor are comments.
 
 use std::collections::BTreeMap;
@@ -93,8 +94,23 @@ const STRING_TYPES: [&str; 2] = ["&str", "&'static str"];
 /// A crate's build script, beside its `src`.
 const BUILD_SCRIPT: &str = "build.rs";
 
-/// The line that opens a test module, at the first column.
-const TEST_GATE: &str = "#[cfg(test)]";
+/// How a `cfg` attribute starts, at the first column.
+const CFG_START: &str = "#[cfg(";
+
+/// How a `cfg` attribute ends.
+const CFG_END: &str = ")]";
+
+/// The predicate that holds in test builds.
+const TEST_PREDICATE: &str = "test";
+
+/// The combinator whose predicates must all hold: `test` among them gates test builds only.
+const ALL_COMBINATOR: &str = "all(";
+
+/// How the predicates of a combinator end.
+const COMBINATOR_END: &str = ")";
+
+/// The separator of the predicates of a combinator.
+const PREDICATE_SEPARATOR: char = ',';
 
 /// How the module under it starts, at the first column.
 const MODULE_START: &str = "mod ";
@@ -110,6 +126,31 @@ const TEST_FILE_STEM: &str = "tests";
 
 /// How the name of a test file of its own ends.
 const TEST_FILE_SUFFIX: &str = "_tests";
+
+/// Whether `line` is an attribute that gates the module under it to test builds only, at the
+/// first column: `#[cfg(test)]`, or `#[cfg(all(...))]` with `test` among its predicates
+/// (`#[cfg(all(test, unix))]`). `any(test, ...)` and `not(test)` are not: that code is also
+/// built outside tests, so it is read like the rest.
+#[must_use]
+pub fn is_test_gate(line: &str) -> bool {
+    let Some(predicate) = line
+        .strip_prefix(CFG_START)
+        .and_then(|rest| rest.strip_suffix(CFG_END))
+    else {
+        return false;
+    };
+    if predicate == TEST_PREDICATE {
+        return true;
+    }
+    predicate
+        .strip_prefix(ALL_COMBINATOR)
+        .and_then(|rest| rest.strip_suffix(COMBINATOR_END))
+        .is_some_and(|predicates| {
+            predicates
+                .split(PREDICATE_SEPARATOR)
+                .any(|one| one.trim() == TEST_PREDICATE)
+        })
+}
 
 /// One program started by its bare name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,7 +264,7 @@ pub fn check_source(text: &str, global: &Constants) -> Vec<(usize, String)> {
     let mut found = Vec::new();
     let mut lines = text.lines().enumerate().peekable();
     while let Some((index, line)) = lines.next() {
-        if line == TEST_GATE
+        if is_test_gate(line)
             && lines
                 .peek()
                 .is_some_and(|(_, next)| next.starts_with(MODULE_START))
