@@ -239,7 +239,8 @@ pub fn command_line(
     lookup: &Lookup,
     settings: &ProviderSettings,
 ) -> Result<Vec<String>, TemplateProblem> {
-    let words = split(template)?;
+    let flagged = split_words(template)?;
+    let words: Vec<String> = flagged.iter().map(|(word, _)| word.clone()).collect();
     let Some(program) = words.first() else {
         return Err(TemplateProblem::Empty);
     };
@@ -261,7 +262,7 @@ pub fn command_line(
         script::dialect_of(program).and_then(|dialect| script::script_of(dialect, &words, 0));
     let mut options_ended = false;
     let mut line = Vec::with_capacity(words.len());
-    for (index, word) in words.iter().enumerate() {
+    for (index, (word, quoted)) in flagged.iter().enumerate() {
         // The program itself is the template's, never a value's.
         if index == 0 {
             line.push(word.clone());
@@ -274,6 +275,7 @@ pub fn command_line(
             script,
             shell,
             options_ended,
+            quoted: *quoted,
         };
         line.push(expand(word, &values, &context)?);
         // A shell named in the template (behind `wsl`, `env`, `sudo`) reads a script of its own.
@@ -314,6 +316,8 @@ struct Context {
     shell: bool,
     /// A `--` of the template came before.
     options_ended: bool,
+    /// The word was written in double quotes.
+    quoted: bool,
 }
 
 /// Whether `value` opens with a dash: the ASCII one, a Unicode hyphen or dash (U+2010 to
@@ -355,9 +359,16 @@ fn expand(
             if begins && !ended && starts_with_dash(&raw) {
                 return Err(TemplateProblem::OptionLikeValue(name));
             }
-            // In a script a value splits at its spaces: each word after the first is a word of
-            // the command, wherever the options ended.
-            if context.script.is_some() {
+            // Reaching the shell unquoted, a value splits at its spaces: each word after the
+            // first is a word of the command, wherever the options ended. In quotes (the
+            // template's, or the single quotes added here) it is one argument.
+            if let Some(dialect) = context.script
+                && script::splits_at_spaces(
+                    dialect,
+                    &out,
+                    context.quoted && out.is_empty() && word.len() == name.len(),
+                )
+            {
                 let lead = raw.starts_with(char::is_whitespace);
                 if raw
                     .split_whitespace()
@@ -383,21 +394,33 @@ fn expand(
 }
 
 /// `template` cut into words: spaces part them, double quotes group them and are dropped.
+#[cfg(test)]
 fn split(template: &str) -> Result<Vec<String>, TemplateProblem> {
+    Ok(split_words(template)?
+        .into_iter()
+        .map(|(word, _)| word)
+        .collect())
+}
+
+/// [`split`], each word with whether it was written in double quotes (which `split` drops).
+fn split_words(template: &str) -> Result<Vec<(String, bool)>, TemplateProblem> {
     let mut words = Vec::new();
     let mut word = String::new();
     let mut quoted = false;
+    let mut word_quoted = false;
     let mut started = false;
     for c in template.chars() {
         match c {
             '"' => {
                 quoted = !quoted;
                 started = true;
+                word_quoted = true;
             }
             c if c.is_whitespace() && !quoted => {
                 if started {
-                    words.push(std::mem::take(&mut word));
+                    words.push((std::mem::take(&mut word), word_quoted));
                     started = false;
+                    word_quoted = false;
                 }
             }
             c => {
@@ -410,7 +433,7 @@ fn split(template: &str) -> Result<Vec<String>, TemplateProblem> {
         return Err(TemplateProblem::UnclosedQuote);
     }
     if started {
-        words.push(word);
+        words.push((word, word_quoted));
     }
     Ok(words)
 }
@@ -1020,18 +1043,61 @@ b",
     }
 
     #[test]
-    fn a_value_with_a_dash_word_is_refused_in_a_script() {
-        for title in ["x -c", "x --flag", " -c", "a \u{2013}b", "a \u{2212}1"] {
+    fn a_dash_word_in_a_value_is_refused_only_where_the_shell_would_split_it() {
+        // Unquoted in a cmd script, "Site - Prod" is three words, one of them a flag.
+        for title in ["x -c", "x --flag", " -c", "Site - Prod", "a \u{2013}b"] {
             assert_eq!(
-                command_line(
-                    r#"sh -c "pass show -- {Title}""#,
-                    &lookup(title),
-                    &settings()
-                ),
+                command_line(r"cmd /c pass show {Title}", &lookup(title), &settings()),
                 Err(TemplateProblem::OptionLikeValue("{Title}")),
                 "{title:?}"
             );
+            assert_eq!(
+                command_line(r#"cmd /c "pass show {Title}""#, &lookup(title), &settings()),
+                Err(TemplateProblem::OptionLikeValue("{Title}")),
+                "{title:?} in a script word"
+            );
         }
+        // In the template's quotes, in single quotes added here: one argument, a dash word
+        // inside it is text. Only the first character counts, and not after `--`.
+        let title = "Site - Prod";
+        let line = command_line(
+            r#"cmd /c keepassxc-cli show -s -q -a Password "{Database}" "{Title}""#,
+            &lookup(title),
+            &ProviderSettings {
+                database: "C:/V/x.kdbx".to_owned(),
+                ..settings()
+            },
+        )
+        .expect("runs");
+        assert_eq!(line.last().map(String::as_str), Some(title));
+        let line = command_line(r#"sh -c "pass show {Title}""#, &lookup(title), &settings())
+            .expect("runs");
+        assert_eq!(line[2], "pass show 'Site - Prod'");
+        let line = command_line(
+            r#"pwsh -Command "Get-Secret {Title}""#,
+            &lookup(title),
+            &settings(),
+        )
+        .expect("runs");
+        assert_eq!(line[2], "Get-Secret 'Site - Prod'");
+        let line =
+            command_line(r#"sh -c "echo '{Title}'""#, &lookup(title), &settings()).expect("runs");
+        assert_eq!(line[2], "echo 'Site - Prod'");
+        // The first character is still a flag where the value opens a word, `--` aside.
+        for template in [r#"sh -c "pass show {Title}""#, r#"pwsh -c "get {Title}""#] {
+            assert_eq!(
+                command_line(template, &lookup("-c"), &settings()),
+                Err(TemplateProblem::OptionLikeValue("{Title}")),
+                "{template}"
+            );
+        }
+        let line = command_line(
+            r#"sh -c "pass show -- {Title}""#,
+            &lookup("-c x"),
+            &settings(),
+        )
+        .expect("runs");
+        assert_eq!(line[2], "pass show -- '-c x'");
         // A dash inside a word is plain text.
         let line = command_line(
             r#"sh -c "pass show {Title}""#,
@@ -1040,6 +1106,78 @@ b",
         )
         .expect("runs");
         assert_eq!(line[2], "pass show 'web-01 a-b'");
+    }
+
+    #[test]
+    fn wsl_reads_its_words_as_a_script_unless_it_runs_a_program_directly() {
+        // Brace expansion would turn the title into `--clip` in the shell behind wsl.
+        for template in [
+            "wsl pass show {Title}",
+            "wsl.exe pass show {Title}",
+            "wsl -d Ubuntu pass show {Title}",
+            "wsl -- pass show {Title}",
+        ] {
+            assert_eq!(
+                command_line(template, &lookup("{--clip,x}"), &settings()),
+                Err(TemplateProblem::UnquotableValue("{Title}")),
+                "{template}"
+            );
+            let line = command_line(template, &lookup("my server"), &settings()).expect(template);
+            assert_eq!(
+                line.last().map(String::as_str),
+                Some("'my server'"),
+                "{template}"
+            );
+        }
+        // The words after wsl's own options only.
+        let line = command_line("wsl -d {Title} pass show x", &lookup("Ubuntu"), &settings())
+            .expect("runs");
+        assert_eq!(line[2], "Ubuntu", "an option's value is an argument of wsl");
+        // -e and --exec run the program directly: plain argv.
+        for template in [
+            "wsl -e pass show {Title}",
+            "wsl --exec pass show {Title}",
+            "wsl -d Ubuntu -e pass show {Title}",
+        ] {
+            let line = command_line(template, &lookup("my server"), &settings()).expect(template);
+            assert_eq!(
+                line.last().map(String::as_str),
+                Some("my server"),
+                "{template}"
+            );
+        }
+        // The first character is a flag all the same.
+        assert_eq!(
+            command_line("wsl -e pass show {Title}", &lookup("-x"), &settings()),
+            Err(TemplateProblem::OptionLikeValue("{Title}"))
+        );
+    }
+
+    #[test]
+    fn long_options_and_option_values_before_dash_c_are_skipped() {
+        for template in [
+            r#"bash --login -c "get {Title}""#,
+            r#"bash --norc --noprofile -c "get {Title}""#,
+            r#"bash -o pipefail -c "get {Title}""#,
+            r#"bash +o xtrace -c "get {Title}""#,
+            r#"bash -O extglob -c "get {Title}""#,
+            r#"bash -e -o pipefail --login -c "get {Title}""#,
+            r#"sh -eo pipefail -c "get {Title}""#,
+        ] {
+            assert_eq!(
+                command_line(template, &lookup("a$b"), &settings()),
+                Err(TemplateProblem::UnquotableValue("{Title}")),
+                "{template}"
+            );
+        }
+        // A script file ends the options.
+        let line = command_line(
+            "bash --login script.sh {Title}",
+            &lookup("a;b"),
+            &settings(),
+        )
+        .expect("runs");
+        assert_eq!(line.last().map(String::as_str), Some("ab"));
     }
 
     #[test]
@@ -1180,9 +1318,9 @@ b",
             r#"powershell.exe -com "Get-Secret {Title}""#,
             r#"pwsh -NoProfile -COMMAND "Get-Secret {Title}""#,
             r#"pwsh -NoProfile -ExecutionPolicy Bypass -Command "Get-Secret {Title}""#,
-            // The implicit -Command: the first word that is no option.
-            r#"pwsh -NoProfile "Get-Secret {Title}""#,
-            r#"pwsh -ExecutionPolicy Bypass "Get-Secret {Title}""#,
+            // The implicit -Command of Windows PowerShell: the first word that is no option.
+            r#"powershell -NoProfile "Get-Secret {Title}""#,
+            r#"powershell.exe -ExecutionPolicy Bypass "Get-Secret {Title}""#,
             r"powershell Get-Secret {Title}",
         ] {
             assert_eq!(
@@ -1191,6 +1329,14 @@ b",
                 "{template}"
             );
         }
+        // pwsh 7 reads a first word that is no option as a file: its words are arguments.
+        let line = command_line(
+            r"pwsh -NoProfile script.ps1 {Title}",
+            &lookup("a b"),
+            &settings(),
+        )
+        .expect("runs");
+        assert_eq!(line.last().map(String::as_str), Some("a b"));
         // -File and -EncodedCommand name no script to put values in.
         for template in [
             r"pwsh -File script.ps1 {Title}",
@@ -1221,7 +1367,7 @@ b",
         // The program's own `--` ends its options.
         let line =
             command_line(r"wsl -- pass show -- {Title}", &lookup("-x"), &settings()).expect("runs");
-        assert_eq!(line.last().map(String::as_str), Some("-x"));
+        assert_eq!(line.last().map(String::as_str), Some("'-x'"));
         // Not a wrapper: any `--` ends the options.
         assert!(command_line(r"tool -- {Title}", &lookup("-x"), &settings()).is_ok());
         assert!(command_line(r"sh -- {Title}", &lookup("-x"), &settings()).is_ok());

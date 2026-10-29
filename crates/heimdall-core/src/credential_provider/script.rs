@@ -100,10 +100,15 @@ pub(super) fn dialect_of(name: &str) -> Option<Dialect> {
 /// The script of the shell named by `words[shell]`, if its words after it hold one.
 pub(super) fn script_of(dialect: Dialect, words: &[String], shell: usize) -> Option<ScriptSpan> {
     let rest = words.get(shell + 1..)?;
+    let name = file_stem(words.get(shell)?);
     let (offset, to_end) = match dialect {
+        // `wsl` runs the words after its options through the shell of the distribution.
+        Dialect::Posix if name == "wsl" => (wsl_script(rest)?, true),
         Dialect::Posix => (posix_script(rest)?, false),
         Dialect::Cmd => (cmd_script(rest)?, true),
-        Dialect::PowerShell => (powershell_script(rest)?, true),
+        // pwsh 7 reads a first word that is no option as a file (-File is its implicit mode);
+        // Windows PowerShell 5.1 reads it as a command.
+        Dialect::PowerShell => (powershell_script(rest, name == "powershell")?, true),
         Dialect::Opaque => return None,
     };
     Some(ScriptSpan {
@@ -113,20 +118,60 @@ pub(super) fn script_of(dialect: Dialect, words: &[String], shell: usize) -> Opt
     })
 }
 
-/// A POSIX shell's script is the word after a flag cluster holding `c` (`-c`, `-lc`, `-ec`),
-/// before any word that is not a flag.
-fn posix_script(rest: &[String]) -> Option<usize> {
-    for (index, word) in rest.iter().enumerate() {
-        let cluster = word
-            .strip_prefix('-')
-            .filter(|flags| !flags.is_empty() && flags.chars().all(|c| c.is_ascii_alphabetic()));
-        match cluster {
-            Some(flags) if flags.contains('c') => {
-                return (index + 1 < rest.len()).then_some(index + 1);
-            }
-            Some(_) => {}
-            None => return None,
+/// The lowercase file name of `program`, less `.exe`.
+fn file_stem(program: &str) -> String {
+    let name =
+        super::program_file_name(program.trim().trim_end_matches(['.', ' '])).to_ascii_lowercase();
+    name.strip_suffix(".exe")
+        .map_or(name.clone(), str::to_owned)
+}
+
+/// `wsl`'s options that take a value.
+const WSL_VALUE_OPTIONS: [&str; 5] = ["-d", "--distribution", "-u", "--user", "--cd"];
+
+/// `wsl`'s command is the first word that is no option, or what follows `--`: a script for the
+/// shell of the distribution (brace expansion and the rest included). `-e` and `--exec` run
+/// the program directly instead: its words are plain arguments, no script.
+fn wsl_script(rest: &[String]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(word) = rest.get(index) {
+        let lower = word.to_ascii_lowercase();
+        match lower.as_str() {
+            "-e" | "--exec" => return None,
+            "--" => return (index + 1 < rest.len()).then_some(index + 1),
+            option if WSL_VALUE_OPTIONS.contains(&option) => index += 1,
+            option if option.starts_with('-') => {}
+            _ => return Some(index),
         }
+        index += 1;
+    }
+    None
+}
+
+/// A POSIX shell's script is the word after a flag cluster holding `c` (`-c`, `-lc`, `-ec`),
+/// before any word that is not an option. Long options (`--login`, `--norc`) are skipped, and
+/// so is the value of the ones that take one (`-o pipefail`, `+o xtrace`, `-O extglob`).
+fn posix_script(rest: &[String]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(word) = rest.get(index) {
+        if word == "--" {
+            return None;
+        }
+        if word.starts_with("--") {
+            index += 1;
+            continue;
+        }
+        let flags = word
+            .strip_prefix(['-', '+'])
+            .filter(|flags| !flags.is_empty() && flags.chars().all(|c| c.is_ascii_alphabetic()))?;
+        if word.starts_with('-') && flags.contains('c') {
+            return (index + 1 < rest.len()).then_some(index + 1);
+        }
+        // `-o name`, `+o name`, `-O name`: the name is the option's value.
+        if flags.ends_with(['o', 'O']) {
+            index += 1;
+        }
+        index += 1;
     }
     None
 }
@@ -164,14 +209,14 @@ fn prefix_of(flag: &str, name: &str) -> bool {
 }
 
 /// PowerShell's script is what follows `-Command` (any unambiguous prefix of it, `-c`, `-co`),
-/// or the first word that is no option when none is named (the implicit `-Command`); never
-/// when `-File` or `-EncodedCommand` comes first.
-fn powershell_script(rest: &[String]) -> Option<usize> {
+/// or, for Windows PowerShell, the first word that is no option when none is named (the
+/// implicit `-Command`); never when `-File` or `-EncodedCommand` comes first.
+fn powershell_script(rest: &[String], implicit_command: bool) -> Option<usize> {
     let mut index = 0;
     while let Some(word) = rest.get(index) {
         let Some(flag) = word.strip_prefix(['-', '/']) else {
-            // The first word that is no option: the implicit -Command.
-            return Some(index);
+            // The first word that is no option: the implicit -Command (5.1), a file (7).
+            return implicit_command.then_some(index);
         };
         if prefix_of(flag, "command") {
             return (index + 1 < rest.len()).then_some(index + 1);
@@ -236,6 +281,15 @@ pub(super) fn begins_word(text: &str) -> bool {
 /// Whether `text` holds a lone `--`: the end of the options of the command it writes.
 pub(super) fn has_end_of_options(text: &str) -> bool {
     text.split_whitespace().any(|word| word == "--")
+}
+
+/// Whether a value put into the script `before` reaches the shell as plain, unquoted text that
+/// it splits at the spaces: a `cmd` script with no quote of the template around the value.
+/// `wrapped` is a value that is a whole argument of the template written in quotes
+/// (`"{Title}"`). A value in single quotes added here, or in quotes of the template, is one
+/// argument whatever it holds.
+pub(super) fn splits_at_spaces(dialect: Dialect, before: &str, wrapped: bool) -> bool {
+    dialect == Dialect::Cmd && !wrapped && open_quote(dialect, before) == Open::None
 }
 
 /// Whether a value in a script may hold `c`.
