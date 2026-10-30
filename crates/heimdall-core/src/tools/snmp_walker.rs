@@ -1076,6 +1076,60 @@ mod tests {
     }
 
     #[test]
+    fn hostile_values_are_bounded_never_wrapped_and_never_carry_control_characters() {
+        let oid = [1, 3, 6, 1, 2, 1, 1, 3, 0];
+        let read = |tag, content: &[u8]| {
+            parse_snmp_response(&response(7, &oid, tag, content)).expect("parsed")
+        };
+        // TimeTicks and counters wider than 64 bits are shown as bytes, not wrapped.
+        let wide = [0x01u8; 12];
+        assert_eq!(read(TAG_TIMETICKS, &wide).value, hex(&wide));
+        assert_eq!(read(TAG_COUNTER32, &wide).value, hex(&wide));
+        assert_eq!(read(TAG_GAUGE32, &[0xFF; 9]).value, hex(&[0xFF; 9]));
+        // The largest time is formatted without overflow.
+        assert!(
+            read(TAG_TIMETICKS, &[0xFF; 8])
+                .value
+                .starts_with(&format!("{}d", u64::MAX / 100 / 86_400))
+        );
+        // An INTEGER past 64 bits is bytes too.
+        assert_eq!(read(TAG_INTEGER, &[0x7F; 12]).value, hex(&[0x7F; 12]));
+        // Text with escape sequences or a carriage return is never shown as it came.
+        let shown = read(TAG_OCTET_STRING, b"host\x1b[2J\rname").value;
+        assert!(!shown.chars().any(char::is_control), "{shown:?}");
+        let shown = read(TAG_OCTET_STRING, "caf\u{85}\u{202e}x\u{0}".as_bytes()).value;
+        assert!(!shown.chars().any(char::is_control), "{shown:?}");
+        // A megabyte of text is cut.
+        assert!(read(TAG_OCTET_STRING, &vec![b'a'; 60_000]).value.len() <= 60_000);
+    }
+
+    #[test]
+    fn nested_lengths_larger_than_their_container_are_refused() {
+        // A message whose PDU claims more than the message holds, and a varbind list whose
+        // varbind claims more than the list.
+        let valid = response(1, &[1, 3, 6, 1], TAG_OCTET_STRING, b"x");
+        assert!(parse_snmp_response(&valid).is_some());
+        for at in 0..valid.len() - 1 {
+            for claim in [0x7Fu8, 0xFF] {
+                let mut data = valid.clone();
+                if data[at] == 0x30 || data[at] == TAG_GET_RESPONSE {
+                    data[at + 1] = claim;
+                    let _ = parse_snmp_response(&data);
+                }
+            }
+        }
+        let mut data = vec![0x30, 0x84, 0xFF, 0xFF, 0xFF, 0xFF];
+        data.extend_from_slice(&valid[2..]);
+        assert!(parse_snmp_response(&data).is_none());
+        let mut data = vec![0x30, 0x88];
+        data.extend_from_slice(&[0xFF; 8]);
+        assert!(parse_snmp_response(&data).is_none());
+        // Empty and one-byte datagrams.
+        assert!(parse_snmp_response(&[]).is_none());
+        assert!(parse_snmp_response(&[0x30]).is_none());
+    }
+
+    #[test]
     fn parse_snmpwalk_line_output() {
         let line = "iso.3.6.1.2.1.1.5.0 = STRING: Router-Core-01";
         let entry = parse_snmpwalk_line(line).unwrap();
