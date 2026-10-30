@@ -1718,3 +1718,176 @@ fn keys_go_with_their_scancode_once_the_server_takes_them_and_plainly_before() {
     rfb.key_with_scancode(None, None, true);
     assert!(rfb.take_output().is_empty());
 }
+
+// Hostile servers, after the C# `HostileNetworkReplyTests` (VNC handshake): a banner that is not
+// one, and a length that announces more than a reason or a name can be.
+
+/// The longest reason read before it is refused, as the client holds it: sixteen times the text
+/// it keeps (4096 characters).
+const MAX_REASON_BYTES: u32 = 4096 * 16;
+
+/// The longest desktop name read before it is refused.
+const MAX_NAME_BYTES: u32 = 4096;
+
+#[test]
+fn only_a_banner_of_the_exact_shape_is_a_version() {
+    for (banner, version) in [
+        (&b"RFB 003.008\n"[..], Version::V3_8),
+        (b"RFB 003.007\n", Version::V3_7),
+        (b"RFB 003.003\n", Version::V3_3),
+        (b"RFB 003.889\n", Version::V3_8),
+        (b"RFB 003.005\n", Version::V3_3),
+    ] {
+        let mut rfb = Rfb::new(SecurityPolicy::default());
+        rfb.receive(banner).expect("a version");
+        assert_eq!(rfb.version(), version, "{banner:?}");
+    }
+    for banner in [
+        &b"RFB 3.8\nRFB 3.8\n"[..],
+        b"RFB 003.00X\n",
+        b"RFB 00X.008\n",
+        b"RFB 004.001\n",
+        b"RFB 003.008 ",
+        b"RFB 003-008\n",
+        b"RFB +03.008\n",
+        b"RFB 003.+08\n",
+        b"RFB 003.-08\n",
+        b"rfb 003.008\n",
+        b"SSH-2.0-OpenSSH_9.6\r\n",
+        b"RFB\x00003.008\n",
+        b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff",
+        b"            ",
+    ] {
+        let mut rfb = Rfb::new(SecurityPolicy::default());
+        assert!(
+            matches!(rfb.receive(banner), Err(RfbError::UnsupportedVersion(_))),
+            "{banner:?}"
+        );
+        // Nothing is answered to a server that did not speak RFB.
+        assert!(rfb.take_output().is_empty(), "{banner:?}");
+    }
+    // Fewer bytes than a banner: waited for, nothing answered.
+    let mut rfb = Rfb::new(SecurityPolicy::default());
+    assert!(rfb.receive(b"RFB 003.00").expect("partial").is_empty());
+    assert!(rfb.take_output().is_empty());
+}
+
+#[test]
+fn a_reason_longer_than_any_reason_is_refused_before_its_bytes_are_waited_for() {
+    // Refused with four bytes of its length read: nothing is kept for the 4 GB it announces.
+    for announced in [u32::MAX, i32::MAX.cast_unsigned(), MAX_REASON_BYTES + 1] {
+        let mut before_security = Rfb::new(SecurityPolicy::default());
+        before_security.receive(VERSION_3_8).expect("version");
+        let mut refusal = vec![0];
+        refusal.extend_from_slice(&announced.to_be_bytes());
+        assert!(
+            matches!(
+                before_security.receive(&refusal),
+                Err(RfbError::Protocol(_))
+            ),
+            "{announced}"
+        );
+
+        let mut after_password = Rfb::new(SecurityPolicy::default());
+        after_password.receive(VERSION_3_8).expect("version");
+        after_password.receive(&[1, 2]).expect("types");
+        after_password.receive(&CHALLENGE).expect("challenge");
+        after_password.answer_password(b"wrong").expect("answered");
+        let mut failure = vec![0, 0, 0, 1];
+        failure.extend_from_slice(&announced.to_be_bytes());
+        assert!(
+            matches!(after_password.receive(&failure), Err(RfbError::Protocol(_))),
+            "{announced}"
+        );
+    }
+    // The longest one is waited for, and kept cut to the text a screen can hold.
+    let mut rfb = Rfb::new(SecurityPolicy::default());
+    rfb.receive(VERSION_3_8).expect("version");
+    let mut refusal = vec![0];
+    refusal.extend_from_slice(&MAX_REASON_BYTES.to_be_bytes());
+    assert!(rfb.receive(&refusal).expect("waiting").is_empty());
+    let Err(RfbError::Refused(reason)) = rfb.receive(&vec![b'x'; MAX_REASON_BYTES as usize]) else {
+        panic!("the reason was not read");
+    };
+    assert_eq!(reason.len(), 4096);
+}
+
+#[test]
+fn a_desktop_name_longer_than_any_name_is_refused_before_its_bytes_are_waited_for() {
+    for announced in [u32::MAX, i32::MAX.cast_unsigned(), MAX_NAME_BYTES + 1] {
+        let mut rfb = Rfb::new(NO_AUTHENTICATION);
+        rfb.receive(VERSION_3_8).expect("version");
+        rfb.receive(&[1, 1]).expect("types");
+        rfb.receive(&[0, 0, 0, 0]).expect("result");
+        let mut init = server_init(1, 1, b"");
+        init.truncate(20);
+        init.extend_from_slice(&announced.to_be_bytes());
+        assert!(
+            matches!(rfb.receive(&init), Err(RfbError::Protocol(_))),
+            "{announced}"
+        );
+    }
+    // A new name sent in the session is bounded the same way.
+    let mut rfb = opened(2, 2);
+    let mut update = update(1);
+    update.extend_from_slice(&rect_header(0, 0, 0, 0, -307));
+    update.extend_from_slice(&u32::MAX.to_be_bytes());
+    assert!(matches!(rfb.receive(&update), Err(RfbError::Protocol(_))));
+}
+
+#[test]
+fn counts_that_wrap_or_overflow_never_panic() {
+    // A security type count of 255 with the list cut short is waited for, never indexed.
+    let mut rfb = Rfb::new(SecurityPolicy::default());
+    rfb.receive(VERSION_3_8).expect("version");
+    assert!(rfb.receive(&[255, 2, 1]).expect("partial").is_empty());
+
+    // 3.3: a security type that does not fit a byte.
+    let mut rfb = Rfb::new(SecurityPolicy::default());
+    rfb.receive(b"RFB 003.003\n").expect("version");
+    assert!(matches!(
+        rfb.receive(&[0xff, 0xff, 0xff, 0xff]),
+        Err(RfbError::NoAcceptableSecurity(_))
+    ));
+
+    // A rectangle count and sizes at their extremes.
+    let mut rfb = opened(2, 2);
+    let mut update = update(u16::MAX);
+    update.extend_from_slice(&rect_header(u16::MAX, u16::MAX, u16::MAX, u16::MAX, 0));
+    assert!(matches!(rfb.receive(&update), Err(RfbError::Protocol(_))));
+}
+
+#[test]
+fn every_truncation_and_random_corruption_of_a_session_never_panics() {
+    let mut session = Vec::new();
+    session.extend_from_slice(VERSION_3_8);
+    session.extend_from_slice(&[1, 1]);
+    session.extend_from_slice(&[0, 0, 0, 0]);
+    session.extend_from_slice(&server_init(2, 2, b"desk"));
+    session.extend_from_slice(&update(1));
+    session.extend_from_slice(&rect_header(0, 0, 2, 2, 0));
+    session.extend_from_slice(&[7; 16]);
+    session.extend_from_slice(&[3, 0, 0, 0, 0, 0, 0, 2, b'h', b'i']);
+
+    let feed = |bytes: &[u8]| {
+        let mut rfb = Rfb::new(NO_AUTHENTICATION);
+        let _ = rfb.receive(bytes);
+        let _ = rfb.take_output();
+    };
+    for length in 0..=session.len() {
+        feed(&session[..length]);
+    }
+    // A fixed seed, so a failure repeats.
+    let mut state: u64 = 20_261_030;
+    for _ in 0..3000 {
+        let mut bytes = session.clone();
+        for _ in 0..4 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let at = usize::try_from(state % bytes.len() as u64).expect("small");
+            bytes[at] = state.to_le_bytes()[0];
+        }
+        feed(&bytes);
+    }
+}
