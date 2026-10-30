@@ -472,8 +472,8 @@ impl Outcome {
 
 /// The clipboard emptied when it still holds `secret`, as a closed tab's pending clear
 /// finishes: something copied since is left where it is. Nothing comes back, the tab being
-/// gone. iced's clipboard has no way to mark a copy as kept out of the clipboard history
-/// and cloud clipboard, so this clear is the protection a copy gets.
+/// gone. A copy is also marked, on Windows, as kept out of the clipboard history and the
+/// cloud clipboard (`sensitive_clipboard`); this clear is the protection that remains.
 #[must_use]
 pub fn clear_if_still_held(secret: Zeroizing<String>) -> Task<Message> {
     iced::clipboard::read().then(move |content| {

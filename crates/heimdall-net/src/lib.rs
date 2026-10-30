@@ -52,6 +52,12 @@ use tokio::time::Instant;
 pub const CONNECTION_ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 
 /// The error of a name that gave no address, as tokio words it.
+/// Idle time before the first TCP keepalive probe, as the C# `KeepAliveTimeSeconds`.
+pub const KEEPALIVE_TIME: Duration = Duration::from_secs(60);
+
+/// Delay between two unanswered keepalive probes, as the C# `KeepAliveIntervalSeconds`.
+pub const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+
 const NO_ADDRESS: &str = "could not resolve to any address";
 
 /// The error of attempts that did not end in time.
@@ -167,8 +173,10 @@ pub async fn connect(host: &str, port: u16) -> io::Result<TcpStream> {
 
 /// [`connect`], each socket asking the system for TCP keepalive before it dials, so that a
 /// session idle on a path that died silently (a NAT or a firewall that dropped its state)
-/// reads an error instead of waiting for ever. The probes' timing is the system's own: the
-/// standard library and tokio set no other.
+/// reads an error instead of waiting for ever. The timing is the C# Telnet session's
+/// (`TelnetSession.cs:54-57`, `ApplyKeepAlive`): [`KEEPALIVE_TIME`] idle before the first
+/// probe and [`KEEPALIVE_INTERVAL`] between two unanswered ones. On a system that cannot set
+/// the interval, only the idle time is set and the system's own interval applies.
 ///
 /// # Errors
 ///
@@ -190,8 +198,26 @@ async fn dial_kept_alive(address: SocketAddr) -> io::Result<TcpStream> {
     } else {
         TcpSocket::new_v4()?
     };
-    socket.set_keepalive(true)?;
+    socket2::SockRef::from(&socket).set_tcp_keepalive(&keepalive_parameters())?;
     socket.connect(address).await
+}
+
+/// The keepalive to set: on, with the timing above wherever the system takes it.
+fn keepalive_parameters() -> socket2::TcpKeepalive {
+    let parameters = socket2::TcpKeepalive::new().with_time(KEEPALIVE_TIME);
+    #[cfg(any(
+        windows,
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "dragonfly",
+        target_os = "illumos"
+    ))]
+    let parameters = parameters.with_interval(KEEPALIVE_INTERVAL);
+    parameters
 }
 
 /// Connects to the first of `addresses` that answers, as the module says, within `timeout`
@@ -721,6 +747,22 @@ mod tests {
             kept.peer_addr().expect("peer"),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
         );
+        // Windows has no getter for the timing; the setter is exercised all the same.
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        {
+            let socket = TcpSocket::from_std_stream(kept.into_std().expect("std"));
+            let reference = socket2::SockRef::from(&socket);
+            assert!(reference.keepalive().expect("read back"));
+            assert_eq!(
+                reference.tcp_keepalive_time().expect("time"),
+                KEEPALIVE_TIME
+            );
+            assert_eq!(
+                reference.tcp_keepalive_interval().expect("interval"),
+                KEEPALIVE_INTERVAL
+            );
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         assert!(keepalive(kept));
         let plain = tokio::time::timeout(LIMIT + SLACK, connect("localhost", port))
             .await

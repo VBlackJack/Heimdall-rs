@@ -2464,6 +2464,7 @@ name = "heimdall-net"
 version = "2026.101701.0"
 dependencies = [
  "log",
+ "socket2",
  "tokio",
 ]
 
