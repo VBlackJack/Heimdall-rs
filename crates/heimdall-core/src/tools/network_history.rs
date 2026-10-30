@@ -207,6 +207,28 @@ pub struct KnowledgeBase {
     pub last_updated: u64,
     /// By address.
     pub hosts: BTreeMap<String, KnownHost>,
+    /// Set on the empty base that stands for a file which could not be read, or could not
+    /// be set aside: it is never written back, as the C# `IsReadOnly`. It lives on this
+    /// loaded value and is not part of the file.
+    #[serde(skip)]
+    read_only: bool,
+}
+
+impl KnowledgeBase {
+    /// Whether [`ScanStore::save_knowledge`] refuses this base, because the file it stands
+    /// for was left untouched on purpose.
+    #[must_use]
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// The empty base standing for a file that must not be written over.
+    fn locked() -> Self {
+        Self {
+            read_only: true,
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for KnowledgeBase {
@@ -215,6 +237,7 @@ impl Default for KnowledgeBase {
             version: FORMAT_VERSION,
             last_updated: 0,
             hosts: BTreeMap::new(),
+            read_only: false,
         }
     }
 }
@@ -418,6 +441,51 @@ fn snapshot_info(file_name: &str) -> Option<SnapshotInfo> {
     })
 }
 
+/// What is appended to the knowledge base's file name to keep a file that does not parse.
+const CORRUPT_SUFFIX: &str = ".corrupt-";
+
+/// The UTC moment as the C# writes a set-aside name, `yyyyMMddTHHmmssfffZ`.
+fn corrupt_stamp(secs: u64, millis: u32) -> String {
+    format!("{}{millis:03}Z", stamp(secs).replace('_', "T"))
+}
+
+/// The empty, read-only base for a file that could not be read (the file stays as it is).
+fn unreadable_knowledge(path: &Path, error: &io::Error) -> KnowledgeBase {
+    log::warn!(
+        "the knowledge base could not be read, it stays untouched and will not be saved over: {error} ({})",
+        path.display()
+    );
+    KnowledgeBase::locked()
+}
+
+/// Renames the knowledge base that does not parse to `<name>.corrupt-<UTC stamp>`; the empty
+/// base to start from, or a read-only one when it cannot be set aside.
+fn set_corrupt_aside(path: &Path) -> KnowledgeBase {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let mut aside = path.as_os_str().to_owned();
+    aside.push(CORRUPT_SUFFIX);
+    aside.push(corrupt_stamp(now.as_secs(), now.subsec_millis()));
+    let aside = PathBuf::from(aside);
+    match fs::rename(path, &aside) {
+        Ok(()) => {
+            log::warn!(
+                "the knowledge base is corrupt, kept as {}, starting fresh",
+                aside.display()
+            );
+            KnowledgeBase::default()
+        }
+        Err(error) => {
+            log::warn!(
+                "the knowledge base is corrupt and could not be set aside, it will not be saved over: {error} ({})",
+                path.display()
+            );
+            KnowledgeBase::locked()
+        }
+    }
+}
+
 /// `path` read as JSON into a `T`, when it is no larger than [`MAX_FILE_BYTES`].
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
     let size = fs::metadata(path).ok()?.len();
@@ -458,21 +526,60 @@ impl ScanStore {
         self.dir.join(KNOWLEDGE_FILE_NAME)
     }
 
-    /// The knowledge base; an empty one when there is none yet or it cannot be read, as the
-    /// C# falls back to `CreateEmpty`.
+    /// The knowledge base; an empty one when there is none yet.
+    ///
+    /// A file that does not parse (or is of another version) is renamed to
+    /// `network-kb.json.corrupt-<UTC stamp>` and the base starts empty. A file that cannot
+    /// be read, or a corrupt one that cannot be set aside, gives an empty base flagged
+    /// read-only, which [`Self::save_knowledge`] refuses: the next save must not destroy
+    /// what the operator accumulated, as the C# `KnowledgeBaseManager.LoadAsync`.
     #[must_use]
     pub fn load_knowledge(&self) -> KnowledgeBase {
-        read_json::<KnowledgeBase>(&self.knowledge_file())
-            .filter(|knowledge| knowledge.version == FORMAT_VERSION)
-            .unwrap_or_default()
+        let path = self.knowledge_file();
+        let size = match fs::metadata(&path) {
+            Ok(meta) => meta.len(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return KnowledgeBase::default();
+            }
+            Err(error) => return unreadable_knowledge(&path, &error),
+        };
+        if size > MAX_FILE_BYTES {
+            log::warn!(
+                "the knowledge base is larger than {MAX_FILE_BYTES} bytes, it stays untouched and will not be saved over: {}",
+                path.display()
+            );
+            return KnowledgeBase::locked();
+        }
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            // Not text at all: as corrupt as text that does not parse.
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                return set_corrupt_aside(&path);
+            }
+            Err(error) => return unreadable_knowledge(&path, &error),
+        };
+        match serde_json::from_str::<KnowledgeBase>(&text) {
+            Ok(knowledge) if knowledge.version == FORMAT_VERSION => knowledge,
+            _ => set_corrupt_aside(&path),
+        }
     }
 
     /// Writes `knowledge` down.
     ///
     /// # Errors
     ///
-    /// The error of the write.
+    /// The error of the write, or `PermissionDenied` for a base loaded read-only.
     pub fn save_knowledge(&self, knowledge: &KnowledgeBase) -> io::Result<()> {
+        if knowledge.read_only {
+            log::warn!(
+                "knowledge base save refused: the file could not be read when it was loaded: {}",
+                self.knowledge_file().display()
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the knowledge base file could not be read when it was loaded",
+            ));
+        }
         write_json(&self.knowledge_file(), knowledge)
     }
 
@@ -704,11 +811,102 @@ mod tests {
         assert_eq!(one.mac.as_deref(), Some("00-50-56-00-00-01"));
     }
 
+    fn corrupt_files(folder: &Path) -> Vec<String> {
+        fs::read_dir(folder)
+            .expect("read")
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .filter(|name| name.contains(CORRUPT_SUFFIX))
+            .collect()
+    }
+
     #[test]
-    fn an_unreadable_knowledge_base_is_an_empty_one() {
+    fn a_corrupt_knowledge_base_is_set_aside_and_the_next_one_starts_empty() {
         let folder = tempfile::tempdir().expect("folder");
         let store = ScanStore::new(folder.path().to_owned());
         fs::write(store.knowledge_file(), "{ not json").expect("written");
+
+        let loaded = store.load_knowledge();
+
+        assert_eq!(loaded, KnowledgeBase::default());
+        assert!(
+            !loaded.is_read_only(),
+            "a corrupt file set aside is not a locked one"
+        );
+        assert!(!store.knowledge_file().exists());
+        let kept = corrupt_files(folder.path());
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        let prefix = format!("{KNOWLEDGE_FILE_NAME}{CORRUPT_SUFFIX}");
+        let stamp = kept[0].strip_prefix(&prefix).expect("named after the file");
+        assert!(stamp.ends_with('Z') && stamp.contains('T'), "{stamp}");
+        assert_eq!(
+            fs::read_to_string(folder.path().join(&kept[0])).expect("kept"),
+            "{ not json",
+            "what was there is kept as it was"
+        );
+        // And the base can be saved again.
+        store.save_knowledge(&loaded).expect("saved");
+        assert!(store.knowledge_file().exists());
+    }
+
+    #[test]
+    fn a_knowledge_base_of_another_version_is_set_aside_not_overwritten() {
+        let folder = tempfile::tempdir().expect("folder");
+        let store = ScanStore::new(folder.path().to_owned());
+        fs::write(
+            store.knowledge_file(),
+            r#"{"version":99,"last_updated":1,"hosts":{}}"#,
+        )
+        .expect("written");
         assert_eq!(store.load_knowledge(), KnowledgeBase::default());
+        assert_eq!(corrupt_files(folder.path()).len(), 1);
+    }
+
+    #[test]
+    fn an_unreadable_knowledge_base_is_left_alone_and_never_saved_over() {
+        let folder = tempfile::tempdir().expect("folder");
+        let store = ScanStore::new(folder.path().to_owned());
+        // A folder where the file should be: it exists and cannot be read as a file.
+        fs::create_dir(store.knowledge_file()).expect("folder in the way");
+
+        let loaded = store.load_knowledge();
+
+        assert!(loaded.is_read_only());
+        assert!(loaded.hosts.is_empty());
+        let error = store.save_knowledge(&loaded).expect_err("refused");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(store.knowledge_file().is_dir(), "still what it was");
+        assert!(corrupt_files(folder.path()).is_empty());
+    }
+
+    #[test]
+    fn a_missing_knowledge_base_is_an_empty_one_that_can_be_saved() {
+        let folder = tempfile::tempdir().expect("folder");
+        let store = ScanStore::new(folder.path().to_owned());
+        let loaded = store.load_knowledge();
+        assert_eq!(loaded, KnowledgeBase::default());
+        store.save_knowledge(&loaded).expect("saved");
+        assert_eq!(store.load_knowledge(), loaded);
+    }
+
+    #[test]
+    fn a_set_aside_name_writes_the_moment_as_the_csharp_does() {
+        // 2026-10-27 12:34:56.007 UTC.
+        assert_eq!(corrupt_stamp(1_793_104_496, 7), "20261027T123456007Z");
+    }
+
+    #[test]
+    fn saving_a_snapshot_twice_in_one_second_replaces_it_and_leaves_no_temporary_file() {
+        let folder = tempfile::tempdir().expect("folder");
+        let store = ScanStore::new(folder.path().to_owned());
+        let first = snapshot(1_000, vec![host("10.0.0.1", &[22], None, None)]);
+        let second = snapshot(1_000, vec![host("10.0.0.2", &[80], None, None)]);
+        let name = store.save_snapshot(&first).expect("first");
+        assert_eq!(store.save_snapshot(&second).expect("second"), name);
+        assert_eq!(store.load_snapshot(&name), Some(second));
+        let files: Vec<_> = fs::read_dir(store.history_dir())
+            .expect("read")
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .collect();
+        assert_eq!(files, vec![name], "only the snapshot, no temporary file");
     }
 }
