@@ -5964,6 +5964,13 @@ ui-network-scan-kind-telnet = Telnet
 ui-network-scan-kind-web = Web
 # Tab strip: the list of every open tab and the arrangement by folder, as the C# one.
 ui-tab-menu-group-by-folder = Agrupar pestañas por carpeta
+ui-tab-menu-collapse-folder = Contraer las pestañas de la carpeta
+ui-tab-menu-expand-folder = Expandir las pestañas de la carpeta
+ui-tab-menu-collapse-other-folders = Contraer las otras carpetas
+ui-tab-menu-close-folder = Cerrar las pestañas de la carpeta
+ui-tab-folder-chip-open = Pestañas de la carpeta { $folder }, expandidas
+ui-tab-folder-chip-folded = Pestañas de la carpeta { $folder }, contraídas
+ui-tab-folder-chip-lone = Pestañas de la carpeta { $folder }, expandidas; son las únicas pestañas abiertas, no se pueden contraer
 ui-tab-list-tooltip = Todas las pestañas abiertas
 ui-tab-list-entry = { $name } - { $state }
 

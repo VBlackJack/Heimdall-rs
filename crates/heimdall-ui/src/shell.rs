@@ -125,7 +125,8 @@ use crate::terminal_view::keys::{
 use crate::texts;
 use crate::tokens::{font_size, radius, spacing};
 use crate::tree_view::{
-    self, CursorSpot, CursorTracker, SplitEntries, TabMenuState, TranscriptEntry, TreeMenu,
+    self, CursorSpot, CursorTracker, FolderEntries, SplitEntries, TabMenuState, TranscriptEntry,
+    TreeMenu,
 };
 use crate::trusted_keys_view::{HostKeyColumn, HostKeySort, TrustedList};
 use heimdall_app::split::{Axis, Layout as SplitLayout, MAX_PANES, Placement, SplitMessage};
@@ -4297,7 +4298,9 @@ impl Shell {
         };
         // The strip's tabs: a pane docked in a split is shown with its tab.
         let shown = self.shown_tab_id().unwrap_or(active);
-        let strip: Vec<TabId> = self.app.strip().iter().map(|tab| tab.id).collect();
+        // The tabs a key can reach: those of a folded folder are skipped whole, as the C#
+        // `NextVisibleTab`, landing on one would unfold it and undo the fold.
+        let strip: Vec<TabId> = self.app.reachable_tabs();
         let count = strip.len();
         let index = strip.iter().position(|id| *id == shown);
         let message = match (shortcut, index) {
@@ -8681,6 +8684,10 @@ impl Shell {
             can_reopen: self.app.can_reopen(tab),
             editable: profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id)),
             profile,
+            folder: self.app.tab_folder(tab).map(|_| FolderEntries {
+                folded: self.app.folder_folded(tab),
+                other_folders: self.app.has_other_folder(id),
+            }),
             others: !self.app.tab_group(id, TabGroup::Others).is_empty(),
             right: !self.app.tab_group(id, TabGroup::Right).is_empty(),
             all: !self.app.tab_group(id, TabGroup::All).is_empty(),

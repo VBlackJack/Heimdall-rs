@@ -57,6 +57,12 @@ pub enum TabMenuMessage {
     /// Gather the tabs by the folder of their profile, or no longer, as the C# "Arrange tabs
     /// by folder" (`SessionTabContextMenuFactory.cs:286`).
     ToggleGroupByFolder,
+    /// Fold the folder group of a tab behind its chip, or unfold it, as the C# "Collapse this
+    /// folder's tabs" and a click on the chip (`ConnectionViewModel.ToggleTabGroupCollapsed`).
+    ToggleFolderFold(TabId),
+    /// Fold every folder group but the one of a tab, as the C# "Collapse the other folders"
+    /// (`ConnectionViewModel.CollapseOtherTabGroups`).
+    FoldOtherFolders(TabId),
     /// Resize a VNC tab's remote desktop to the tab, or no longer, as the C# "Remote
     /// resizing".
     VncRemoteResize(TabId),
@@ -85,6 +91,9 @@ pub enum TabGroup {
     /// Every tab of the strip, this one and the pinned ones included, as the C# "Close all
     /// tabs" (`ConnectionViewModel.CloseAllSessions`).
     All,
+    /// The tabs of the folder group of this tab, this one included, as the C# "Close this
+    /// folder's tabs" (`SessionTabContextMenuFactory.SessionsInFolder`).
+    Folder,
 }
 
 impl App {
@@ -128,6 +137,8 @@ impl App {
                 self.toggle_group_tabs_by_folder();
                 Vec::new()
             }
+            TabMenuMessage::ToggleFolderFold(tab) => self.toggle_folder_fold(tab),
+            TabMenuMessage::FoldOtherFolders(tab) => self.fold_other_folders(tab),
             TabMenuMessage::VncRemoteResize(tab) => {
                 if let Some(pane) = self.tab_mut(tab).and_then(|tab| tab.desktop.as_mut())
                     && let Some(on) = pane.vnc_remote_resize()
@@ -178,17 +189,32 @@ impl App {
         let Some(index) = strip.iter().position(|tab| tab.id == tab_id) else {
             return Vec::new();
         };
+        if group == TabGroup::Folder {
+            let Some(folder) = self.tab_folder(strip[index]).map(|f| f.to_lowercase()) else {
+                return Vec::new();
+            };
+            return strip
+                .iter()
+                .filter(|tab| {
+                    self.tab_folder(tab)
+                        .is_some_and(|f| f.to_lowercase() == folder)
+                })
+                .map(|tab| tab.id)
+                .collect();
+        }
         // From the tab itself for the right, which the filter drops as it drops it from the
         // others.
         let from = match group {
             TabGroup::Others => 0,
             TabGroup::Right => index,
             TabGroup::All => return strip.iter().map(|tab| tab.id).collect(),
+            TabGroup::Folder => return Vec::new(),
         };
-        // A pinned tab is left, as the C# leaves it.
+        // A pinned tab is left, as the C# leaves it, and so is a tab folded behind a chip: out
+        // of sight, it is not what a gesture aimed at the visible strip meant to close.
         strip[from..]
             .iter()
-            .filter(|tab| tab.id != tab_id && !tab.pinned)
+            .filter(|tab| tab.id != tab_id && !tab.pinned && !self.folder_folded(tab))
             .map(|tab| tab.id)
             .collect()
     }
