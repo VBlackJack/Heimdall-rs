@@ -30,7 +30,7 @@ use std::panic::{self, PanicHookInfo};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
 use log::Level;
@@ -42,8 +42,22 @@ const LOG_FILE_NAME: &str = "heimdall.log";
 /// Name the previous log file is kept under.
 const PREVIOUS_LOG_FILE_NAME: &str = "heimdall.log.1";
 
-/// Size past which the log file is set aside at start.
-const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
+/// Bytes in a megabyte.
+const BYTES_PER_MEGABYTE: u64 = 1024 * 1024;
+
+/// Size in megabytes past which the log file is set aside, as the C# `FileLogger` caps a
+/// file at 10 MB.
+const MAX_LOG_MEGABYTES: u64 = 10;
+
+/// Size past which the log file is set aside, at start and while it is written: an entry
+/// that would pass it starts the next file, so no entry is split.
+const MAX_LOG_BYTES: u64 = MAX_LOG_MEGABYTES * BYTES_PER_MEGABYTE;
+
+/// Days the set-aside log is kept after it was last written, as the C# `LogRetentionDays`.
+const LOG_RETENTION_DAYS: u64 = 30;
+
+/// Seconds in a day.
+const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
 
 /// Environment variable choosing the level of every crate: `error` to `trace`.
 const LEVEL_VARIABLE: &str = "HEIMDALL_LOG";
@@ -74,8 +88,49 @@ pub fn set_enabled(on: bool) {
     }
 }
 
+/// The open log file and how much it holds.
+struct LogState {
+    /// `None` when a file set aside could not be replaced: lines are dropped, as when the log
+    /// could not be opened at all.
+    file: Option<File>,
+    written: u64,
+    dir: PathBuf,
+}
+
+impl LogState {
+    /// Adds `bytes` as one entry. An entry that would take the file past `cap` goes to a
+    /// fresh file instead (the full one is set aside), unless the file is empty: one
+    /// oversized entry is never refused, as the C# logger never refuses a batch.
+    fn append(&mut self, bytes: &[u8], cap: u64) {
+        let length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        if self.written > 0 && self.written.saturating_add(length) > cap {
+            self.roll_over();
+        }
+        if let Some(file) = self.file.as_mut()
+            && file.write_all(bytes).is_ok()
+        {
+            self.written = self.written.saturating_add(length);
+        }
+    }
+
+    /// Sets the full file aside and continues in a new one.
+    fn roll_over(&mut self) {
+        // The handle goes first: Windows does not rename a file another handle may lock.
+        self.file = None;
+        rotate_log(&self.dir);
+        self.file = open_file(&self.dir.join(LOG_FILE_NAME))
+            .ok()
+            .map(|(file, _)| file);
+        self.written = self
+            .file
+            .as_ref()
+            .and_then(|file| file.metadata().ok())
+            .map_or(0, |meta| meta.len());
+    }
+}
+
 struct FileLogger {
-    file: Mutex<File>,
+    state: Mutex<LogState>,
     own: LevelFilter,
     others: LevelFilter,
     /// The full-screen diagnostics are written at debug.
@@ -128,14 +183,16 @@ impl Log for FileLogger {
             record.target(),
             record.args()
         );
-        if let Ok(mut file) = self.file.lock() {
+        if let Ok(mut state) = self.state.lock() {
             // A log that cannot be written must not take the application down.
-            let _ = file.write_all(line.as_bytes());
+            state.append(line.as_bytes(), MAX_LOG_BYTES);
         }
     }
 
     fn flush(&self) {
-        if let Ok(mut file) = self.file.lock() {
+        if let Ok(mut state) = self.state.lock()
+            && let Some(file) = state.file.as_mut()
+        {
             let _ = file.flush();
         }
     }
@@ -178,14 +235,46 @@ fn private_file() -> OpenOptions {
 /// Restriction failing, it is written all the same with its folder's access, as the C# goes
 /// on: what the code logs is redacted, and a log is the one trace a user can send.
 fn open_log(dir: &Path) -> std::io::Result<(File, Option<std::io::Error>)> {
+    open_log_capped(dir, MAX_LOG_BYTES)
+}
+
+/// `open_log`, setting the file aside first when it holds more than `cap` bytes.
+fn open_log_capped(dir: &Path, cap: u64) -> std::io::Result<(File, Option<std::io::Error>)> {
     fs::create_dir_all(dir)?;
     let path = dir.join(LOG_FILE_NAME);
-    if fs::metadata(&path).is_ok_and(|meta| meta.len() > MAX_LOG_BYTES) {
-        // Another instance may hold the file open (Windows): keep appending rather than
-        // run without a log.
-        let _ = fs::rename(&path, dir.join(PREVIOUS_LOG_FILE_NAME));
+    if fs::metadata(&path).is_ok_and(|meta| meta.len() > cap) {
+        rotate_log(dir);
     }
-    match heimdall_core::tools::private_file::open_private_log(&path) {
+    open_file(&path)
+}
+
+/// Keeps the log file of `dir` as the previous log, replacing the one kept before.
+fn rotate_log(dir: &Path) {
+    // Another instance may hold the file open (Windows): keep appending rather than run
+    // without a log.
+    let _ = fs::rename(dir.join(LOG_FILE_NAME), dir.join(PREVIOUS_LOG_FILE_NAME));
+}
+
+/// Deletes the previous log of `dir` when it was last written `retention` or more before
+/// `now`, and returns whether it did.
+///
+/// Only that one name is a candidate, by exact name: the log in use, the crash reports and
+/// anything else a user keeps in the folder are never touched, as the C# purge decides by the
+/// exact shape of a name. Best effort: a file that is held stays for the next start.
+fn purge_expired(dir: &Path, retention: Duration, now: SystemTime) -> bool {
+    let path = dir.join(PREVIOUS_LOG_FILE_NAME);
+    let expired = fs::metadata(&path)
+        .ok()
+        .filter(std::fs::Metadata::is_file)
+        .and_then(|meta| meta.modified().ok())
+        .and_then(|written| now.duration_since(written).ok())
+        .is_some_and(|age| age >= retention);
+    expired && fs::remove_file(path).is_ok()
+}
+
+/// The log file at `path`, opened to add to it, and why it is not restricted when it is not.
+fn open_file(path: &Path) -> std::io::Result<(File, Option<std::io::Error>)> {
+    match heimdall_core::tools::private_file::open_private_log(path) {
         Ok(file) => Ok((file, None)),
         Err(unrestricted) => Ok((private_file().append(true).open(path)?, Some(unrestricted))),
     }
@@ -201,10 +290,20 @@ pub fn init(dir: Option<PathBuf>) {
     let fullscreen_trace =
         std::env::var_os(FULLSCREEN_TRACE_VARIABLE).is_some_and(|v| !v.is_empty());
     let mut unrestricted = None;
+    purge_expired(
+        &dir,
+        Duration::from_secs(LOG_RETENTION_DAYS * SECONDS_PER_DAY),
+        SystemTime::now(),
+    );
     if let Ok((file, error)) = open_log(&dir) {
         unrestricted = error;
+        let written = file.metadata().map_or(0, |meta| meta.len());
         let logger = FileLogger {
-            file: Mutex::new(file),
+            state: Mutex::new(LogState {
+                file: Some(file),
+                written,
+                dir: dir.clone(),
+            }),
             own,
             others,
             fullscreen_trace,
@@ -297,6 +396,8 @@ fn written(requested: Option<&str>, target: &str, level: Level) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, SystemTime};
+
     use log::Level;
 
     use super::{MAX_PANIC_MESSAGE_CHARS, first_line, printable, written};
@@ -366,6 +467,132 @@ mod tests {
             .mode();
         assert_eq!(mode & 0o777, 0o600);
     }
+
+    /// Opens the log of `dir` as `init` does.
+    fn state_in(dir: &std::path::Path, cap: u64) -> super::LogState {
+        let (file, _) = super::open_log_capped(dir, cap).expect("opened");
+        let written = file.metadata().map_or(0, |meta| meta.len());
+        super::LogState {
+            file: Some(file),
+            written,
+            dir: dir.to_path_buf(),
+        }
+    }
+
+    fn seed(path: &std::path::Path, age: Duration) {
+        std::fs::write(path, "content").expect("seeded");
+        let file = std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("opened");
+        file.set_modified(SystemTime::now() - age).expect("aged");
+    }
+
+    #[test]
+    fn a_log_at_its_cap_continues_in_a_new_file_with_no_entry_split() {
+        const TINY_CAP: u64 = 400;
+        let dir = tempfile::tempdir().expect("dir");
+        let mut state = state_in(dir.path(), TINY_CAP);
+        let entries: Vec<String> = (0..30)
+            .map(|i| {
+                format!(
+                    "entry-{i:03}-{}
+",
+                    "x".repeat(40)
+                )
+            })
+            .collect();
+        for entry in &entries {
+            state.append(entry.as_bytes(), TINY_CAP);
+        }
+        drop(state);
+
+        let current = std::fs::read_to_string(dir.path().join(super::LOG_FILE_NAME)).expect("log");
+        let previous =
+            std::fs::read_to_string(dir.path().join(super::PREVIOUS_LOG_FILE_NAME)).expect("old");
+        assert!(current.len() as u64 <= TINY_CAP, "{}", current.len());
+        assert!(previous.len() as u64 <= TINY_CAP, "{}", previous.len());
+        // What is kept is the end of the log, whole and in order.
+        let kept = format!("{previous}{current}");
+        assert!(!kept.is_empty());
+        assert!(entries.concat().ends_with(&kept), "{kept}");
+        assert!(kept.lines().all(|line| line.starts_with("entry-")));
+    }
+
+    #[test]
+    fn an_oversized_entry_in_an_empty_file_is_written_whole() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut state = state_in(dir.path(), 8);
+        state.append(
+            b"longer than the cap
+",
+            8,
+        );
+        drop(state);
+        let current = std::fs::read_to_string(dir.path().join(super::LOG_FILE_NAME)).expect("log");
+        assert_eq!(
+            current,
+            "longer than the cap
+"
+        );
+        assert!(!dir.path().join(super::PREVIOUS_LOG_FILE_NAME).exists());
+    }
+
+    #[test]
+    fn a_restart_does_not_append_to_a_file_past_its_cap() {
+        const TINY_CAP: u64 = 16;
+        let dir = tempfile::tempdir().expect("dir");
+        std::fs::write(
+            dir.path().join(super::LOG_FILE_NAME),
+            "a line longer than the cap
+",
+        )
+        .expect("seeded");
+        let state = state_in(dir.path(), TINY_CAP);
+        assert_eq!(state.written, 0);
+        drop(state);
+        assert!(dir.path().join(super::PREVIOUS_LOG_FILE_NAME).exists());
+    }
+
+    #[test]
+    fn only_a_previous_log_past_the_retention_is_purged() {
+        let retention = Duration::from_secs(super::LOG_RETENTION_DAYS * super::SECONDS_PER_DAY);
+        let old = retention + Duration::from_secs(super::SECONDS_PER_DAY);
+        let dir = tempfile::tempdir().expect("dir");
+        let previous = dir.path().join(super::PREVIOUS_LOG_FILE_NAME);
+        let active = dir.path().join(super::LOG_FILE_NAME);
+        let crash = dir.path().join("crash-1-000.txt");
+        let notes = dir.path().join("heimdall.log.notes");
+        for path in [&active, &crash, &notes] {
+            seed(path, old);
+        }
+        seed(&previous, Duration::from_secs(super::SECONDS_PER_DAY));
+
+        assert!(!super::purge_expired(
+            dir.path(),
+            retention,
+            SystemTime::now()
+        ));
+        assert!(previous.exists(), "a recent previous log stays");
+
+        seed(&previous, old);
+        assert!(super::purge_expired(
+            dir.path(),
+            retention,
+            SystemTime::now()
+        ));
+        assert!(!previous.exists());
+        assert!(active.exists(), "the log in use is never a candidate");
+        assert!(crash.exists(), "a crash report is not a diagnostic log");
+        assert!(notes.exists());
+        // Nothing to purge, nothing to fail on.
+        assert!(!super::purge_expired(
+            dir.path(),
+            retention,
+            SystemTime::now()
+        ));
+    }
+
     #[test]
     fn the_full_screen_trace_switch_opens_its_own_target_and_no_other() {
         use log::LevelFilter;
