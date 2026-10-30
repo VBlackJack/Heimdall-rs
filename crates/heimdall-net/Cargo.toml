@@ -14,6 +14,9 @@ publish.workspace = true
 
 [dependencies]
 log.workspace = true
+# Already in the lock through tokio; direct here only to set the keepalive timing tokio does not
+# expose. "all" adds the getters the tests read back and pulls no further crate.
+socket2 = { version = "0.6.5", features = ["all"] }
 tokio.workspace = true
 
 [dev-dependencies]
