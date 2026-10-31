@@ -5919,6 +5919,13 @@ ui-network-scan-kind-telnet = Telnet
 ui-network-scan-kind-web = Web
 # Tab strip: the list of every open tab and the arrangement by folder, as the C# one.
 ui-tab-menu-group-by-folder = Arrange tabs by folder
+ui-tab-menu-collapse-folder = Collapse this folder's tabs
+ui-tab-menu-expand-folder = Expand this folder's tabs
+ui-tab-menu-collapse-other-folders = Collapse the other folders
+ui-tab-menu-close-folder = Close this folder's tabs
+ui-tab-folder-chip-open = Tabs of folder { $folder }, expanded
+ui-tab-folder-chip-folded = Tabs of folder { $folder }, collapsed
+ui-tab-folder-chip-lone = Tabs of folder { $folder }, expanded; they are the only tabs open, so they cannot be folded away
 ui-tab-list-tooltip = All open tabs
 ui-tab-list-entry = { $name } - { $state }
 
