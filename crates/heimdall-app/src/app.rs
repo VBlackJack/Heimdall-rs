@@ -1469,6 +1469,9 @@ pub enum Effect {
     },
     /// Put text on the clipboard.
     WriteClipboard(String),
+    /// Put a secret on the clipboard, kept out of the clipboard history, the cloud clipboard
+    /// and the monitors where the system allows it: a share's access token.
+    WriteSensitiveClipboard(String),
     /// Put files of this computer on the system's clipboard as copied files, each by its
     /// full path, as Explorer's Copy does: the local file browser's "Copy". Windows only:
     /// elsewhere they stay with Heimdall.
@@ -2049,6 +2052,7 @@ impl fmt::Debug for Effect {
                 write!(f, "Answer({}, {answer:?})", question.value())
             }
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
+            Self::WriteSensitiveClipboard(_) => f.write_str("WriteSensitiveClipboard(..)"),
             Self::Redact { run, text, .. } => write!(f, "Redact({run}, {} bytes)", text.len()),
             Self::WriteFileList(paths) => write!(f, "WriteFileList({})", paths.len()),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
