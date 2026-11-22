@@ -65,6 +65,31 @@ fn config(root: PathBuf, lifetime: Duration) -> ShareConfig {
 }
 
 async fn start_with(lifetime: Duration, head_timeout: Duration) -> Running {
+    start_bound(BindChoice::default(), lifetime, head_timeout).await
+}
+
+/// A share on its own loopback address, for the tests that check the port is released:
+/// no other test listens there, so nothing else can take the port back after the stop.
+async fn start_alone(address: Ipv4Addr, lifetime: Duration) -> Running {
+    start_bound(
+        BindChoice::Interface(IpAddr::V4(address)),
+        lifetime,
+        HEAD_TIMEOUT,
+    )
+    .await
+}
+
+/// True once nothing listens on `addr` any more: the port can be bound again.
+///
+/// Connecting is not a proof: on Linux a connection to a closed loopback port succeeds
+/// about once in 30000 tries, when the system picks the destination port as the source
+/// port (TCP self-connect, 6 of 200000 measured on 2026-11-22), and a parallel test
+/// binding port 0 can be given the freed port.
+async fn port_is_released(addr: SocketAddr) -> bool {
+    tokio::net::TcpListener::bind(addr).await.is_ok()
+}
+
+async fn start_bound(bind: BindChoice, lifetime: Duration, head_timeout: Duration) -> Running {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     std::fs::write(root.join("hello.txt"), "hello world").unwrap();
@@ -72,6 +97,7 @@ async fn start_with(lifetime: Duration, head_timeout: Duration) -> Running {
     std::fs::write(root.join("sub").join("deep.txt"), "deep").unwrap();
     std::fs::write(root.join("a&b'c.txt"), "x").unwrap();
     let mut config = config(root.clone(), lifetime);
+    config.bind = bind;
     config.head_timeout = head_timeout;
     let share = Share::bind(config).await.unwrap();
     let (sender, events) = channel(EVENT_QUEUE);
@@ -446,25 +472,25 @@ async fn requests_are_reported_without_the_token() {
 
 #[tokio::test]
 async fn a_share_stops_when_told_to() {
-    let mut share = start().await;
+    let mut share = start_alone(Ipv4Addr::new(127, 0, 0, 2), LONG_LIFE).await;
     share.cancel.cancel();
     assert_eq!(share.task.await.unwrap(), StopReason::Stopped);
     assert_eq!(
         share.events.recv().await,
         Some(ShareEvent::Stopped(StopReason::Stopped))
     );
-    assert!(TcpStream::connect(share.addr).await.is_err());
+    assert!(port_is_released(share.addr).await);
 }
 
 #[tokio::test]
 async fn a_share_stops_by_itself_when_its_lifetime_is_over() {
-    let mut share = start_with(Duration::from_millis(250), HEAD_TIMEOUT).await;
+    let mut share = start_alone(Ipv4Addr::new(127, 0, 0, 3), Duration::from_millis(250)).await;
     assert_eq!(share.task.await.unwrap(), StopReason::Expired);
     assert_eq!(
         share.events.recv().await,
         Some(ShareEvent::Stopped(StopReason::Expired))
     );
-    assert!(TcpStream::connect(share.addr).await.is_err());
+    assert!(port_is_released(share.addr).await);
 }
 
 #[tokio::test]
