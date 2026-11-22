@@ -2845,7 +2845,7 @@ pub fn move_folder_entries<'a>(path: &str, targets: &[String]) -> Element<'a, Me
 #[derive(Debug, Clone, Default)]
 pub struct CursorSpot(Arc<Mutex<Spot>>);
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Spot {
     /// The last position seen.
     at: Point,
@@ -2853,6 +2853,17 @@ struct Spot {
     pressed_at: Point,
     /// The left button was released, or the window lost the focus, since its last press.
     released: bool,
+}
+
+impl Default for Spot {
+    /// No press seen yet: nothing is held.
+    fn default() -> Self {
+        Self {
+            at: Point::ORIGIN,
+            pressed_at: Point::ORIGIN,
+            released: true,
+        }
+    }
 }
 
 impl CursorSpot {
@@ -2884,7 +2895,11 @@ impl CursorSpot {
         self.lock().at = point;
     }
 
-    /// Records the left button's state from `event`.
+    /// Records the left button's state from `event`: a finger counts as the button, as a
+    /// `mouse_area` press answers both.
+    ///
+    /// Only what reaches the tracker is seen: an overlay capturing the release would hide
+    /// it, and none opens on a press in the tree today.
     pub(crate) fn note(&self, event: &Event) {
         let mut spot = self.lock();
         match event {
@@ -2892,7 +2907,15 @@ impl CursorSpot {
                 spot.pressed_at = spot.at;
                 spot.released = false;
             }
+            Event::Touch(iced::touch::Event::FingerPressed { position, .. }) => {
+                spot.at = *position;
+                spot.pressed_at = *position;
+                spot.released = false;
+            }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+            | Event::Touch(
+                iced::touch::Event::FingerLifted { .. } | iced::touch::Event::FingerLost { .. },
+            )
             | Event::Window(iced::window::Event::Unfocused) => spot.released = true,
             _ => {}
         }

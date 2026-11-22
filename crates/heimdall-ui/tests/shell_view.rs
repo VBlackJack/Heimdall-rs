@@ -4355,6 +4355,189 @@ fn the_profile_form_saves_a_key_passphrase_and_then_says_it_is_saved() {
     );
 }
 
+/// The messages a window sends for `events` with the pointer on the text `label`, answered
+/// by `shell`.
+fn feed(shell: &mut Shell, label: &str, events: impl IntoIterator<Item = iced::Event>) {
+    let mut ui = simulator(shell);
+    let center = ui.find(label).expect(label).bounds().center();
+    ui.point_at(center);
+    let _ = ui.simulate(events);
+    let messages: Vec<Message> = ui.into_messages().collect();
+    for message in messages {
+        let _ = shell.update(message);
+    }
+}
+
+fn left_pressed() -> iced::Event {
+    iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left))
+}
+
+fn left_released() -> iced::Event {
+    iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+        iced::mouse::Button::Left,
+    ))
+}
+
+/// Presses the left button on the text `label` as a user does, the button staying held.
+fn press_on(shell: &mut Shell, label: &str) {
+    feed(shell, label, [left_pressed()]);
+}
+
+/// A press and its release together, as in a fast click: answered at once.
+fn click_in_one_turn(shell: &mut Shell, label: &str) {
+    feed(shell, label, [left_pressed(), left_released()]);
+}
+
+/// The left button let go, as the window sees it; the tree's drag subscription, which would
+/// hear it too, is not told.
+fn release_seen_by_window(shell: &mut Shell) {
+    feed(shell, "server c", [left_released()]);
+}
+
+/// The left button pressed again, on the text of a row, its messages not answered.
+fn press_again(shell: &Shell) {
+    let mut ui = simulator(shell);
+    let center = ui.find("server c").expect("a row").bounds().center();
+    ui.point_at(center);
+    let _ = ui.simulate([left_pressed()]);
+}
+
+/// Whether the tree shows its "take it out of its folder" zone, which only a drag shows.
+fn shows_drag_zone(shell: &Shell) -> bool {
+    simulator(shell)
+        .find("Drop here to take it out of its folder")
+        .is_ok()
+}
+
+/// The pointer far from any press, over the folder `Production`.
+fn move_over_production(shell: &mut Shell) {
+    let _ = shell.update(Message::TreeDragMoved(iced::Point::new(900.0, 700.0)));
+    let _ = shell.update(Message::TreeHover(heimdall_app::DropTarget::Folder(
+        "Production".to_owned(),
+    )));
+}
+
+fn group_of_c(shell: &Shell) -> Option<String> {
+    shell
+        .app()
+        .profile_summary(&ProfileId::new("c"))
+        .and_then(|profile| profile.group)
+}
+
+/// Only the drag's start refuses it: a press answered after its release, with another press
+/// held by the pointer's move, so the move's own check lets it through.
+#[test]
+fn a_press_answered_after_its_release_starts_no_drag() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    click_in_one_turn(&mut shell, "server c");
+    press_again(&shell);
+    move_over_production(&mut shell);
+    assert!(!shows_drag_zone(&shell), "no drag began");
+    let _ = shell.update(Message::TreeDragEnd);
+    assert_eq!(group_of_c(&shell), None);
+}
+
+/// Only the move's check refuses it: the press was answered while the button was held, its
+/// release was seen by the window alone.
+#[test]
+fn a_move_after_a_release_only_the_window_saw_starts_no_drag() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    press_on(&mut shell, "server c");
+    release_seen_by_window(&mut shell);
+    move_over_production(&mut shell);
+    assert!(!shows_drag_zone(&shell), "no drag began");
+    let _ = shell.update(Message::TreeDragEnd);
+    assert_eq!(group_of_c(&shell), None);
+}
+
+/// The same two checks for a folder row, which starts its drag by its own path.
+#[test]
+fn a_folder_row_pressed_and_released_unheard_is_no_drag_either() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    click_in_one_turn(&mut shell, "Production");
+    press_again(&shell);
+    move_over_production(&mut shell);
+    assert!(!shows_drag_zone(&shell), "the start refused it");
+
+    press_on(&mut shell, "Production");
+    release_seen_by_window(&mut shell);
+    move_over_production(&mut shell);
+    assert!(!shows_drag_zone(&shell), "the move refused it");
+}
+
+/// A window losing the focus gives the held press up: its release will not come.
+#[test]
+fn a_press_given_up_with_the_focus_drops_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    press_on(&mut shell, "server c");
+    let _ = shell.update(Message::TreeDragCancel);
+    move_over_production(&mut shell);
+    assert!(!shows_drag_zone(&shell), "no drag began");
+    let _ = shell.update(Message::TreeDragEnd);
+    assert_eq!(group_of_c(&shell), None);
+}
+
+/// A tap is a press and a release as the button's, a mouse area answering its press.
+#[test]
+fn a_finger_tapped_leaves_no_press_behind() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    // The button is held when the tap comes: only the finger's own lift says it is let go.
+    press_again(&shell);
+    let mut ui = simulator(&shell);
+    let center = ui.find("server c").expect("a row").bounds().center();
+    let finger = iced::touch::Finger(1);
+    ui.point_at(center);
+    let _ = ui.simulate([
+        iced::Event::Touch(iced::touch::Event::FingerPressed {
+            id: finger,
+            position: center,
+        }),
+        iced::Event::Touch(iced::touch::Event::FingerLifted {
+            id: finger,
+            position: center,
+        }),
+    ]);
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| matches!(message, Message::TreeClick(_))),
+        "a tap presses the row: {messages:?}"
+    );
+    for message in messages {
+        let _ = shell.update(message);
+    }
+    press_again(&shell);
+    move_over_production(&mut shell);
+    assert!(!shows_drag_zone(&shell), "no drag began");
+}
+
+/// A finger held on a session and moved drags it as the button does.
+#[test]
+fn a_finger_held_on_a_session_and_moved_drags_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let mut ui = simulator(&shell);
+    let center = ui.find("server c").expect("a row").bounds().center();
+    ui.point_at(center);
+    let _ = ui.simulate([iced::Event::Touch(iced::touch::Event::FingerPressed {
+        id: iced::touch::Finger(1),
+        position: center,
+    })]);
+    let messages: Vec<Message> = ui.into_messages().collect();
+    for message in messages {
+        let _ = shell.update(message);
+    }
+    move_over_production(&mut shell);
+    let _ = shell.update(Message::TreeDragEnd);
+    assert_eq!(group_of_c(&shell).as_deref(), Some("Production"));
+}
+
 #[test]
 fn a_session_pressed_and_dragged_onto_a_folder_moves_into_it() {
     use iced::Point;
@@ -4368,16 +4551,17 @@ fn a_session_pressed_and_dragged_onto_a_folder_moves_into_it() {
             .and_then(|profile| profile.group)
     };
     // A click is no drag: nothing moves.
-    let _ = shell.update(Message::TreeClick(ProfileId::new("c")));
+    press_on(&mut shell, "server c");
     let _ = shell.update(Message::TreeHover(heimdall_app::DropTarget::Folder(
         "Production".to_owned(),
     )));
     let _ = shell.update(Message::TreeDragEnd);
+    release_seen_by_window(&mut shell);
     assert_eq!(group(&shell), None);
 
-    // Pressed, moved past the threshold, let go over the folder: in it.
-    let _ = shell.update(Message::TreeClick(ProfileId::new("c")));
-    let _ = shell.update(Message::TreeDragMoved(Point::new(40.0, 60.0)));
+    // Pressed and held, moved past the threshold, let go over the folder: in it.
+    press_on(&mut shell, "server c");
+    let _ = shell.update(Message::TreeDragMoved(Point::new(900.0, 700.0)));
     let _ = shell.update(Message::TreeHover(heimdall_app::DropTarget::Folder(
         "Production".to_owned(),
     )));
@@ -4719,8 +4903,8 @@ fn a_drag_shows_the_no_folder_zone_which_takes_a_session_out_of_its_folder() {
         let mut ui = simulator(&shell);
         assert!(ui.find(zone).is_err(), "no drag: no zone");
     }
-    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
-    let _ = shell.update(Message::TreeDragMoved(Point::new(40.0, 60.0)));
+    press_on(&mut shell, "server a");
+    let _ = shell.update(Message::TreeDragMoved(Point::new(900.0, 700.0)));
     {
         let mut ui = simulator(&shell);
         ui.find(zone).expect("the C# zone, while dragging");
