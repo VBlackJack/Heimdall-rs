@@ -107,6 +107,20 @@ pub fn lookup_mac_vendor(mac: &str) -> Option<MacVendor> {
     mac_vendor::lookup(mac)
 }
 
+/// Octets of a MAC address.
+const MAC_OCTETS: usize = 6;
+
+/// Whether `text` is six groups of hexadecimal digits (`min_digits` to two each) joined by
+/// `separator`: a table cell is only a MAC address when it reads as one, whatever the length
+/// of the text (C# `MacAddressPattern`).
+fn is_mac_address(text: &str, separator: char, min_digits: usize) -> bool {
+    let groups: Vec<&str> = text.split(separator).collect();
+    groups.len() == MAC_OCTETS
+        && groups.iter().all(|group| {
+            (min_digits..=2).contains(&group.len()) && group.bytes().all(|b| b.is_ascii_hexdigit())
+        })
+}
+
 /// Parses Windows `arp -a` output into IP-MAC pairs.
 #[must_use]
 pub fn parse_windows_arp(output: &str) -> Vec<(String, String)> {
@@ -117,10 +131,7 @@ pub fn parse_windows_arp(output: &str) -> Vec<(String, String)> {
         if parts.len() >= 2 {
             let ip = parts[0];
             let mac = parts[1];
-            if ip.parse::<IpAddr>().is_ok()
-                && mac.len() == 17
-                && mac.chars().filter(|c| *c == '-').count() == 5
-            {
+            if ip.parse::<IpAddr>().is_ok() && is_mac_address(mac, '-', 2) {
                 out.push((ip.to_owned(), mac.to_ascii_uppercase()));
             }
         }
@@ -139,7 +150,10 @@ pub fn parse_linux_proc_net_arp(content: &str) -> Vec<(String, String)> {
         if parts.len() >= 4 {
             let ip = parts[0];
             let mac = parts[3];
-            if mac != "00:00:00:00:00:00" && ip.parse::<IpAddr>().is_ok() {
+            if mac != "00:00:00:00:00:00"
+                && is_mac_address(mac, ':', 2)
+                && ip.parse::<IpAddr>().is_ok()
+            {
                 out.push((ip.to_owned(), mac.replace(':', "-").to_ascii_uppercase()));
             }
         }
@@ -161,7 +175,8 @@ pub fn parse_macos_arp(output: &str) -> Vec<(String, String)> {
                     let remainder = line[at_idx + 4..].trim();
                     if let Some(space_idx) = remainder.find(' ') {
                         let mac = &remainder[..space_idx];
-                        if ip.parse::<IpAddr>().is_ok() {
+                        // macOS drops the leading zero of an octet: `0:50:56:...`.
+                        if ip.parse::<IpAddr>().is_ok() && is_mac_address(mac, ':', 1) {
                             out.push((ip.to_owned(), mac.replace(':', "-").to_ascii_uppercase()));
                         }
                     }
@@ -401,6 +416,21 @@ mod tests {
             Some(MacVendor::Named("Raspberry Pi"))
         );
         assert_eq!(lookup_mac_vendor("01-00-5e-00-00-16"), None);
+    }
+
+    #[test]
+    fn a_table_cell_that_is_not_a_mac_address_is_never_taken_for_one() {
+        let windows = "  192.168.1.9  zz-zz-zz-zz-zz-zz  dynamic\n  192.168.1.8  00-50-56-c0-00  dynamic\n  192.168.1.7  00-50-56-c0-00-01-02  dynamic\n";
+        assert!(parse_windows_arp(windows).is_empty());
+        let linux = "header\n192.168.1.9 0x1 0x2 zz:zz:zz:zz:zz:zz * eth0\n192.168.1.8 0x1 0x2 incomplete * eth0\n";
+        assert!(parse_linux_proc_net_arp(linux).is_empty());
+        let macos = "? (192.168.1.9) at (incomplete) on en0\n? (192.168.1.8) at \u{1b}[2Jzz on en0 ifscope\n";
+        assert!(parse_macos_arp(macos).is_empty());
+        let valid = "? (192.168.1.1) at 0:50:56:c0:0:1 on en0 ifscope [ethernet]\n";
+        assert_eq!(
+            parse_macos_arp(valid),
+            vec![("192.168.1.1".to_owned(), "0-50-56-C0-0-1".to_owned())]
+        );
     }
 
     #[test]

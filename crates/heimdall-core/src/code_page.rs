@@ -18,6 +18,8 @@
 //! reads them: Windows-1252, its ANSI code page, and 850, the OEM code page its console
 //! programs write in.
 
+use zeroize::Zeroizing;
+
 /// Characters of Windows-1252 from 0x80 to 0x9F, where it is not Latin-1. The five bytes
 /// it leaves undefined (0x81, 0x8D, 0x8F, 0x90, 0x9D) are the control characters of the
 /// same value, as the Windows code page table maps them.
@@ -66,8 +68,40 @@ const CP850_HIGH: [char; 128] = [
     '\u{00B0}', '\u{00A8}', '\u{00B7}', '\u{00B9}', '\u{00B3}', '\u{00B2}', '\u{25A0}', '\u{00A0}',
 ];
 
-/// First byte of [`CP850_HIGH`].
-const CP850_HIGH_START: u8 = 0x80;
+/// Characters of code page 437, the OEM code page of the United States, from 0x80 to 0xFF
+/// (the Unicode consortium's CP437 mapping); below, it is ASCII.
+const CP437_HIGH: [char; 128] = [
+    '\u{00C7}', '\u{00FC}', '\u{00E9}', '\u{00E2}', '\u{00E4}', '\u{00E0}', '\u{00E5}', '\u{00E7}',
+    '\u{00EA}', '\u{00EB}', '\u{00E8}', '\u{00EF}', '\u{00EE}', '\u{00EC}', '\u{00C4}', '\u{00C5}',
+    '\u{00C9}', '\u{00E6}', '\u{00C6}', '\u{00F4}', '\u{00F6}', '\u{00F2}', '\u{00FB}', '\u{00F9}',
+    '\u{00FF}', '\u{00D6}', '\u{00DC}', '\u{00A2}', '\u{00A3}', '\u{00A5}', '\u{20A7}', '\u{0192}',
+    '\u{00E1}', '\u{00ED}', '\u{00F3}', '\u{00FA}', '\u{00F1}', '\u{00D1}', '\u{00AA}', '\u{00BA}',
+    '\u{00BF}', '\u{2310}', '\u{00AC}', '\u{00BD}', '\u{00BC}', '\u{00A1}', '\u{00AB}', '\u{00BB}',
+    '\u{2591}', '\u{2592}', '\u{2593}', '\u{2502}', '\u{2524}', '\u{2561}', '\u{2562}', '\u{2556}',
+    '\u{2555}', '\u{2563}', '\u{2551}', '\u{2557}', '\u{255D}', '\u{255C}', '\u{255B}', '\u{2510}',
+    '\u{2514}', '\u{2534}', '\u{252C}', '\u{251C}', '\u{2500}', '\u{253C}', '\u{255E}', '\u{255F}',
+    '\u{255A}', '\u{2554}', '\u{2569}', '\u{2566}', '\u{2560}', '\u{2550}', '\u{256C}', '\u{2567}',
+    '\u{2568}', '\u{2564}', '\u{2565}', '\u{2559}', '\u{2558}', '\u{2552}', '\u{2553}', '\u{256B}',
+    '\u{256A}', '\u{2518}', '\u{250C}', '\u{2588}', '\u{2584}', '\u{258C}', '\u{2590}', '\u{2580}',
+    '\u{03B1}', '\u{00DF}', '\u{0393}', '\u{03C0}', '\u{03A3}', '\u{03C3}', '\u{00B5}', '\u{03C4}',
+    '\u{03A6}', '\u{0398}', '\u{03A9}', '\u{03B4}', '\u{221E}', '\u{03C6}', '\u{03B5}', '\u{2229}',
+    '\u{2261}', '\u{00B1}', '\u{2265}', '\u{2264}', '\u{2320}', '\u{2321}', '\u{00F7}', '\u{2248}',
+    '\u{00B0}', '\u{2219}', '\u{00B7}', '\u{221A}', '\u{207F}', '\u{00B2}', '\u{25A0}', '\u{00A0}',
+];
+
+/// First byte of the high half of an OEM code page table.
+const OEM_HIGH_START: u8 = 0x80;
+
+/// The most bytes one character of an OEM table takes in UTF-8 (the box drawing ones).
+const OEM_MAX_UTF8_LEN: usize = 3;
+
+/// The character an OEM code page `table` (its half from 0x80) writes as `byte`: ASCII below.
+fn oem_char(table: &[char; 128], byte: u8) -> char {
+    byte.checked_sub(OEM_HIGH_START)
+        .and_then(|index| table.get(usize::from(index)))
+        .copied()
+        .unwrap_or(char::from(byte))
+}
 
 /// `bytes` read as code page 850, the OEM code page of Western European Windows, which a
 /// console program such as `schtasks` writes in when its output goes to a pipe.
@@ -75,13 +109,39 @@ const CP850_HIGH_START: u8 = 0x80;
 pub fn decode_cp850(bytes: &[u8]) -> String {
     bytes
         .iter()
-        .map(|&byte| {
-            byte.checked_sub(CP850_HIGH_START)
-                .and_then(|index| CP850_HIGH.get(usize::from(index)))
-                .copied()
-                .unwrap_or(char::from(byte))
-        })
+        .map(|&byte| oem_char(&CP850_HIGH, byte))
         .collect()
+}
+
+/// `bytes` read as code page 437, the OEM code page of the United States.
+#[must_use]
+pub fn decode_cp437(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|&byte| oem_char(&CP437_HIGH, byte))
+        .collect()
+}
+
+/// What a command printed, as the C# `CommandCredentialProvider.DecodeOutput` reads it: strict
+/// UTF-8 first, else the OEM console code page. Rust has no pure way to ask Windows for that
+/// code page, so it is taken to be 850, the one of Western European Windows (the French one).
+///
+/// The text may be a password: it is written once into a buffer sized for the worst case, so
+/// it never grows (a reallocation would leave an unwiped copy) and wipes on drop.
+#[must_use]
+pub fn decode_command_output(bytes: &[u8]) -> Zeroizing<String> {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        let mut out = Zeroizing::new(String::with_capacity(text.len()));
+        out.push_str(text);
+        return out;
+    }
+    let mut out = Zeroizing::new(String::with_capacity(
+        bytes.len().saturating_mul(OEM_MAX_UTF8_LEN),
+    ));
+    for &byte in bytes {
+        out.push(oem_char(&CP850_HIGH, byte));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -101,6 +161,75 @@ mod tests {
         assert_eq!(
             decode_cp850(b"Pr\x88t \x82t\x82 \x85 A"),
             "Pr\u{ea}t \u{e9}t\u{e9} \u{e0} A"
+        );
+    }
+
+    #[test]
+    fn every_entry_of_each_oem_table_is_distinct() {
+        for table in [&CP850_HIGH, &CP437_HIGH] {
+            let mut seen = std::collections::HashSet::new();
+            assert!(table.iter().all(|c| seen.insert(*c)));
+        }
+    }
+
+    #[test]
+    fn code_page_850_anchors() {
+        let anchors = [
+            (0x82, '\u{e9}'),
+            (0x85, '\u{e0}'),
+            (0x87, '\u{e7}'),
+            (0x8A, '\u{e8}'),
+            (0x9B, '\u{f8}'),
+            (0xD5, '\u{131}'),
+            (0xFF, '\u{00A0}'),
+        ];
+        for (byte, expected) in anchors {
+            assert_eq!(oem_char(&CP850_HIGH, byte), expected, "{byte:#04x}");
+        }
+    }
+
+    #[test]
+    fn code_page_437_anchors() {
+        assert_eq!(oem_char(&CP437_HIGH, 0x9B), '\u{a2}');
+        assert_eq!(oem_char(&CP437_HIGH, 0xE1), '\u{df}');
+        assert_eq!(oem_char(&CP437_HIGH, 0xFF), '\u{00A0}');
+        for byte in 0xB0..=0xDF {
+            let c = oem_char(&CP437_HIGH, byte);
+            assert!(('\u{2500}'..='\u{259F}').contains(&c), "{byte:#04x}");
+        }
+        assert_eq!(decode_cp437(b"Pr\x88t"), "Pr\u{ea}t");
+    }
+
+    #[test]
+    fn the_two_oem_tables_agree_on_the_shared_letters() {
+        for byte in 0x80..=0x9A {
+            assert_eq!(oem_char(&CP437_HIGH, byte), oem_char(&CP850_HIGH, byte));
+        }
+    }
+
+    #[test]
+    fn valid_utf8_command_output_is_untouched() {
+        assert_eq!(
+            &*decode_command_output("p\u{e9}ss \u{20AC}".as_bytes()),
+            "p\u{e9}ss \u{20AC}"
+        );
+        assert_eq!(&*decode_command_output(b""), "");
+    }
+
+    #[test]
+    fn an_accented_cp850_password_is_decoded() {
+        assert_eq!(
+            &*decode_command_output(b"m\x82t\x85\x87\n"),
+            "m\u{e9}t\u{e0}\u{e7}\n"
+        );
+    }
+
+    #[test]
+    fn mixed_invalid_input_falls_back_whole() {
+        // Valid UTF-8 (e acute) next to a lone 0x82: the whole text is code page 850.
+        assert_eq!(
+            &*decode_command_output(b"\xC3\xA9\x82"),
+            "\u{251C}\u{ae}\u{e9}"
         );
     }
 }

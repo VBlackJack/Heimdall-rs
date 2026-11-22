@@ -373,7 +373,8 @@ async fn ask_one(
 ) -> Result<Zeroizing<String>, ProviderFailure> {
     let argv = command_line(template, lookup, settings).map_err(ProviderFailure::Template)?;
     let output = run(&argv, unlock, settings.timeout).await?;
-    let text = Zeroizing::new(String::from_utf8_lossy(&output).into_owned());
+    // As the C# DecodeOutput: strict UTF-8, else the OEM code page a Windows console writes in.
+    let text = heimdall_core::code_page::decode_command_output(&output);
     password_in(&text, settings.first_line_only)
         .map(Zeroizing::new)
         .ok_or(ProviderFailure::Empty)

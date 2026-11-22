@@ -298,15 +298,38 @@ const INFORMATIONAL: std::ops::RangeInclusive<u16> = 100..=199;
 /// `101 Switching Protocols`: informational, yet the last response on its connection.
 const SWITCHING_PROTOCOLS: u16 = 101;
 
+/// The protocol token a status line starts with (RFC 9112 section 4).
+const STATUS_LINE_PROTOCOL: &str = "HTTP/";
+
+/// Digits in a status code (RFC 9110 section 15): exactly three, none of them a sign.
+const STATUS_CODE_DIGITS: usize = 3;
+
+/// The status code of a status line, `HTTP/1.1 200 OK`: `None` unless the line starts with
+/// the protocol token and names a code of three ASCII digits.
+///
+/// A line is not a status line because a number sits in it. A service that is not HTTP
+/// ("SSH-2.0-x 200 OK"), a code with a sign ("+200"), one too long ("2000") or in other
+/// digits are all refused, as the C# `IsHttpSuccessResponse` refuses them.
+fn status_of_line(line: &str) -> Option<u16> {
+    let mut words = line.split_ascii_whitespace();
+    let protocol = words.next()?;
+    if !protocol.starts_with(STATUS_LINE_PROTOCOL) {
+        return None;
+    }
+    let code = words.next()?;
+    if code.len() != STATUS_CODE_DIGITS || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    code.parse().ok()
+}
+
 /// The status code of the response whose header section is `head`; `None` when its first
 /// line names none.
 #[must_use]
 pub fn status_code(head: &[u8]) -> Option<u16> {
     let line = head.split(|byte| *byte == b'\n').next()?;
-    let code = line
-        .split(u8::is_ascii_whitespace)
-        .find(|word| !word.is_empty() && !word.starts_with(b"HTTP/"))?;
-    std::str::from_utf8(code).ok()?.parse().ok()
+    // Lossy: a reason phrase that is not UTF-8 does not hide a status before it.
+    status_of_line(&String::from_utf8_lossy(line))
 }
 
 /// Whether a response of `code` is an interim one a final response follows on the same
@@ -340,12 +363,7 @@ pub fn parse_http_response(raw_response: &str) -> HttpResponseInfo {
     let mut lines = header_section.lines();
 
     if let Some(first_line) = lines.next() {
-        let parts: Vec<&str> = first_line.split_whitespace().collect();
-        if parts.len() >= 2 {
-            if let Ok(code) = parts[1].parse::<u16>() {
-                status_code = code;
-            }
-        }
+        status_code = status_of_line(first_line).unwrap_or(0);
     }
 
     for line in lines {
@@ -1014,6 +1032,82 @@ mod tests {
         assert_eq!(status_code(b"garbage"), None);
         assert!(is_interim(100) && is_interim(103) && is_interim(199));
         assert!(!is_interim(101) && !is_interim(200) && !is_interim(99));
+    }
+
+    // Hostile replies, after the C# `HostileNetworkReplyTests` (IsHttpSuccessResponse).
+
+    /// Status lines and what they say; `None` where nothing is a status.
+    const STATUS_LINES: [(&str, Option<u16>); 21] = [
+        ("HTTP/1.1 200 OK", Some(200)),
+        ("HTTP/1.1 200", Some(200)),
+        ("HTTP/1.0 301 Moved", Some(301)),
+        ("HTTP/1.1 200 OK\r\nServer: x\r\n\r\n", Some(200)),
+        ("HTTP/1.1  200 OK", Some(200)),
+        ("SSH-2.0-OpenSSH_9.6 200 OK", None),
+        ("220 FTP ready 200 OK", None),
+        ("garbage 200 OK", None),
+        ("HTTP/1.1 +200 OK", None),
+        ("HTTP/1.1 -200 OK", None),
+        ("HTTP/1.1 2000 OK", None),
+        ("HTTP/1.1 20 OK", None),
+        ("HTTP/1.1 2e2 OK", None),
+        ("HTTP/1.1 \u{FF12}\u{FF10}\u{FF10} OK", None),
+        ("HTTP/1.1 65536 OK", None),
+        ("HTTP/1.1 99999999999999999999 OK", None),
+        ("\r\nHTTP/1.1 200 OK", None),
+        ("HTTP/1.1", None),
+        ("HTTP/", None),
+        ("", None),
+        ("200 OK", None),
+    ];
+
+    #[test]
+    fn only_a_real_status_line_names_a_status() {
+        for (line, expected) in STATUS_LINES {
+            assert_eq!(status_code(line.as_bytes()), expected, "{line:?}");
+            assert_eq!(
+                parse_http_response(line).status_code,
+                expected.unwrap_or(0),
+                "{line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_oversized_reply_is_read_by_its_first_line() {
+        let reply = format!("HTTP/1.1 401 Unauthorized\r\n{}", "A".repeat(5_000_000));
+        assert_eq!(status_code(reply.as_bytes()), Some(401));
+        assert_eq!(parse_http_response(&reply).status_code, 401);
+        assert_eq!(header_end(reply.as_bytes()), None);
+        // Bytes that are not text name no status.
+        assert_eq!(status_code(b"HTTP/1.1 2\xff0 OK"), None);
+    }
+
+    #[test]
+    fn truncated_and_corrupted_replies_never_panic() {
+        let valid = b"HTTP/1.1 200 OK\r\nServer: nginx\r\nSet-Cookie: a=b; Secure\r\n\r\nbody";
+        for length in 0..=valid.len() {
+            let head = &valid[..length];
+            let _ = status_code(head);
+            let _ = header_end(head);
+            let _ = parse_http_response(&String::from_utf8_lossy(head));
+        }
+        // A fixed seed, so a failure repeats.
+        let mut state: u64 = 20_261_030;
+        for _ in 0..3000 {
+            let mut bytes = valid.to_vec();
+            for _ in 0..4 {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let at = usize::try_from(state % valid.len() as u64).unwrap();
+                bytes[at] = state.to_le_bytes()[0];
+            }
+            let _ = status_code(&bytes);
+            let _ = header_end(&bytes);
+            let info = parse_http_response(&String::from_utf8_lossy(&bytes));
+            let _ = evaluate_headers(&info.headers, true);
+        }
     }
 
     fn check_of(headers: &[(&str, &str)], https: bool, name: &str) -> HeaderCheckResult {

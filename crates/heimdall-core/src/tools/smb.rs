@@ -32,6 +32,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::network_fingerprint;
+
 /// SMB Dialect 2.0.2.
 pub const DIALECT_SMB202: u16 = 0x0202;
 /// SMB Dialect 2.1.
@@ -56,6 +58,29 @@ pub const NTLMSSP_SIGNATURE: [u8; 8] = [b'N', b'T', b'L', b'M', b'S', b'S', b'P'
 
 /// NTLMSSP `NEGOTIATE_VERSION` flag: when set, an 8-byte Version field is present.
 pub const NTLMSSP_NEGOTIATE_VERSION: u32 = 0x0200_0000;
+
+/// SMB2 header size: the Negotiate and Session Setup bodies start right after it.
+const SMB2_HEADER_SIZE: usize = 64;
+/// Offset of the 32-bit status in an SMB2 header.
+const SMB2_STATUS_OFFSET: usize = 8;
+/// `STATUS_SUCCESS`.
+const SMB2_STATUS_SUCCESS: u32 = 0;
+/// `StructureSize` of a successful SMB2 Negotiate response body.
+const SMB2_NEGOTIATE_STRUCTURE_SIZE: u16 = 65;
+
+/// NTLMSSP Type 2: the message type the challenge carries.
+const NTLM_MESSAGE_TYPE_CHALLENGE: u32 = 2;
+/// Offset of the message type in an NTLMSSP message.
+const NTLM_MESSAGE_TYPE_FIELD: usize = 8;
+/// Signature, type, TargetName fields, flags and challenge.
+const NTLM_TYPE2_MIN_LEN: usize = 32;
+/// Offset of the TargetInfo length field (the offset field follows it at +4).
+const NTLM_TARGET_INFO_LEN_FIELD: usize = 40;
+const NTLM_TARGET_INFO_OFFSET_FIELD: usize = 44;
+/// End of the TargetInfo fields, and start of the Version field.
+const NTLM_TARGET_INFO_FIELDS_END: usize = 48;
+/// End of the Version field.
+const NTLM_VERSION_END: usize = 56;
 
 /// Formats a 16-bit SMB dialect revision code into a human-readable string.
 #[must_use]
@@ -388,8 +413,25 @@ pub fn filetime_to_iso(filetime: u64) -> Option<String> {
 /// Parses an SMB2 Negotiate Response packet.
 #[must_use]
 pub fn parse_negotiate_response(data: &[u8]) -> Option<SmbNegotiateInfo> {
-    const BODY_OFF: usize = 64;
+    const BODY_OFF: usize = SMB2_HEADER_SIZE;
     if data.len() < BODY_OFF + 0x40 {
+        return None;
+    }
+    // Only a successful SMB2 Negotiate response has this body: an error reply, or one that
+    // merely starts with the magic, would be read as a GUID, dialect and signing mode the
+    // host never reported (C# `ParseNegotiateResponse`).
+    if data[..SMB2_MAGIC.len()] != SMB2_MAGIC {
+        return None;
+    }
+    let status = u32::from_le_bytes([
+        data[SMB2_STATUS_OFFSET],
+        data[SMB2_STATUS_OFFSET + 1],
+        data[SMB2_STATUS_OFFSET + 2],
+        data[SMB2_STATUS_OFFSET + 3],
+    ]);
+    if status != SMB2_STATUS_SUCCESS
+        || u16::from_le_bytes([data[BODY_OFF], data[BODY_OFF + 1]]) != SMB2_NEGOTIATE_STRUCTURE_SIZE
+    {
         return None;
     }
 
@@ -463,25 +505,52 @@ pub fn parse_negotiate_response(data: &[u8]) -> Option<SmbNegotiateInfo> {
 }
 
 /// Parses an NTLMSSP Type 2 challenge message to extract AV_PAIR structures.
+///
+/// The message comes from the host being probed, so every offset and length in it is hostile
+/// until bounded: they are compared in 64 bits, and a malformed TargetInfo block costs only
+/// that block, the OS build of the Version field being kept (C# `ParseNtlmType2`). Names are
+/// cleaned of control characters and bounded.
 #[must_use]
 pub fn parse_ntlm_type2(data: &[u8]) -> Option<NtlmInfo> {
-    if data.len() < 32 {
+    if data.len() < NTLM_TYPE2_MIN_LEN || data[..NTLMSSP_SIGNATURE.len()] != NTLMSSP_SIGNATURE {
         return None;
     }
-    let msg_type = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
-    if msg_type != 2 {
+    let msg_type = u32::from_le_bytes([
+        data[NTLM_MESSAGE_TYPE_FIELD],
+        data[NTLM_MESSAGE_TYPE_FIELD + 1],
+        data[NTLM_MESSAGE_TYPE_FIELD + 2],
+        data[NTLM_MESSAGE_TYPE_FIELD + 3],
+    ]);
+    if msg_type != NTLM_MESSAGE_TYPE_CHALLENGE {
         return None;
     }
 
-    if data.len() < 48 {
+    if data.len() < NTLM_TARGET_INFO_FIELDS_END {
         return Some(NtlmInfo::default());
     }
 
-    let target_info_len = u16::from_le_bytes([data[40], data[41]]) as usize;
-    let target_info_offset = u32::from_le_bytes([data[44], data[45], data[46], data[47]]) as usize;
-
-    if target_info_offset + target_info_len > data.len() {
-        return Some(NtlmInfo::default());
+    let os_build = read_os_build(data);
+    let target_info_len = u64::from(u16::from_le_bytes([
+        data[NTLM_TARGET_INFO_LEN_FIELD],
+        data[NTLM_TARGET_INFO_LEN_FIELD + 1],
+    ]));
+    let target_info_offset = u64::from(u32::from_le_bytes([
+        data[NTLM_TARGET_INFO_OFFSET_FIELD],
+        data[NTLM_TARGET_INFO_OFFSET_FIELD + 1],
+        data[NTLM_TARGET_INFO_OFFSET_FIELD + 2],
+        data[NTLM_TARGET_INFO_OFFSET_FIELD + 3],
+    ]));
+    let target_info_end = target_info_offset + target_info_len;
+    // `usize::try_from` of a value below `data.len()` cannot fail, so the casts below are
+    // taken only after the comparison in 64 bits.
+    if target_info_len == 0
+        || target_info_offset < NTLM_TARGET_INFO_FIELDS_END as u64
+        || target_info_end > data.len() as u64
+    {
+        return Some(NtlmInfo {
+            os_build,
+            ..NtlmInfo::default()
+        });
     }
 
     let mut nb_computer = None;
@@ -490,53 +559,38 @@ pub fn parse_ntlm_type2(data: &[u8]) -> Option<NtlmInfo> {
     let mut dns_domain = None;
     let mut dns_forest = None;
 
-    let mut offset = target_info_offset;
-    let end_offset = target_info_offset + target_info_len;
+    let mut offset = target_info_offset as usize;
+    let end_offset = target_info_end as usize;
 
-    while offset + 4 <= end_offset && offset + 4 <= data.len() {
+    while offset + 4 <= end_offset {
         let av_id = u16::from_le_bytes([data[offset], data[offset + 1]]);
-        let av_len = u16::from_le_bytes([data[offset + 2], data[offset + 3]]) as usize;
+        let av_len = usize::from(u16::from_le_bytes([data[offset + 2], data[offset + 3]]));
         offset += 4;
 
         if av_id == 0 {
             break; // MsvAvEOL
         }
 
-        if av_len > end_offset.saturating_sub(offset) || offset + av_len > data.len() {
+        if av_len > end_offset - offset {
             break;
         }
 
-        let slice = &data[offset..offset + av_len];
-        let val_utf16: Vec<u16> = slice
+        let utf16: Vec<u16> = data[offset..offset + av_len]
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        let val = String::from_utf16_lossy(&val_utf16);
+        let val = network_fingerprint::clean(&String::from_utf16_lossy(&utf16));
 
         match av_id {
-            1 => nb_computer = Some(val),
-            2 => nb_domain = Some(val),
-            3 => dns_computer = Some(val),
-            4 => dns_domain = Some(val),
-            5 => dns_forest = Some(val),
+            1 => nb_computer = val,
+            2 => nb_domain = val,
+            3 => dns_computer = val,
+            4 => dns_domain = val,
+            5 => dns_forest = val,
             _ => {}
         }
 
         offset += av_len;
-    }
-
-    // The 8-byte Version field at offset 48 is only present when the server set the
-    // NTLMSSP_NEGOTIATE_VERSION flag (bit 0x0200_0000) in NegotiateFlags at offset 20;
-    // otherwise those bytes belong to another field and must not be read as a version.
-    let negotiate_flags = u32::from_le_bytes([data[20], data[21], data[22], data[23]]);
-    let mut os_build = None;
-    if negotiate_flags & NTLMSSP_NEGOTIATE_VERSION != 0 && data.len() >= 56 {
-        let major = data[48];
-        let minor = data[49];
-        let build = u16::from_le_bytes([data[50], data[51]]);
-        if major > 0 && build > 0 {
-            os_build = Some(format!("{major}.{minor}.{build}"));
-        }
     }
 
     Some(NtlmInfo {
@@ -547,6 +601,23 @@ pub fn parse_ntlm_type2(data: &[u8]) -> Option<NtlmInfo> {
         dns_forest,
         os_build,
     })
+}
+
+/// The OS build of the Version field: Major(1) Minor(1) Build(2) Reserved(3) Revision(1).
+/// The field is only present when the server set `NTLMSSP_NEGOTIATE_VERSION` in the flags at
+/// offset 20; otherwise those bytes belong to another field and must not be read as a version.
+fn read_os_build(data: &[u8]) -> Option<String> {
+    let negotiate_flags = u32::from_le_bytes([data[20], data[21], data[22], data[23]]);
+    if negotiate_flags & NTLMSSP_NEGOTIATE_VERSION == 0 || data.len() < NTLM_VERSION_END {
+        return None;
+    }
+    let major = data[NTLM_TARGET_INFO_FIELDS_END];
+    let minor = data[NTLM_TARGET_INFO_FIELDS_END + 1];
+    let build = u16::from_le_bytes([
+        data[NTLM_TARGET_INFO_FIELDS_END + 2],
+        data[NTLM_TARGET_INFO_FIELDS_END + 3],
+    ]);
+    (major > 0 && build > 0).then(|| format!("{major}.{minor}.{build}"))
 }
 
 /// Advances past a NetBIOS name field (either label-length or compression pointer).
@@ -611,15 +682,16 @@ pub fn parse_netbios_response(data: &[u8]) -> (Option<String>, Option<String>, O
             break;
         }
         let raw_name = &data[offset..offset + 15];
-        let name_str = String::from_utf8_lossy(raw_name).trim_end().to_string();
+        // A name made only of control characters or spaces is no name.
+        let name_str = network_fingerprint::clean(&String::from_utf8_lossy(raw_name));
         let suffix = data[offset + 15];
         let flags = ((data[offset + 16] as u16) << 8) | (data[offset + 17] as u16);
         let is_group = (flags & 0x8000) != 0;
 
         if suffix == 0x00 && !is_group && computer_name.is_none() {
-            computer_name = Some(name_str);
+            computer_name = name_str;
         } else if suffix == 0x00 && is_group && domain.is_none() {
-            domain = Some(name_str);
+            domain = name_str;
         }
 
         offset += 18;
@@ -965,6 +1037,7 @@ mod tests {
     fn parse_negotiate_response_reads_dialect_and_signing() {
         let mut resp = vec![0u8; 128];
         resp[0..4].copy_from_slice(&SMB2_MAGIC);
+        resp[64..66].copy_from_slice(&SMB2_NEGOTIATE_STRUCTURE_SIZE.to_le_bytes());
         // SecurityMode: SIGNING_REQUIRED (0x0002) + SIGNING_ENABLED (0x0001) = 0x0003
         resp[64 + 2..64 + 4].copy_from_slice(&0x0003u16.to_le_bytes());
         // Dialect: SMB 3.1.1 (0x0311)
@@ -1100,5 +1173,287 @@ mod tests {
         assert!(report.contains("WIN-SRV"));
         assert!(report.contains("SMB 3.1.1"));
         assert!(report.contains("[OK]   SMB signing is required"));
+    }
+
+    // ── Hostile replies (C# 4d68e0ea, 92815c40) ─────────────────────────────
+
+    /// A valid Type 2 challenge: names SERVER1 and CORP, build 10.0.19041, TargetInfo at 56.
+    fn valid_challenge() -> Vec<u8> {
+        let mut msg = vec![0u8; 100];
+        msg[0..8].copy_from_slice(&NTLMSSP_SIGNATURE);
+        msg[8..12].copy_from_slice(&2u32.to_le_bytes());
+        msg[20..24].copy_from_slice(&NTLMSSP_NEGOTIATE_VERSION.to_le_bytes());
+        msg[48] = 10;
+        msg[50..52].copy_from_slice(&19041u16.to_le_bytes());
+        msg[44..48].copy_from_slice(&56u32.to_le_bytes());
+        let mut at = 56;
+        for (id, text) in [(1u16, "SERVER1"), (2, "CORP")] {
+            let utf16: Vec<u8> = text.encode_utf16().flat_map(u16::to_le_bytes).collect();
+            msg[at..at + 2].copy_from_slice(&id.to_le_bytes());
+            msg[at + 2..at + 4].copy_from_slice(&(utf16.len() as u16).to_le_bytes());
+            msg[at + 4..at + 4 + utf16.len()].copy_from_slice(&utf16);
+            at += 4 + utf16.len();
+        }
+        msg[40..42].copy_from_slice(&((at + 4 - 56) as u16).to_le_bytes());
+        msg
+    }
+
+    /// A challenge whose first attribute is `id` holding the UTF-16 `units`.
+    fn challenge_with_attribute(id: u16, units: &[u16]) -> Vec<u8> {
+        let payload: Vec<u8> = units.iter().flat_map(|u| u.to_le_bytes()).collect();
+        let mut msg = valid_challenge();
+        msg.resize(60 + payload.len() + 4, 0);
+        msg[56..58].copy_from_slice(&id.to_le_bytes());
+        msg[58..60].copy_from_slice(&(payload.len() as u16).to_le_bytes());
+        msg[60..60 + payload.len()].copy_from_slice(&payload);
+        msg[40..42].copy_from_slice(&((payload.len() + 8) as u16).to_le_bytes());
+        msg
+    }
+
+    #[test]
+    fn ntlm_challenge_shorter_than_the_fixed_header_is_not_a_challenge() {
+        let msg = valid_challenge();
+        for len in [0, 8, 31] {
+            assert_eq!(parse_ntlm_type2(&msg[..len]), None);
+        }
+    }
+
+    #[test]
+    fn ntlm_challenge_of_another_type_or_signature_is_refused() {
+        for kind in [0u32, 1, 3, u32::MAX] {
+            let mut msg = valid_challenge();
+            msg[8..12].copy_from_slice(&kind.to_le_bytes());
+            assert_eq!(parse_ntlm_type2(&msg), None);
+        }
+        let mut msg = valid_challenge();
+        msg[0] = b'X';
+        assert_eq!(parse_ntlm_type2(&msg), None);
+    }
+
+    #[test]
+    fn ntlm_challenge_without_target_info_fields_gives_an_empty_info() {
+        let msg = valid_challenge();
+        for len in [32, 40, 47] {
+            assert_eq!(parse_ntlm_type2(&msg[..len]), Some(NtlmInfo::default()));
+        }
+    }
+
+    #[test]
+    fn ntlm_target_info_offset_outside_the_buffer_keeps_the_build_and_reads_no_name() {
+        for offset in [
+            0xFFFF_FFF0u32,
+            0x8000_0000,
+            u32::MAX,
+            0x7FFF_FFFF,
+            0x7FFF_FFF0,
+            0x0001_0000,
+            1,
+            40,
+            47,
+        ] {
+            let mut msg = valid_challenge();
+            msg[44..48].copy_from_slice(&offset.to_le_bytes());
+            let info = parse_ntlm_type2(&msg).expect("a challenge");
+            assert_eq!(info.os_build.as_deref(), Some("10.0.19041"), "{offset:#x}");
+            assert_eq!(info.nb_computer, None, "{offset:#x}");
+            assert_eq!(info.nb_domain, None, "{offset:#x}");
+        }
+    }
+
+    #[test]
+    fn ntlm_target_info_offset_plus_length_overflowing_keeps_the_build() {
+        for (offset, len) in [
+            (0x7FFF_FFF8u32, 0x10u16),
+            (u32::MAX, u16::MAX),
+            (0xFFFF_FFF8, 0x10),
+            (0x7FFF_FFFF, 1),
+        ] {
+            let mut msg = valid_challenge();
+            msg[44..48].copy_from_slice(&offset.to_le_bytes());
+            msg[40..42].copy_from_slice(&len.to_le_bytes());
+            let info = parse_ntlm_type2(&msg).expect("a challenge");
+            assert_eq!(info.os_build.as_deref(), Some("10.0.19041"));
+            assert_eq!(info.nb_computer, None);
+        }
+    }
+
+    #[test]
+    fn ntlm_target_info_longer_than_the_buffer_or_empty_reads_no_name() {
+        for len in [0u16, 1000] {
+            let mut msg = valid_challenge();
+            msg[40..42].copy_from_slice(&len.to_le_bytes());
+            let info = parse_ntlm_type2(&msg).expect("a challenge");
+            assert_eq!(info.nb_computer, None);
+            assert_eq!(info.os_build.as_deref(), Some("10.0.19041"));
+        }
+    }
+
+    #[test]
+    fn ntlm_attribute_longer_than_the_block_keeps_the_ones_before_it() {
+        let mut msg = valid_challenge();
+        // The second attribute (CORP) starts at 56 + 4 + 14 = 74 and claims 0xFFFF bytes.
+        msg[76..78].copy_from_slice(&u16::MAX.to_le_bytes());
+        let info = parse_ntlm_type2(&msg).expect("a challenge");
+        assert_eq!(info.nb_computer.as_deref(), Some("SERVER1"));
+        assert_eq!(info.nb_domain, None);
+    }
+
+    #[test]
+    fn ntlm_end_of_list_marker_stops_the_read_and_an_odd_length_does_not_panic() {
+        let mut msg = valid_challenge();
+        msg[56..58].copy_from_slice(&0u16.to_le_bytes());
+        assert_eq!(
+            parse_ntlm_type2(&msg).expect("a challenge").nb_computer,
+            None
+        );
+
+        let mut msg = valid_challenge();
+        msg[58..60].copy_from_slice(&13u16.to_le_bytes());
+        assert!(parse_ntlm_type2(&msg).is_some());
+    }
+
+    #[test]
+    fn ntlm_names_lose_control_characters_and_are_bounded() {
+        let units: Vec<u16> = "SRV\u{1b}[2J\r\n01".encode_utf16().collect();
+        let info = parse_ntlm_type2(&challenge_with_attribute(1, &units)).expect("a challenge");
+        assert_eq!(info.nb_computer.as_deref(), Some("SRV[2J01"));
+
+        let long = vec![u16::from(b'a'); 2000];
+        let info = parse_ntlm_type2(&challenge_with_attribute(1, &long)).expect("a challenge");
+        assert_eq!(
+            info.nb_computer.map(|name| name.chars().count()),
+            Some(network_fingerprint::MAX_FIELD_CHARS)
+        );
+
+        let only_controls = [0x07u16, 0x1b];
+        let info =
+            parse_ntlm_type2(&challenge_with_attribute(1, &only_controls)).expect("a challenge");
+        assert_eq!(info.nb_computer, None);
+    }
+
+    /// Mutates four bytes of `message` per round, `rounds` times, from a fixed seed.
+    fn corruptions(message: &[u8], rounds: usize) -> impl Iterator<Item = Vec<u8>> + '_ {
+        let mut state = 0x9E37_79B9u32;
+        (0..rounds).map(move |_| {
+            let mut copy = message.to_vec();
+            for _ in 0..4 {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let at = (state >> 8) as usize % copy.len();
+                copy[at] = (state >> 24) as u8;
+            }
+            copy
+        })
+    }
+
+    #[test]
+    fn ntlm_every_truncation_and_corruption_never_panics() {
+        let msg = valid_challenge();
+        for len in 0..=msg.len() {
+            let _ = parse_ntlm_type2(&msg[..len]);
+        }
+        for copy in corruptions(&msg, 4000) {
+            let _ = parse_ntlm_type2(&copy);
+        }
+    }
+
+    fn valid_negotiate() -> Vec<u8> {
+        let mut resp = vec![0u8; 128];
+        resp[0..4].copy_from_slice(&SMB2_MAGIC);
+        resp[64..66].copy_from_slice(&SMB2_NEGOTIATE_STRUCTURE_SIZE.to_le_bytes());
+        resp[68..70].copy_from_slice(&DIALECT_SMB311.to_le_bytes());
+        resp
+    }
+
+    #[test]
+    fn negotiate_truncated_error_status_foreign_header_or_wrong_size_is_refused() {
+        let valid = valid_negotiate();
+        assert!(parse_negotiate_response(&valid).is_some());
+        for len in [0, 63, 64, 100, 127] {
+            assert_eq!(parse_negotiate_response(&valid[..len]), None);
+        }
+        let mut error = valid.clone();
+        error[8..12].copy_from_slice(&0xC000_0022u32.to_le_bytes());
+        assert_eq!(parse_negotiate_response(&error), None);
+        let mut foreign = valid.clone();
+        foreign[0] = b'X';
+        assert_eq!(parse_negotiate_response(&foreign), None);
+        for size in [0u16, 9, 64, u16::MAX] {
+            let mut wrong = valid.clone();
+            wrong[64..66].copy_from_slice(&size.to_le_bytes());
+            assert_eq!(parse_negotiate_response(&wrong), None);
+        }
+    }
+
+    #[test]
+    fn negotiate_unrepresentable_file_times_are_dropped_not_panicked_on() {
+        for ticks in [u64::MAX, 1u64 << 63, 0, 1] {
+            let mut resp = valid_negotiate();
+            resp[64 + 0x28..64 + 0x30].copy_from_slice(&ticks.to_le_bytes());
+            resp[64 + 0x30..64 + 0x38].copy_from_slice(&ticks.to_le_bytes());
+            assert!(parse_negotiate_response(&resp).is_some());
+        }
+        let mut oversized = valid_negotiate();
+        oversized.resize(70_000, 0xAB);
+        assert!(parse_negotiate_response(&oversized).is_some());
+    }
+
+    #[test]
+    fn negotiate_every_truncation_and_corruption_never_panics() {
+        let resp = valid_negotiate();
+        for len in 0..=resp.len() {
+            let _ = parse_negotiate_response(&resp[..len]);
+        }
+        for copy in corruptions(&resp, 4000) {
+            let _ = parse_negotiate_response(&copy);
+        }
+    }
+
+    /// An NBSTAT answer holding `names` (padded to 15 bytes, suffix 0, group flag) and a MAC.
+    fn nbstat_answer(names: &[(&[u8], bool)]) -> Vec<u8> {
+        let mut data = vec![0u8; 12];
+        data.push(0); // the question name, ended by its null label
+        data.extend_from_slice(&[0; 4]);
+        data.push(0); // the answer name
+        data.extend_from_slice(&[0; 10]);
+        data.push(names.len() as u8);
+        for (name, group) in names {
+            let mut padded = [b' '; 15];
+            padded[..name.len()].copy_from_slice(name);
+            data.extend_from_slice(&padded);
+            data.push(0);
+            data.extend_from_slice(&(if *group { 0x8000u16 } else { 0 }).to_be_bytes());
+        }
+        data.extend_from_slice(&[0x00, 0x0C, 0x29, 0xAB, 0xCD, 0xEF]);
+        data
+    }
+
+    #[test]
+    fn netbios_names_lose_control_characters_and_a_blank_name_is_none() {
+        let mut answer = nbstat_answer(&[(b"SRV\x1b[2J01", false), (b"\x07\x1b", true)]);
+        answer[4..6].copy_from_slice(&1u16.to_be_bytes());
+        let (name, domain, mac) = parse_netbios_response(&answer);
+        assert_eq!(name.as_deref(), Some("SRV[2J01"));
+        assert_eq!(domain, None);
+        assert_eq!(mac.as_deref(), Some("00-0C-29-AB-CD-EF"));
+    }
+
+    #[test]
+    fn netbios_huge_counts_and_label_lengths_never_panic() {
+        let mut answer = nbstat_answer(&[(b"HOST", false)]);
+        answer[4..6].copy_from_slice(&1u16.to_be_bytes());
+        let count_at = 12 + 1 + 4 + 1 + 10;
+        answer[count_at] = u8::MAX;
+        let _ = parse_netbios_response(&answer);
+        // A question count past the buffer, and labels claiming 255 bytes.
+        let mut hostile = vec![0xFFu8; 60];
+        hostile[4] = 0xFF;
+        hostile[5] = 0xFF;
+        let _ = parse_netbios_response(&hostile);
+        for len in 0..answer.len() {
+            let _ = parse_netbios_response(&answer[..len]);
+        }
+        for copy in corruptions(&answer, 4000) {
+            let _ = parse_netbios_response(&copy);
+        }
     }
 }

@@ -51,6 +51,12 @@ use super::zrle::Zrle;
 /// Length of the version message.
 const VERSION_LENGTH: usize = 12;
 
+/// How a version message starts, and where its major and minor numbers lie in it.
+const VERSION_PREFIX: &[u8] = b"RFB ";
+const VERSION_MAJOR_AT: usize = 4;
+const VERSION_MINOR_AT: usize = 8;
+const VERSION_DIGITS: usize = 3;
+
 /// Encodings, as noVNC's `encodings.js` numbers them.
 const ENCODING_RAW: i32 = 0;
 const ENCODING_COPY_RECT: i32 = 1;
@@ -1509,13 +1515,27 @@ fn qemu_keycode(scancode: u16) -> u32 {
 fn parse_version(bytes: &[u8]) -> Result<Version, RfbError> {
     let text = latin1(bytes);
     let unsupported = || RfbError::UnsupportedVersion(text.trim_end().to_owned());
-    let (Some(major), Some(minor)) = (
-        text.strip_prefix("RFB ").and_then(|rest| rest.get(..3)),
-        text.get(8..11),
-    ) else {
+    // RFC 6143 section 7.1.1: "RFB xxx.yyy\n", every x and y a digit. A sign, a letter, a
+    // missing newline or another separator is not a version, as in the C# `TryParseVncBanner`.
+    let (major, minor) = (
+        bytes.get(VERSION_MAJOR_AT..VERSION_MAJOR_AT + VERSION_DIGITS),
+        bytes.get(VERSION_MINOR_AT..VERSION_MINOR_AT + VERSION_DIGITS),
+    );
+    let well_formed = bytes.len() == VERSION_LENGTH
+        && bytes.starts_with(VERSION_PREFIX)
+        && bytes[VERSION_MINOR_AT - 1] == b'.'
+        && bytes[VERSION_LENGTH - 1] == b'\n';
+    let (true, Some(major), Some(minor)) = (well_formed, major, minor) else {
         return Err(unsupported());
     };
-    let (Ok(major), Ok(minor)) = (major.parse::<u16>(), minor.parse::<u16>()) else {
+    let number = |digits: &[u8]| {
+        digits.iter().all(u8::is_ascii_digit).then(|| {
+            digits
+                .iter()
+                .fold(0_u16, |n, d| n * 10 + u16::from(d - b'0'))
+        })
+    };
+    let (Some(major), Some(minor)) = (number(major), number(minor)) else {
         return Err(unsupported());
     };
     match (major, minor) {

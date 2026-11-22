@@ -123,6 +123,34 @@ mod tests {
         assert!(result.response_ms.is_some());
     }
 
+    /// A server that talks without end is read once, up to [`BANNER_MAX_BYTES`]: an FTP greeting
+    /// of megabytes with control characters in it neither fills memory nor reaches the screen.
+    #[tokio::test]
+    async fn an_endless_hostile_banner_is_read_once_and_bounded() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("address").port();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut greeting = b"220-Hello\x00\x01\x1b]0;title\x07 world\r\n".to_vec();
+            greeting.resize(4 * 1024 * 1024, b'A');
+            // The client may close first: the write is allowed to fail.
+            let _ = socket.write_all(&greeting).await;
+        });
+        let result = grab(
+            &LOOPBACK,
+            port,
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+        )
+        .await;
+        let banner = result.banner.expect("a banner");
+        assert!(banner.len() <= BANNER_MAX_BYTES, "{}", banner.len());
+        assert!(!banner.chars().any(char::is_control), "{banner:?}");
+        assert!(banner.starts_with("220-Hello"), "{banner:?}");
+    }
+
     #[tokio::test]
     async fn a_closed_port_has_no_time_and_no_banner() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))

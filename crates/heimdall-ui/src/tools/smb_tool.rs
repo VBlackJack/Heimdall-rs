@@ -28,11 +28,13 @@
     clippy::too_many_lines
 )]
 
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use heimdall_app::TabId;
 use heimdall_app::net_tools::connect_routed;
 use heimdall_app::tool_route::ToolRoute;
+use heimdall_core::tools::network_fingerprint::security_buffer;
 use heimdall_core::tools::smb::{
     NtlmInfo, SmbEnumerationResult, SmbFindingSeverity, SmbNegotiateInfo, build_netbios_header,
     build_netbios_nbstat_query, build_ntlmssp_type1, build_report, build_result,
@@ -519,6 +521,9 @@ async fn probe_smb_and_ntlm<O: Opener>(
     host: &str,
     dur: Duration,
 ) -> Result<(Option<NtlmInfo>, Option<SmbNegotiateInfo>), String> {
+    // What the Negotiate reply told stays here, outside the future: a Session Setup that
+    // fails, is cut off or runs past the deadline must not discard it (C# `NtlmProbe`).
+    let learned: Mutex<Option<SmbNegotiateInfo>> = Mutex::new(None);
     let probe_task = async {
         // `(host, port)` resolves IPv4, IPv6 literals and hostnames correctly, where
         // `format!("{host}:445")` would mangle an IPv6 literal such as `::1`.
@@ -543,7 +548,9 @@ async fn probe_smb_and_ntlm<O: Opener>(
             return Err("Invalid SMB2 negotiate response".to_string());
         }
 
-        let smb_info = parse_negotiate_response(&neg_resp);
+        if let Ok(mut slot) = learned.lock() {
+            *slot = parse_negotiate_response(&neg_resp);
+        }
 
         // 2. SMB2 Session Setup with NTLMSSP Type 1
         let type1 = build_ntlmssp_type1();
@@ -563,25 +570,20 @@ async fn probe_smb_and_ntlm<O: Opener>(
         let setup_resp = read_netbios_message(&mut stream)
             .await
             .map_err(|e| e.to_string())?;
-        if setup_resp.len() < 73 {
-            return Ok((None, smb_info));
-        }
-
-        let sec_buf_off = u16::from_le_bytes([setup_resp[68], setup_resp[69]]) as usize;
-        let sec_buf_len = u16::from_le_bytes([setup_resp[70], setup_resp[71]]) as usize;
-        if sec_buf_off + sec_buf_len > setup_resp.len() {
-            return Ok((None, smb_info));
-        }
-
-        let sec_buf = &setup_resp[sec_buf_off..sec_buf_off + sec_buf_len];
-        let ntlm_type2 = find_ntlmssp_message(sec_buf);
-        let ntlm_info = ntlm_type2.and_then(parse_ntlm_type2);
-
-        Ok((ntlm_info, smb_info))
+        Ok(security_buffer(&setup_resp)
+            .and_then(find_ntlmssp_message)
+            .and_then(parse_ntlm_type2))
     };
 
-    match timeout(dur, probe_task).await {
-        Ok(res) => res.map_err(|e| fl!("ui-tool-smb-error-ntlm", error = e)),
+    let outcome = timeout(dur, probe_task).await;
+    let smb_info = learned
+        .into_inner()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match outcome {
+        Ok(Ok(ntlm)) => Ok((ntlm, smb_info)),
+        // Past the Negotiate, a failure costs only the NTLM part.
+        Ok(Err(_)) | Err(_) if smb_info.is_some() => Ok((None, smb_info)),
+        Ok(Err(e)) => Err(fl!("ui-tool-smb-error-ntlm", error = e)),
         Err(_) => Err(fl!("ui-tool-smb-error-connection", error = "timed out")),
     }
 }
@@ -787,5 +789,51 @@ mod tests {
         let gateway = ToolGateway::over(Refusing, 4);
         let answered = execute_enumeration("127.0.0.1", Some(&gateway)).await;
         assert!(answered.is_err());
+    }
+
+    /// A server that answers the negotiate with a valid SMB2 response, then answers the
+    /// session setup with a NetBIOS header announcing no message at all.
+    async fn serve_negotiate_then_a_broken_reply() -> std::net::SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            for step in 0..2 {
+                let mut header = [0u8; 4];
+                socket.read_exact(&mut header).await.expect("header");
+                let mut request = vec![0u8; u32::from_be_bytes(header) as usize];
+                socket.read_exact(&mut request).await.expect("body");
+                if step == 0 {
+                    let mut reply = vec![0u8; 128];
+                    reply[0..4].copy_from_slice(&[0xFE, b'S', b'M', b'B']);
+                    reply[64..66].copy_from_slice(&65u16.to_le_bytes());
+                    reply[68..70].copy_from_slice(&0x0311u16.to_le_bytes());
+                    socket
+                        .write_all(&[0, 0, 0, 128])
+                        .await
+                        .expect("reply header");
+                    socket.write_all(&reply).await.expect("reply");
+                } else {
+                    socket.write_all(&[0, 0, 0, 0]).await.expect("broken reply");
+                }
+            }
+            // Hold the connection until the probe has hung up.
+            let mut rest = Vec::new();
+            let _ = socket.read_to_end(&mut rest).await;
+        });
+        address
+    }
+
+    #[tokio::test]
+    async fn a_session_setup_that_fails_keeps_what_the_negotiate_told() {
+        // The session setup is answered by an invalid header, and the dialect learned
+        // before must survive.
+        let address = serve_negotiate_then_a_broken_reply().await;
+        let gateway = ToolGateway::over(Loopback(address), 4);
+        let result = execute_enumeration("nas.internal", Some(&gateway))
+            .await
+            .expect("the negotiate information is kept");
+        assert_eq!(result.dialect_raw, Some(0x0311));
+        assert_eq!(result.os_build, None);
     }
 }

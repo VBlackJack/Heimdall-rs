@@ -1093,6 +1093,40 @@ mod tests {
     }
 
     #[test]
+    fn a_hostile_nslookup_answer_never_gives_a_name_that_is_not_a_host_name() {
+        let ip = Ipv4Addr::new(10, 0, 0, 5);
+        let hostile = [
+            "5.0.0.10.in-addr.arpa\tname = \u{1b}[2Jevil.lan.",
+            "5.0.0.10.in-addr.arpa\tname = a b.lan.",
+            "5.0.0.10.in-addr.arpa\tname = \r\n",
+            "5.0.0.10.in-addr.arpa\tname = ",
+            "5.0.0.10.in-addr.arpa\tname = 10.0.0.5",
+            "5.0.0.10.in-addr.arpa\tname = 5.0.0.10.in-addr.arpa.",
+            "name = ",
+            "name = -bad.lan",
+        ];
+        for output in hostile {
+            assert_eq!(parse_reverse_name(output, ip, false), None, "{output:?}");
+        }
+        let long = format!("5.0.0.10.in-addr.arpa\tname = {}.lan.", "a".repeat(5000));
+        assert_eq!(parse_reverse_name(&long, ip, false), None);
+        let label = format!("5.0.0.10.in-addr.arpa\tname = {}.lan.", "a".repeat(64));
+        assert_eq!(parse_reverse_name(&label, ip, false), None);
+        let huge = "garbage line\n".repeat(200_000);
+        assert_eq!(parse_reverse_name(&huge, ip, false), None);
+        assert_eq!(parse_reverse_name(&huge, ip, true), None);
+        for windows in [false, true] {
+            assert_eq!(parse_reverse_name("", ip, windows), None);
+            assert_eq!(parse_reverse_name("\n\n\n", ip, windows), None);
+            assert_eq!(parse_reverse_name("Name:", ip, windows), None);
+            assert_eq!(
+                parse_reverse_name("Server:  x\n\nName:\t\u{7}\n", ip, windows),
+                None
+            );
+        }
+    }
+
+    #[test]
     fn a_reverse_name_is_read_from_nslookup_in_any_language() {
         let unix = "Server:\t\t127.0.0.53\nAddress:\t127.0.0.53#53\n\nNon-authoritative answer:\n5.0.0.10.in-addr.arpa\tname = host.lab.\n\nAuthoritative answers can be found from:\n";
         assert_eq!(

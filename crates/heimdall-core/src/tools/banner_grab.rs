@@ -356,6 +356,26 @@ mod tests {
         assert_eq!(clean_banner("\0\0   \r\n"), None);
     }
 
+    /// Hostile banners, after the C# `HostileNetworkReplyTests` (FTP replies): whatever a service
+    /// says first, the cleaned text holds no control character and no line break.
+    #[test]
+    fn a_hostile_banner_is_cleaned_to_one_line_of_plain_text() {
+        let ftp = "220-Welcome\r\n220 Ready\r\n230 Login\x00successful\x7f\x1b[2J\u{85}end\r\n";
+        let cleaned = clean_banner(ftp).expect("text is left");
+        assert!(!cleaned.chars().any(char::is_control), "{cleaned:?}");
+        assert!(cleaned.starts_with("220-Welcome 220 Ready 230 Login"));
+
+        for only_noise in ["", "\r\n\r\n", "\x00\x01\x02", "\u{85}\u{a0}\t", "   "] {
+            assert_eq!(clean_banner(only_noise), None, "{only_noise:?}");
+        }
+
+        // A reply far past what a read keeps is handled in one pass.
+        let huge = "A\r\n".repeat(2_000_000);
+        let cleaned = clean_banner(&huge).expect("text is left");
+        assert!(cleaned.len() <= huge.len());
+        assert!(!cleaned.contains('\n'));
+    }
+
     #[test]
     fn test_identify_service_with_banner() {
         assert_eq!(identify_service(22, Some("SSH-2.0-OpenSSH_8.9")), "OpenSSH");
