@@ -2838,18 +2838,64 @@ pub fn move_folder_entries<'a>(path: &str, targets: &[String]) -> Element<'a, Me
 }
 
 /// Where the pointer last was in the window, recorded without a message per move.
+///
+/// It also keeps the left button's last press and release, seen by the window itself: the
+/// tree's drag subscription only exists from the turn after a press, so a release in the
+/// same turn (a fast click while a connection starts) never reaches it.
 #[derive(Debug, Clone, Default)]
-pub struct CursorSpot(Arc<Mutex<Point>>);
+pub struct CursorSpot(Arc<Mutex<Spot>>);
+
+#[derive(Debug, Default)]
+struct Spot {
+    /// The last position seen.
+    at: Point,
+    /// Where the left button was last pressed.
+    pressed_at: Point,
+    /// The left button was released, or the window lost the focus, since its last press.
+    released: bool,
+}
 
 impl CursorSpot {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Spot> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// The last position seen.
     #[must_use]
     pub fn get(&self) -> Point {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        self.lock().at
+    }
+
+    /// Where the left button was last pressed: a drag starts there, not where the pointer
+    /// has moved on to by the time the press is answered.
+    #[must_use]
+    pub fn pressed_at(&self) -> Point {
+        self.lock().pressed_at
+    }
+
+    /// The left button is no longer held, as far as the window saw: a press answered now
+    /// is no drag.
+    #[must_use]
+    pub fn released(&self) -> bool {
+        self.lock().released
     }
 
     pub(crate) fn set(&self, point: Point) {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = point;
+        self.lock().at = point;
+    }
+
+    /// Records the left button's state from `event`.
+    pub(crate) fn note(&self, event: &Event) {
+        let mut spot = self.lock();
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                spot.pressed_at = spot.at;
+                spot.released = false;
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+            | Event::Window(iced::window::Event::Unfocused) => spot.released = true,
+            _ => {}
+        }
     }
 }
 
@@ -2921,6 +2967,7 @@ impl Widget<Message, Theme, iced::Renderer> for CursorTracker<'_> {
         if let Some(position) = cursor.position() {
             self.spot.set(position);
         }
+        self.spot.note(event);
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,

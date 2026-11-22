@@ -107,6 +107,7 @@ pub fn drag_event(
         iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
             Some(Message::TreeDragEnd)
         }
+        iced::Event::Window(window::Event::Unfocused) => Some(Message::TreeDragCancel),
         _ => None,
     }
 }
@@ -175,6 +176,16 @@ pub fn positioned_zone<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_losing_the_focus_gives_the_held_press_up() {
+        let message = drag_event(
+            iced::Event::Window(window::Event::Unfocused),
+            event::Status::Ignored,
+            window::Id::unique(),
+        );
+        assert!(matches!(message, Some(Message::TreeDragCancel)));
+    }
 
     #[test]
     fn a_press_becomes_a_drag_once_moved_and_drops_where_the_pointer_is() {

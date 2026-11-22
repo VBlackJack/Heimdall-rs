@@ -4385,6 +4385,43 @@ fn a_session_pressed_and_dragged_onto_a_folder_moves_into_it() {
     assert_eq!(group(&shell).as_deref(), Some("Production"));
 }
 
+/// A press and its release that reach the window in one turn, as when a connection starting
+/// keeps it busy: the tree's drag subscription does not exist yet to hear the release, so
+/// the stale press became a drag at the next pointer move (2026-11-22, lab).
+#[test]
+fn a_click_whose_release_the_drag_subscription_missed_never_becomes_a_drop() {
+    use iced::Point;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let group = |shell: &Shell| {
+        shell
+            .app()
+            .profile_summary(&ProfileId::new("c"))
+            .and_then(|profile| profile.group)
+    };
+    let mut ui = simulator(&shell);
+    ui.click("server c").expect("a row");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| matches!(message, Message::TreeClick(_))),
+        "{messages:?}"
+    );
+    for message in messages {
+        let _ = shell.update(message);
+    }
+    // The window saw the release, the subscription did not: the pointer moves on over a
+    // folder and the next release is any click's.
+    let _ = shell.update(Message::TreeDragMoved(Point::new(40.0, 60.0)));
+    let _ = shell.update(Message::TreeHover(heimdall_app::DropTarget::Folder(
+        "Production".to_owned(),
+    )));
+    let _ = shell.update(Message::TreeDragEnd);
+    assert_eq!(group(&shell), None, "a click is no drag");
+}
+
 #[test]
 fn home_end_select_all_and_letters_move_in_the_tree_and_ctrl_b_hides_it() {
     use heimdall_app::files::FilesKey;
