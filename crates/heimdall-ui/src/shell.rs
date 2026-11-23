@@ -5311,6 +5311,9 @@ impl Shell {
                 },
             ),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
+            Effect::WriteSensitiveClipboard(content) => {
+                crate::tools::sensitive_clipboard_write(content)
+            }
             // Off the UI thread: a 4 MiB text takes a moment. The text is neither logged nor
             // kept past the call; a thread that fails leaves the dialog unable to copy.
             Effect::Redact { run, text, options } => Task::future(async move {

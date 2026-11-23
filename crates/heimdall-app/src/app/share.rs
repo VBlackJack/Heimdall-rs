@@ -149,7 +149,7 @@ impl App {
                 Some(info) => {
                     let url = info.url();
                     self.tell(Notice::Share(ShareNotice::UrlCopied));
-                    vec![Effect::WriteClipboard(url)]
+                    vec![Effect::WriteSensitiveClipboard(url)]
                 }
                 None => Vec::new(),
             },
@@ -157,7 +157,7 @@ impl App {
                 Some(info) => {
                     let command = info.curl_command();
                     self.tell(Notice::Share(ShareNotice::CommandCopied));
-                    vec![Effect::WriteClipboard(command)]
+                    vec![Effect::WriteSensitiveClipboard(command)]
                 }
                 None => Vec::new(),
             },
