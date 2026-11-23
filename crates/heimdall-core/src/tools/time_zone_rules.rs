@@ -132,6 +132,30 @@ impl ZoneRules {
         }
     }
 
+    /// Its offset east of UTC, in seconds, when its wall clock shows `wall_seconds` (seconds
+    /// since 1970-01-01 on that clock): the earlier of two when the clock goes back, as
+    /// .NET's daylight time, and the one before the jump when it skips ahead, as .NET's
+    /// standard time.
+    #[must_use]
+    pub fn offset_of_wall_clock(&self, wall_seconds: i64) -> i32 {
+        let Some(daylight) = self.daylight else {
+            return self.standard_seconds;
+        };
+        let (standard, summer) = (self.standard_seconds, daylight.offset_seconds);
+        // An offset fits the wall clock when the instant it gives is one the rule puts there.
+        let fits = |offset: i32| {
+            self.offset_at(Instant::from_unix_seconds(wall_seconds - i64::from(offset))) == offset
+        };
+        match (fits(standard), fits(summer)) {
+            // Shown twice: the larger offset is the earlier instant.
+            (true, true) => standard.max(summer),
+            (true, false) => standard,
+            (false, true) => summer,
+            // Never shown: the clock was on the smaller offset before it jumped.
+            (false, false) => standard.min(summer),
+        }
+    }
+
     /// The rule a Windows registry `TZI` value holds: the bias, the standard and daylight
     /// biases, in minutes west of UTC, then the change to standard time and the change to
     /// daylight time as `SYSTEMTIME`s, the month 0 when the zone does not change. `None`

@@ -159,10 +159,10 @@ impl fmt::Display for SnapshotChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let moment = i64::try_from(self.0.timestamp)
             .ok()
-            .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0))
+            .and_then(|secs| jiff::Timestamp::from_second(secs).ok())
             .map(|utc| {
-                utc.with_timezone(&chrono::Local)
-                    .format(SNAPSHOT_TIME_FORMAT)
+                heimdall_app::time_zone::local_zoned(utc)
+                    .strftime(SNAPSHOT_TIME_FORMAT)
                     .to_string()
             })
             .unwrap_or_default();

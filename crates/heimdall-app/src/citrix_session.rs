@@ -696,9 +696,9 @@ impl CitrixPane {
     #[must_use]
     pub fn launched_clock(&self) -> Option<String> {
         self.launched_at.map(|at| {
-            chrono::DateTime::<chrono::Local>::from(at)
-                .format(LAUNCHED_FORMAT)
-                .to_string()
+            crate::time_zone::local_system_time(at)
+                .map(|at| at.strftime(LAUNCHED_FORMAT).to_string())
+                .unwrap_or_default()
         })
     }
 

@@ -83,6 +83,7 @@ Stripping a personal Windows workstation? See [Windows workstation debloat pack]
 | `heimdall-remote` | VNC, Telnet, serial |
 | `heimdall-tls` | Server certificate check of FTPS and VNC over TLS |
 | `heimdall-dragout` | Local files dragged out to Explorer; unsafe code, an approved exception (Windows shell calls) |
+| `heimdall-test-ftp` | The FTP and FTPS server the Files tests run against; a dev-dependency, never in the application |
 | `heimdall-titlebar` | Title bars in the theme's colours; unsafe code, an approved exception (one `DwmSetWindowAttribute` call, as the C# `WindowThemeHelper`) |
 | `heimdall-ui` | The desktop application |
 | `xtask` | Developer tooling |

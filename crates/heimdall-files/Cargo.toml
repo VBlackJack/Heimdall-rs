@@ -29,11 +29,10 @@ thiserror.workspace = true
 [dev-dependencies]
 heimdall-tls.workspace = true
 # An FTP server the FTP tests run against, on disk.
-libunftp.workspace = true
+heimdall-test-ftp.workspace = true
 # The FTPS test server's certificate.
 rcgen = { workspace = true, features = ["pem"] }
 tempfile.workspace = true
-unftp-sbe-fs.workspace = true
 # process: OpenSSH's sftp-server run as a child in the tests.
 tokio = { workspace = true, features = ["process"] }
 

@@ -18,8 +18,7 @@
 //! profile, and for explicit FTPS the certificate question, then the pin recorded once the
 //! user trusts it; a pin no longer valid refused, never asked about.
 
-#[path = "support/ftp_server.rs"]
-mod ftp_server;
+use heimdall_test_ftp as ftp_server;
 
 use std::path::Path;
 use std::time::Duration;

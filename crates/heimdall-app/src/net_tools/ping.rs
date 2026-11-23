@@ -30,7 +30,9 @@ pub const TIMESTAMP_FORMAT: &str = "%H:%M:%S";
 /// The local time now, as a probe is stamped.
 #[must_use]
 pub fn timestamp_now() -> String {
-    chrono::Local::now().format(TIMESTAMP_FORMAT).to_string()
+    crate::time_zone::local_now()
+        .strftime(TIMESTAMP_FORMAT)
+        .to_string()
 }
 
 /// Probe `seq` of `host`, waiting `timeout_ms` for the reply.
@@ -73,10 +75,15 @@ mod tests {
     #[test]
     fn a_probe_is_stamped_with_the_local_time() {
         let stamp = timestamp_now();
-        let parsed = chrono::NaiveTime::parse_from_str(&stamp, TIMESTAMP_FORMAT).expect("HH:MM:SS");
-        let local = chrono::Local::now().time();
+        let parsed = jiff::fmt::strtime::parse(TIMESTAMP_FORMAT, &stamp)
+            .and_then(|parsed| parsed.to_time())
+            .expect("HH:MM:SS");
+        let local = crate::time_zone::local_now().time();
         // The same second, or the one before at worst; around midnight, a day apart.
-        let apart = (local - parsed).num_seconds().rem_euclid(24 * 60 * 60);
+        let apart = local
+            .duration_since(parsed)
+            .as_secs()
+            .rem_euclid(24 * 60 * 60);
         assert!(apart <= 1, "{stamp} against {local}");
     }
 
