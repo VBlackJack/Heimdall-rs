@@ -21,7 +21,7 @@
 use std::path::Path;
 
 use heimdall_app::{
-    App, AppConfig, Effect, Message, SettingsMessage, TabId, TabMenuMessage, folder_label,
+    App, AppConfig, Effect, Message, SettingsMessage, TabGroup, TabId, TabMenuMessage, folder_label,
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
@@ -157,5 +157,246 @@ fn the_choice_is_kept_across_runs_as_the_csharp_setting() {
     assert!(
         app(dir.path()).groups_tabs_by_folder(),
         "on, as it was left"
+    );
+}
+
+fn menu(app: &mut App, message: TabMenuMessage) {
+    app.update(Message::TabMenu(message));
+}
+
+fn shown(app: &App) -> TabId {
+    app.shown_tab().expect("a tab is shown").id
+}
+
+fn folded(app: &App, tab: TabId) -> bool {
+    app.folder_folded(app.tab(tab).expect("tab"))
+}
+
+#[test]
+fn folding_a_folder_takes_its_tabs_off_the_strip_and_unfolding_brings_them_back() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a1, b1, a2, c1) = (
+        open(&mut app, "a"),
+        open(&mut app, "b"),
+        open(&mut app, "a"),
+        open(&mut app, "c"),
+    );
+    group_by_folder(&mut app);
+    // The tab in no folder is shown: folding Lab/Web moves nothing.
+    assert_eq!(shown(&app), c1);
+    menu(&mut app, TabMenuMessage::ToggleFolderFold(a1));
+    assert!(folded(&app, a1) && folded(&app, a2));
+    assert!(!folded(&app, b1) && !folded(&app, c1));
+    assert_eq!(
+        app.reachable_tabs(),
+        [b1, c1],
+        "a key skips the folded folder"
+    );
+    assert_eq!(
+        strip(&app),
+        [a1, a2, b1, c1],
+        "the tab list still shows every tab"
+    );
+    assert_eq!(shown(&app), c1);
+
+    menu(&mut app, TabMenuMessage::ToggleFolderFold(a2));
+    assert!(!folded(&app, a1));
+    assert_eq!(app.reachable_tabs(), [a1, a2, b1, c1]);
+}
+
+#[test]
+fn folding_the_folder_of_the_shown_tab_shows_the_nearest_tab_outside_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a1, a2, b1, c1) = (
+        open(&mut app, "a"),
+        open(&mut app, "a"),
+        open(&mut app, "b"),
+        open(&mut app, "c"),
+    );
+    group_by_folder(&mut app);
+    app.update(Message::SelectTab(a1));
+    menu(&mut app, TabMenuMessage::ToggleFolderFold(a2));
+    assert_eq!(shown(&app), b1, "the first tab after the folder");
+    assert!(folded(&app, a1));
+
+    // Folding the next folder: after it only a tab in no folder, which is taken.
+    app.update(Message::SelectTab(b1));
+    menu(&mut app, TabMenuMessage::ToggleFolderFold(b1));
+    assert_eq!(shown(&app), c1);
+    assert!(folded(&app, b1));
+}
+
+#[test]
+fn the_last_tab_of_the_strip_falls_back_to_the_one_before_its_folder() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (c1, b1) = (open(&mut app, "c"), open(&mut app, "b"));
+    group_by_folder(&mut app);
+    assert_eq!(shown(&app), b1);
+    menu(&mut app, TabMenuMessage::ToggleFolderFold(b1));
+    assert_eq!(shown(&app), c1, "nothing after: the one before");
+}
+
+#[test]
+fn a_folder_holding_every_reachable_tab_stays_open() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a1, a2) = (open(&mut app, "a"), open(&mut app, "a"));
+    group_by_folder(&mut app);
+    assert!(!app.can_fold_folder(a1), "the chip says it cannot fold");
+    menu(&mut app, TabMenuMessage::ToggleFolderFold(a1));
+    assert!(!folded(&app, a1));
+    assert_eq!(shown(&app), a2);
+
+    // Another tab, in another folder: now it can.
+    let b1 = open(&mut app, "b");
+    app.update(Message::SelectTab(a1));
+    assert!(app.can_fold_folder(a1));
+    menu(&mut app, TabMenuMessage::ToggleFolderFold(a1));
+    assert!(folded(&app, a1));
+    assert_eq!(shown(&app), b1);
+}
+
+#[test]
+fn showing_a_tab_of_a_folded_folder_unfolds_it_and_a_new_tab_of_it_arrives_open() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a1, _b1, c1) = (
+        open(&mut app, "a"),
+        open(&mut app, "b"),
+        open(&mut app, "c"),
+    );
+    group_by_folder(&mut app);
+    menu(&mut app, TabMenuMessage::ToggleFolderFold(a1));
+    assert!(folded(&app, a1));
+    assert_eq!(shown(&app), c1);
+    app.update(Message::SelectTab(a1));
+    assert!(!folded(&app, a1));
+
+    app.update(Message::SelectTab(c1));
+    menu(&mut app, TabMenuMessage::ToggleFolderFold(a1));
+    assert!(folded(&app, a1));
+    let a2 = open(&mut app, "a");
+    assert!(!folded(&app, a2), "opening a session shows it");
+    assert!(!folded(&app, a1));
+}
+
+#[test]
+fn a_folder_with_no_tab_left_forgets_it_was_folded() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a1, b1) = (open(&mut app, "a"), open(&mut app, "b"));
+    group_by_folder(&mut app);
+    app.update(Message::SelectTab(b1));
+    menu(&mut app, TabMenuMessage::ToggleFolderFold(a1));
+    assert!(folded(&app, a1));
+    app.update(Message::RequestCloseTab(a1));
+    if app.dialog.is_some() {
+        app.update(Message::ConfirmDialog);
+    }
+    assert!(app.tab(a1).is_none());
+    app.update(Message::SelectTab(b1));
+    let a2 = open(&mut app, "a");
+    app.update(Message::SelectTab(b1));
+    assert!(!folded(&app, a2), "the next tab of that folder is open");
+}
+
+#[test]
+fn collapse_the_other_folders_keeps_this_one_open_and_moves_the_selection_in() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a1, b1, c1) = (
+        open(&mut app, "a"),
+        open(&mut app, "b"),
+        open(&mut app, "c"),
+    );
+    group_by_folder(&mut app);
+    app.update(Message::SelectTab(b1));
+    menu(&mut app, TabMenuMessage::FoldOtherFolders(a1));
+    assert_eq!(shown(&app), a1, "the selection moved into the folder");
+    assert!(!folded(&app, a1));
+    assert!(folded(&app, b1));
+    assert!(!folded(&app, c1), "a tab in no folder stays");
+    assert_eq!(app.reachable_tabs(), [a1, c1]);
+
+    // This folder folded before is opened again; the selection inside stays put.
+    app.update(Message::SelectTab(c1));
+    menu(&mut app, TabMenuMessage::ToggleFolderFold(a1));
+    assert!(folded(&app, a1));
+    menu(&mut app, TabMenuMessage::FoldOtherFolders(a1));
+    assert!(!folded(&app, a1));
+    assert!(folded(&app, b1));
+    assert_eq!(shown(&app), a1);
+}
+
+#[test]
+fn collapse_the_other_folders_is_offered_only_with_another_folder_on_the_strip() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a1, c1) = (open(&mut app, "a"), open(&mut app, "c"));
+    group_by_folder(&mut app);
+    assert!(!app.has_other_folder(a1));
+    assert!(!app.has_other_folder(c1), "a tab in no folder has none");
+    open(&mut app, "b");
+    assert!(app.has_other_folder(a1));
+    assert!(!app.has_other_folder(c1));
+}
+
+#[test]
+fn close_this_folders_tabs_closes_the_folder_group_only() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a1, b1, a2, c1) = (
+        open(&mut app, "a"),
+        open(&mut app, "b"),
+        open(&mut app, "a"),
+        open(&mut app, "c"),
+    );
+    assert!(
+        app.tab_group(a1, TabGroup::Folder).is_empty(),
+        "not offered while the tabs are not arranged"
+    );
+    group_by_folder(&mut app);
+    assert_eq!(
+        app.tab_group(a2, TabGroup::Folder),
+        [a1, a2],
+        "this tab too"
+    );
+    assert!(app.tab_group(c1, TabGroup::Folder).is_empty());
+    menu(
+        &mut app,
+        TabMenuMessage::Close {
+            tab: a2,
+            group: TabGroup::Folder,
+        },
+    );
+    // Asked once when a session is live, as the other bulk closes are.
+    if app.dialog.is_some() {
+        app.update(Message::ConfirmDialog);
+    }
+    assert_eq!(strip(&app), [b1, c1]);
+}
+
+#[test]
+fn close_others_and_close_to_the_right_spare_a_folded_folder() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a1, b1, c1) = (
+        open(&mut app, "a"),
+        open(&mut app, "b"),
+        open(&mut app, "c"),
+    );
+    group_by_folder(&mut app);
+    app.update(Message::SelectTab(c1));
+    menu(&mut app, TabMenuMessage::ToggleFolderFold(a1));
+    assert_eq!(app.tab_group(c1, TabGroup::Others), [b1]);
+    assert_eq!(app.tab_group(b1, TabGroup::Right), [c1]);
+    assert!(app.tab_group(c1, TabGroup::Right).is_empty());
+    assert_eq!(
+        app.tab_group(c1, TabGroup::All),
+        [a1, b1, c1],
+        "close all names every tab, as the C# one"
     );
 }

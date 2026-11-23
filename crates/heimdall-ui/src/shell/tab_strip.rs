@@ -41,7 +41,7 @@ use crate::styles;
 use crate::texts;
 use crate::tokens::{font_size, radius, spacing};
 use crate::tree_view::{self, TabListItem, TreeMenu};
-use heimdall_app::folder_label;
+use heimdall_app::{TabMenuMessage, folder_label};
 
 /// Room around the tab strip, as the C#'s: none below, where the tabs meet the session.
 const TAB_STRIP_PADDING: iced::Padding = iced::Padding {
@@ -100,6 +100,9 @@ const TAB_LIST_RESERVE: f32 = icons::BUTTON_SIDE + TAB_GAP;
 
 /// Room round the chip naming a folder, as the C# group chip's label.
 const FOLDER_CHIP_PADDING: [f32; 2] = [2.0, spacing::SM];
+
+/// The room between a folder chip's chevron and its name.
+const FOLDER_CHIP_GAP: f32 = spacing::XS;
 
 /// The mark after the title of a tab whose session needs a look, as the C# tab's
 /// `TabStateMark`: each state its own shape, so the colour is never the only cue.
@@ -415,15 +418,50 @@ impl Shell {
     }
 
     /// The chip heading a folder's tabs while they are gathered by folder, as the C# group
-    /// chip carrying the folder's name.
-    fn folder_chip(folder: &str) -> Element<'static, Message> {
-        container(
-            text(folder_label(folder).to_owned())
-                .size(font_size::CAPTION)
-                .font(styles::SEMIBOLD),
+    /// chip carrying the folder's name and a chevron: a click folds the tabs of the folder
+    /// into the chip alone, or unfolds them. Its tooltip names the folder by its full path and
+    /// the state, because two folders of one name in different branches would read the same.
+    fn folder_chip(&self, head: &Tab, folder: &str) -> Element<'static, Message> {
+        let shut = self.app.folder_folded(head);
+        let words = if shut {
+            fl!("ui-tab-folder-chip-folded", folder = folder)
+        } else if self.app.can_fold_folder(head.id) {
+            fl!("ui-tab-folder-chip-open", folder = folder)
+        } else {
+            // A click leaves it open: say why, as the C# chip does.
+            fl!("ui-tab-folder-chip-lone", folder = folder)
+        };
+        let chip = container(
+            row![
+                icons::icon(
+                    if shut {
+                        Icon::ChevronRight
+                    } else {
+                        Icon::ChevronDown
+                    },
+                    Tint::Text,
+                    font_size::SMALL_CAPTION,
+                ),
+                text(folder_label(folder).to_owned())
+                    .size(font_size::CAPTION)
+                    .font(styles::SEMIBOLD),
+            ]
+            .spacing(FOLDER_CHIP_GAP)
+            .align_y(iced::Alignment::Center),
         )
         .padding(FOLDER_CHIP_PADDING)
-        .style(styles::folder_chip)
+        .style(styles::folder_chip);
+        styles::tip(
+            mouse_area(chip)
+                .interaction(mouse::Interaction::Pointer)
+                .on_press(Message::App(AppMessage::TabMenu(
+                    TabMenuMessage::ToggleFolderFold(head.id),
+                ))),
+            text(words).size(font_size::CAPTION),
+            tooltip::Position::Bottom,
+        )
+        .padding(styles::TOOLTIP_PADDING)
+        .style(styles::tooltip)
         .into()
     }
 
@@ -526,12 +564,17 @@ impl Shell {
             let active = shown == Some(tab.id);
             // A chip before the first tab of each folder, once the tabs are gathered.
             let tab_folder = self.app.tab_folder(tab);
-            if tab_folder != folder
+            let key = tab_folder.as_ref().map(|name| name.to_lowercase());
+            if key != folder
                 && let Some(name) = &tab_folder
             {
-                tabs = tabs.push(Self::folder_chip(name));
+                tabs = tabs.push(self.folder_chip(tab, name));
             }
-            folder = tab_folder;
+            folder = key;
+            // The tabs of a folded folder leave the strip, the chip standing for them.
+            if self.app.folder_folded(tab) {
+                continue;
+            }
             for mark in self.tab_marks(tab) {
                 tabs = tabs.push(mark);
             }
