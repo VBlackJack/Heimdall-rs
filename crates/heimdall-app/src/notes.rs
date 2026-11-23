@@ -113,15 +113,16 @@ impl LocalTime {
     /// Now, on this computer's clock.
     #[must_use]
     pub fn now() -> Self {
-        use chrono::{Datelike as _, Timelike as _};
-        let now = chrono::Local::now();
+        let now = jiff::ZonedDateTime::now();
+        // Jiff's parts are small signed integers; a month, a day and a clock part are
+        // never negative.
         Self {
-            year: now.year(),
-            month: now.month(),
-            day: now.day(),
-            hour: now.hour(),
-            minute: now.minute(),
-            second: now.second(),
+            year: i32::from(now.year()),
+            month: u32::from(now.month().unsigned_abs()),
+            day: u32::from(now.day().unsigned_abs()),
+            hour: u32::from(now.hour().unsigned_abs()),
+            minute: u32::from(now.minute().unsigned_abs()),
+            second: u32::from(now.second().unsigned_abs()),
         }
     }
 

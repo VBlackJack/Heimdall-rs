@@ -80,9 +80,9 @@ pub fn problem_text(problem: &SourceProblem, path: &str) -> String {
 
 /// When an offline copy was taken, in the user's time zone.
 fn copy_date(taken_at: std::time::SystemTime) -> String {
-    chrono::DateTime::<chrono::Local>::from(taken_at)
-        .format(COPY_DATE_FORMAT)
-        .to_string()
+    jiff::ZonedDateTime::try_from(taken_at)
+        .map(|taken_at| taken_at.strftime(COPY_DATE_FORMAT).to_string())
+        .unwrap_or_default()
 }
 
 /// How the date of an offline copy is written.

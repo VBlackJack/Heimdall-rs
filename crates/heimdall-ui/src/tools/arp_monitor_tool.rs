@@ -214,7 +214,7 @@ impl ArpMonitorPane {
                 }
                 match table.flatten() {
                     Some(table) => {
-                        let now = chrono::Local::now().format(SEEN_FORMAT).to_string();
+                        let now = jiff::ZonedDateTime::now().strftime(SEEN_FORMAT).to_string();
                         // Compared with what is shown now, not with what was shown when
                         // the scan began.
                         let refresh = arp_monitor::detect_changes(&self.entries, &table, &now);

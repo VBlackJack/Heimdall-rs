@@ -115,11 +115,11 @@ fn a_certificate_says_when_it_was_trusted_in_local_time_and_an_old_line_says_not
     trusted(&mut app, TrustedKeysMessage::Refresh);
     let rdp = &app.trusted_keys().rdp;
     assert_eq!(rdp[0].subject.as_deref(), Some("CN=dc.lab"));
-    let local =
-        chrono::DateTime::<chrono::Local>::from(UNIX_EPOCH + Duration::from_secs(1_773_576_030));
+    let local = jiff::ZonedDateTime::try_from(UNIX_EPOCH + Duration::from_secs(1_773_576_030))
+        .expect("a time in range");
     assert_eq!(
         TrustedKey::Rdp(rdp[0].clone()).trusted_since(),
-        Some(local.format("%Y-%m-%d %H:%M").to_string())
+        Some(local.strftime("%Y-%m-%d %H:%M").to_string())
     );
     assert_eq!(TrustedKey::Rdp(rdp[1].clone()).trusted_since(), None);
     assert_eq!(

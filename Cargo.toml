@@ -169,8 +169,10 @@ tokio-util = "0.7.19"
 # regex: what a terminal macro waits for, when written as a regular expression, and the
 # Regex Tester tool's patterns that need no backtracking; already in the tree.
 regex = "1.13.1"
-# chrono: this computer's clock, for the date a note is written; already in the tree.
-chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+# jiff: this computer's clock and time zone, for the times the app shows and the dates it
+# names a file or a note after (chrono, unmaintained, RUSTSEC-2026-0543, was this). The
+# system zone comes from the zoneinfo files on Unix and from a bundled database on Windows.
+jiff = { version = "1.0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-bundle-platform"] }
 toml = "1.1.6"
 # unicode-normalization: accents folded out of the tree's search, as the C# FormD fold.
 unicode-normalization = "0.1.25"

@@ -77,9 +77,9 @@ impl Announced {
     /// When it was said, in this computer's time.
     #[must_use]
     pub fn clock(&self) -> String {
-        chrono::DateTime::<chrono::Local>::from(self.at)
-            .format(CLOCK_FORMAT)
-            .to_string()
+        jiff::ZonedDateTime::try_from(self.at)
+            .map(|at| at.strftime(CLOCK_FORMAT).to_string())
+            .unwrap_or_default()
     }
 }
 

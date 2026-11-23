@@ -495,10 +495,10 @@ fn tick(duration: Duration, message: impl FnOnce() -> Message + Send + 'static) 
 
 /// The export's file name, as the C#'s `passwords_{now:yyyyMMdd_HHmmss}.txt`.
 fn export_file_name() -> String {
-    let now = chrono::Local::now();
+    let now = jiff::ZonedDateTime::now();
     format!(
         "{EXPORT_PREFIX}{}.{EXPORT_EXTENSION}",
-        now.format("%Y%m%d_%H%M%S")
+        now.strftime("%Y%m%d_%H%M%S")
     )
 }
 

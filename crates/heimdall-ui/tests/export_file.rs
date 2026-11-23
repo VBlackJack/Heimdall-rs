@@ -20,7 +20,6 @@
 
 use std::path::PathBuf;
 
-use chrono::NaiveDate;
 use heimdall_app::ExportOutcome;
 use heimdall_ui::export_file::write;
 use heimdall_ui::file_dialog::{Pick, Unavailable};
@@ -114,9 +113,7 @@ async fn no_dialog_or_no_write_is_a_failure_with_its_reason() {
 
 #[test]
 fn the_suggested_name_is_the_tool_its_target_and_the_moment_as_the_csharp() {
-    let now = NaiveDate::from_ymd_opt(2026, 10, 17)
-        .and_then(|day| day.and_hms_opt(9, 5, 3))
-        .expect("a moment");
+    let now = jiff::civil::date(2026, 10, 17).at(9, 5, 3, 0);
     assert_eq!(
         file_name("ping", Some(" 192.0.2.1 "), Format::Csv, now),
         "ping_192.0.2.1_20261017_090503.csv"

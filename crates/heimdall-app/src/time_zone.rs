@@ -29,6 +29,8 @@ use heimdall_core::tools::time_zone_rules::{self, TimeZoneEntry, ZoneRules};
 use heimdall_rdp::TimeZone;
 #[cfg(windows)]
 use heimdall_rdp::Transition;
+use jiff::Timestamp;
+use jiff::tz::{AmbiguousOffset, Offset, TimeZone as IanaZone};
 
 /// The zone the system clock follows, with this year's change rules.
 #[cfg(windows)]
@@ -83,12 +85,13 @@ pub fn local() -> Option<TimeZone> {
 /// `ToLocalTime`: the system's own zone and its history.
 #[must_use]
 pub fn local_offset_at(instant: Instant) -> i32 {
-    use chrono::{Offset as _, TimeZone as _};
-    let seconds = instant.unix_seconds();
-    chrono::Local
-        .timestamp_opt(seconds, 0)
-        .earliest()
-        .map_or(0, |local| local.offset().fix().local_minus_utc())
+    offset_at_in(&IanaZone::system(), instant.unix_seconds())
+}
+
+/// The offset east of UTC, in seconds, of `zone` at `unix_seconds`; 0 for a time jiff cannot
+/// hold.
+fn offset_at_in(zone: &IanaZone, unix_seconds: i64) -> i32 {
+    Timestamp::from_second(unix_seconds).map_or(0, |instant| zone.to_offset(instant).seconds())
 }
 
 /// The offset east of UTC, in seconds, of this computer's clock when it shows
@@ -96,20 +99,28 @@ pub fn local_offset_at(instant: Instant) -> i32 {
 /// clock goes back, the one before a gap when it skips ahead.
 #[must_use]
 pub fn local_offset_of_wall_clock(wall_seconds: i64) -> i32 {
-    use chrono::{Offset as _, TimeZone as _};
-    let Some(naive) = chrono::DateTime::from_timestamp(wall_seconds, 0).map(|utc| utc.naive_utc())
-    else {
-        return 0;
-    };
-    match chrono::Local.from_local_datetime(&naive).earliest() {
-        Some(local) => local.offset().fix().local_minus_utc(),
-        // A time the clock skips: the offset an hour before, as .NET's standard time.
-        None => local_offset_at(Instant::from_unix_seconds(wall_seconds - GAP_PROBE_SECONDS)),
-    }
+    wall_clock_offset_in(&IanaZone::system(), wall_seconds)
 }
 
-/// How far before a skipped wall-clock time its offset is looked for.
-const GAP_PROBE_SECONDS: i64 = 3_600;
+/// [`local_offset_of_wall_clock`] in `zone`.
+fn wall_clock_offset_in(zone: &IanaZone, wall_seconds: i64) -> i32 {
+    // The wall clock's seconds read as a civil date and time, whatever the zone: the
+    // calendar of the UTC reading of the same count.
+    let Ok(wall) = Timestamp::from_second(wall_seconds) else {
+        return 0;
+    };
+    let civil = Offset::UTC.to_datetime(wall);
+    match zone.to_ambiguous_timestamp(civil).offset() {
+        // The earlier of two when the clock goes back, as .NET's daylight time.
+        AmbiguousOffset::Unambiguous { offset } | AmbiguousOffset::Fold { before: offset, .. } => {
+            offset.seconds()
+        }
+        // A time the clock skips: the offset before the jump, as .NET's standard time. (The
+        // chrono code probed the instant an hour earlier, reading the wall clock as UTC, which
+        // landed after the jump in zones east of UTC.)
+        AmbiguousOffset::Gap { before, .. } => before.seconds(),
+    }
+}
 
 /// This computer's clock, for the scheduled connections' timing.
 #[derive(Debug, Clone, Copy, Default)]
@@ -235,6 +246,90 @@ mod tests {
         assert!((-14 * 3_600..=14 * 3_600).contains(&offset), "{offset}");
         let wall = instant.unix_seconds() + i64::from(offset);
         assert_eq!(super::local_offset_of_wall_clock(wall), offset);
+    }
+
+    /// Paris's offsets: winter and summer time, in seconds east of UTC.
+    const PARIS_WINTER: i32 = 3_600;
+    const PARIS_SUMMER: i32 = 7_200;
+
+    /// The count of seconds the wall clock shows at the civil date and time given, read as
+    /// the count since 1970-01-01 on a clock without a zone.
+    fn wall(year: i16, month: i8, day: i8, hour: i8, minute: i8) -> i64 {
+        jiff::civil::date(year, month, day)
+            .at(hour, minute, 0, 0)
+            .to_zoned_datetime(jiff::tz::TimeZone::UTC)
+            .expect("a civil time in range")
+            .timestamp()
+            .as_second()
+    }
+
+    fn paris() -> jiff::tz::TimeZone {
+        jiff::tz::TimeZone::get("Europe/Paris").expect("Paris is in the zone database")
+    }
+
+    #[test]
+    fn a_wall_clock_time_outside_a_change_has_its_one_offset() {
+        let zone = paris();
+        assert_eq!(
+            super::wall_clock_offset_in(&zone, wall(2026, 1, 15, 12, 0)),
+            PARIS_WINTER
+        );
+        assert_eq!(
+            super::wall_clock_offset_in(&zone, wall(2026, 7, 15, 12, 0)),
+            PARIS_SUMMER
+        );
+    }
+
+    #[test]
+    fn a_wall_clock_time_the_clock_shows_twice_takes_the_earlier_offset() {
+        // 2026-10-25: at 03:00 summer time the clock goes back to 02:00 winter time, so
+        // 02:30 is shown twice; the first is summer time, as .NET's daylight time.
+        let zone = paris();
+        assert_eq!(
+            super::wall_clock_offset_in(&zone, wall(2026, 10, 25, 2, 30)),
+            PARIS_SUMMER
+        );
+        assert_eq!(
+            super::wall_clock_offset_in(&zone, wall(2026, 10, 25, 1, 59)),
+            PARIS_SUMMER,
+            "before the overlap"
+        );
+        assert_eq!(
+            super::wall_clock_offset_in(&zone, wall(2026, 10, 25, 3, 0)),
+            PARIS_WINTER,
+            "after the overlap"
+        );
+    }
+
+    #[test]
+    fn a_wall_clock_time_the_clock_skips_takes_the_offset_before_the_gap() {
+        // 2026-03-29: at 02:00 winter time the clock jumps to 03:00 summer time, so 02:30
+        // is never shown; the offset before the jump, as .NET's standard time.
+        let zone = paris();
+        assert_eq!(
+            super::wall_clock_offset_in(&zone, wall(2026, 3, 29, 2, 30)),
+            PARIS_WINTER
+        );
+        assert_eq!(
+            super::wall_clock_offset_in(&zone, wall(2026, 3, 29, 1, 59)),
+            PARIS_WINTER,
+            "before the gap"
+        );
+        assert_eq!(
+            super::wall_clock_offset_in(&zone, wall(2026, 3, 29, 3, 0)),
+            PARIS_SUMMER,
+            "after the gap"
+        );
+    }
+
+    #[test]
+    fn the_offset_at_an_instant_follows_the_zone_history() {
+        let zone = paris();
+        // 2026-03-29 00:59:59 UTC is still winter time, 01:00:00 UTC is summer time.
+        let change = wall(2026, 3, 29, 1, 0);
+        assert_eq!(super::offset_at_in(&zone, change - 1), PARIS_WINTER);
+        assert_eq!(super::offset_at_in(&zone, change), PARIS_SUMMER);
+        assert_eq!(super::offset_at_in(&zone, i64::MAX), 0, "out of range");
     }
 
     #[test]

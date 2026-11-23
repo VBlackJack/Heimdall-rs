@@ -256,9 +256,9 @@ impl SessionRoute {
 
 /// `time` in this computer's time, as the C# "Started" column: `HH:MM:SS`.
 fn clock(time: SystemTime) -> String {
-    chrono::DateTime::<chrono::Local>::from(time)
-        .format(STARTED_FORMAT)
-        .to_string()
+    jiff::ZonedDateTime::try_from(time)
+        .map(|time| time.strftime(STARTED_FORMAT).to_string())
+        .unwrap_or_default()
 }
 
 /// The C# "Started" column's format.
