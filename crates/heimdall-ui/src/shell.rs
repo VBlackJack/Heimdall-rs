@@ -16094,19 +16094,52 @@ mod tests {
         let _ = shell.update(Message::OpenTool(heimdall_app::tools::ToolId::Totp));
         let tab = shell.shown_tab_id().expect("the tool's tab");
         let slot = CopySlot::TotpCode;
-        let answer = |written| Message::Tool(tab, ToolMessage::SecretCopied(slot, None, written));
+        let answer =
+            |seq, written| Message::Tool(tab, ToolMessage::SecretCopied(slot, seq, written));
+        let ask = |shell: &mut Shell, slot| {
+            let pane = shell.tools.get_mut(tab).expect("the tool's pane");
+            let _ = pane.copy_secret(tab, slot, "123456".to_owned(), false);
+        };
 
         // The write failed: no check mark, and the user is told.
-        let _ = shell.update(answer(false));
+        ask(&mut shell, slot);
+        let _ = shell.update(answer(1, false));
         let pane = shell.tools.get(tab).expect("the tool's pane");
         assert!(!pane.copied(slot), "a failed copy shows no check mark");
         assert!(pane.copy_failure());
 
         // The next copy worked: the check mark shows and the failure is gone.
-        let _ = shell.update(answer(true));
+        ask(&mut shell, slot);
+        let _ = shell.update(answer(2, true));
         let pane = shell.tools.get(tab).expect("the tool's pane");
         assert!(pane.copied(slot));
         assert!(!pane.copy_failure());
+
+        // A newer copy asked for, then the answer of an older one: it changes nothing.
+        ask(&mut shell, slot);
+        let _ = shell.update(answer(2, false));
+        let pane = shell.tools.get(tab).expect("the tool's pane");
+        assert!(!pane.copy_failure(), "an old failure is not said");
+        assert!(pane.copied(slot), "and does not take the check mark away");
+        let _ = shell.update(answer(3, false));
+        let pane = shell.tools.get(tab).expect("the tool's pane");
+        assert!(pane.copy_failure(), "the latest answer counts");
+
+        // The check mark of another button is not taken away by a failure of this one.
+        ask(&mut shell, CopySlot::PasswordMain);
+        let _ = shell.update(Message::Tool(
+            tab,
+            ToolMessage::SecretCopied(CopySlot::PasswordMain, 4, true),
+        ));
+        ask(&mut shell, slot);
+        let _ = shell.update(answer(5, false));
+        assert!(
+            shell
+                .tools
+                .get(tab)
+                .expect("the tool's pane")
+                .copied(CopySlot::PasswordMain)
+        );
     }
 
     #[test]

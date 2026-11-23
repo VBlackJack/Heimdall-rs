@@ -713,9 +713,9 @@ pub enum ToolMessage {
     CopyShown(u64),
     /// How the export of the button of `.0` to a file went.
     Exported(CopySlot, file_export::Saved),
-    /// The secret of the button of `.0` was written to the clipboard (`.2`) or not; `.1` is
-    /// the password clipboard countdown to start when it was.
-    SecretCopied(CopySlot, Option<u64>, bool),
+    /// The write number `.1` of the secret of the button of `.0` ended: on the clipboard
+    /// (`.2`) or not.
+    SecretCopied(CopySlot, u64, bool),
     /// The hash generator's.
     Hash(HashMessage),
     /// The HMAC generator's.
@@ -940,6 +940,10 @@ pub struct ToolPane {
     export_failed: Option<String>,
     /// The last secret copy did not reach the clipboard, protected: said under the header.
     copy_failed: bool,
+    /// The number of the latest secret write asked for; older answers are ignored.
+    secret_seq: u64,
+    /// The password of that write, when its clipboard countdown is to start once written.
+    secret_pending: Option<zeroize::Zeroizing<String>>,
 }
 
 impl ToolPane {
@@ -1022,6 +1026,8 @@ impl ToolPane {
             copies: 0,
             export_failed: None,
             copy_failed: false,
+            secret_seq: 0,
+            secret_pending: None,
         }
     }
 
@@ -1053,7 +1059,7 @@ impl ToolPane {
             return Task::none();
         }
         if slot.is_secret() {
-            return self.copy_secret(tab, slot, content, None);
+            return self.copy_secret(tab, slot, content, false);
         }
         Task::batch([iced::clipboard::write(content), self.check_mark(tab, slot)])
     }
@@ -1061,33 +1067,51 @@ impl ToolPane {
     /// As [`Self::copy`] for a secret: kept out of the clipboard history, the cloud clipboard
     /// and the monitors where the system allows it, as the C# `SetSensitiveText`. The check
     /// mark waits for the write's answer ([`ToolMessage::SecretCopied`]): a secret that is
-    /// not on the clipboard, or not protected, must not look copied. `timer` is the
-    /// clipboard countdown a password starts once it is.
-    fn copy_secret(
+    /// not on the clipboard, or not protected, must not look copied. `auto_clear` is a
+    /// password the clipboard clears after a delay: its countdown starts once it is on it.
+    /// Each write has a number and only the latest one's answer counts: the writes run on
+    /// threads of their own and their answers may come in any order.
+    pub(crate) fn copy_secret(
         &mut self,
         tab: TabId,
         slot: CopySlot,
         content: String,
-        timer: Option<u64>,
+        auto_clear: bool,
     ) -> Task<Message> {
         if content.is_empty() {
             return Task::none();
         }
         self.copy_failed = false;
+        self.secret_seq += 1;
+        let seq = self.secret_seq;
+        self.secret_pending = auto_clear.then(|| zeroize::Zeroizing::new(content.clone()));
         sensitive_clipboard::write(content, move |written| {
-            Message::Tool(tab, ToolMessage::SecretCopied(slot, timer, written))
+            Message::Tool(tab, ToolMessage::SecretCopied(slot, seq, written))
         })
     }
 
-    /// The answer of the sensitive write of `slot`: its check mark when it is on the
-    /// clipboard, the strip under the header when it is not.
-    fn secret_copied(&mut self, tab: TabId, slot: CopySlot, written: bool) -> Task<Message> {
+    /// The answer of write number `seq` of the secret of `slot`: its check mark when it is
+    /// on the clipboard, the strip under the header when it is not. An answer older than
+    /// the latest request changes nothing. Also gives the password to arm a countdown for.
+    fn secret_copied(
+        &mut self,
+        tab: TabId,
+        slot: CopySlot,
+        seq: u64,
+        written: bool,
+    ) -> (Task<Message>, Option<zeroize::Zeroizing<String>>) {
+        if seq != self.secret_seq {
+            return (Task::none(), None);
+        }
+        let pending = self.secret_pending.take();
         self.copy_failed = !written;
         if written {
-            self.check_mark(tab, slot)
+            (self.check_mark(tab, slot), pending)
         } else {
-            self.copied = None;
-            Task::none()
+            if self.copied.is_some_and(|(shown, _)| shown == slot) {
+                self.copied = None;
+            }
+            (Task::none(), None)
         }
     }
 
@@ -1355,6 +1379,12 @@ impl ToolPanes {
             .is_some_and(|state| matches!(state.pane, Pane::Password(_)))
     }
 
+    /// The state of tool tab `tab`, to change it.
+    #[cfg(test)]
+    pub(crate) fn get_mut(&mut self, tab: TabId) -> Option<&mut ToolPane> {
+        self.panes.get_mut(&tab)
+    }
+
     /// The state of tool tab `tab`.
     #[must_use]
     pub fn get(&self, tab: TabId) -> Option<&ToolPane> {
@@ -1420,13 +1450,13 @@ impl ToolPanes {
             (ToolMessage::Exported(slot, saved), _) => {
                 return state.exported(tab, slot, saved);
             }
-            (ToolMessage::SecretCopied(slot, timer, written), _) => {
-                let shown = state.secret_copied(tab, slot, written);
-                return match timer {
-                    // The countdown starts only for a password that is on the clipboard, as
-                    // the C# `CopySecret` returns before its timer when the copy failed.
-                    Some(timer) if written => {
-                        Task::batch([shown, password_tool::Outcome::Tick(timer).task(tab, main)])
+            (ToolMessage::SecretCopied(slot, seq, written), _) => {
+                let (shown, password) = state.secret_copied(tab, slot, seq, written);
+                // The countdown starts only for a password that is on the clipboard, as the
+                // C# `CopySecret` returns before its timer when the copy failed.
+                return match (password, &mut state.pane) {
+                    (Some(password), Pane::Password(pane)) => {
+                        Task::batch([shown, pane.armed(password.to_string()).task(tab, main)])
                     }
                     _ => shown,
                 };
