@@ -43,8 +43,8 @@ heimdall-ssh.workspace = true
 heimdall-term.workspace = true
 heimdall-tls.workspace = true
 sealvault.workspace = true
-# chrono: the local time a password batch export is named after, as the C# `DateTime.Now`.
-chrono.workspace = true
+# jiff: the local time a password batch export is named after, as the C# `DateTime.Now`.
+jiff.workspace = true
 i18n-embed.workspace = true
 i18n-embed-fl.workspace = true
 # advanced: custom widgets; tokio: one runtime shared with the SSH client; fira-sans: the

@@ -18,8 +18,7 @@
 //! edited in the integrated editor and with an external editor, never with sudo, and its
 //! entries copied to be pasted on another server.
 
-#[path = "support/ftp_server.rs"]
-mod ftp_server;
+use heimdall_test_ftp as ftp_server;
 
 use std::path::Path;
 use std::time::Duration;

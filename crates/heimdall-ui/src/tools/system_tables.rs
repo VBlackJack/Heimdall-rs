@@ -29,7 +29,9 @@ const READ_TIME_FORMAT: &str = "%H:%M:%S";
 /// The local time now, as the status line says when a table was read: the C#
 /// `DateTime.Now`, not the UTC time of day.
 pub(super) fn read_time_now() -> String {
-    chrono::Local::now().format(READ_TIME_FORMAT).to_string()
+    heimdall_app::time_zone::local_now()
+        .strftime(READ_TIME_FORMAT)
+        .to_string()
 }
 
 /// `error` in words of the user's language, a program's own words made safe to show.

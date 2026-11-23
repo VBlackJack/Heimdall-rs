@@ -35,9 +35,9 @@ const TRUSTED_SINCE_FORMAT: &str = "%Y-%m-%d %H:%M";
 /// `time` in this computer's time, as the C# lists of trusted keys show a date.
 #[must_use]
 pub fn local_date_time(time: SystemTime) -> String {
-    chrono::DateTime::<chrono::Local>::from(time)
-        .format(TRUSTED_SINCE_FORMAT)
-        .to_string()
+    crate::time_zone::local_system_time(time)
+        .map(|time| time.strftime(TRUSTED_SINCE_FORMAT).to_string())
+        .unwrap_or_default()
 }
 
 /// A key trusted for a server.
