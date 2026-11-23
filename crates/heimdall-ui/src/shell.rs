@@ -1081,6 +1081,9 @@ pub enum Message {
     TreeDragMoved(Point),
     /// The press in the tree is let go.
     TreeDragEnd,
+    /// The window lost the focus while a press in the tree was held: its release will not
+    /// come, so the press is given up, dropping nothing.
+    TreeDragCancel,
     /// Shift+F10 or the menu key, uncaptured by any widget.
     MenuKey,
     /// A character typed that no widget took: the tree's type-ahead while it has the
@@ -1391,6 +1394,7 @@ impl fmt::Debug for Message {
             Self::TreeHoverLeft(target) => write!(f, "TreeHoverLeft({target:?})"),
             Self::TreeDragMoved(_) => f.write_str("TreeDragMoved"),
             Self::TreeDragEnd => f.write_str("TreeDragEnd"),
+            Self::TreeDragCancel => f.write_str("TreeDragCancel"),
             Self::MenuKey => f.write_str("MenuKey"),
             Self::TypeAhead(_) => f.write_str("TypeAhead(..)"),
             Self::SidebarDragStart => f.write_str("SidebarDragStart"),
@@ -3135,10 +3139,13 @@ impl Shell {
         if let Message::App(AppMessage::ToggleFolder(path)) = &message
             && path != heimdall_app::NO_FOLDER
         {
-            self.tree_drag = Some(crate::tree_drag::TreeDrag::pressed(
-                crate::tree_drag::DragSource::Folder(path.clone()),
-                self.cursor.get(),
-            ));
+            // A press the window saw released already (or a key's toggle) starts no drag.
+            self.tree_drag = (!self.cursor.released()).then(|| {
+                crate::tree_drag::TreeDrag::pressed(
+                    crate::tree_drag::DragSource::Folder(path.clone()),
+                    self.cursor.pressed_at(),
+                )
+            });
         }
         let reveal = matches!(
             message,
@@ -3368,6 +3375,7 @@ impl Shell {
             | Message::TreeHoverLeft(_)
             | Message::TreeDragMoved(_)
             | Message::TreeDragEnd
+            | Message::TreeDragCancel
             | Message::MenuKey
             | Message::TypeAhead(_)
             | Message::SidebarDragStart
@@ -7981,6 +7989,12 @@ impl Shell {
                 Vec::new()
             }
             Message::TreeDragMoved(at) => {
+                // The window saw the button let go before this drag began: the press was a
+                // click whose release the subscription missed, never a drag.
+                if self.cursor.released() && self.tree_drag.as_ref().is_some_and(|d| !d.active) {
+                    self.tree_drag = None;
+                    return Vec::new();
+                }
                 let started = self.tree_drag.as_mut().is_some_and(|drag| drag.moved(at));
                 // A folder pressed opened or closed: dragged, it is put back as it was.
                 match self.tree_drag.as_ref().map(|drag| &drag.source) {
@@ -7989,6 +8003,10 @@ impl Shell {
                     }
                     _ => Vec::new(),
                 }
+            }
+            Message::TreeDragCancel => {
+                self.tree_drag = None;
+                Vec::new()
             }
             Message::TreeDragEnd => {
                 match self
@@ -8083,10 +8101,13 @@ impl Shell {
         } else {
             vec![id]
         };
-        self.tree_drag = Some(crate::tree_drag::TreeDrag::pressed(
-            crate::tree_drag::DragSource::Profiles(source),
-            self.cursor.get(),
-        ));
+        // A press the window saw released already starts no drag.
+        self.tree_drag = (!self.cursor.released()).then(|| {
+            crate::tree_drag::TreeDrag::pressed(
+                crate::tree_drag::DragSource::Profiles(source),
+                self.cursor.pressed_at(),
+            )
+        });
     }
 
     /// A character typed while the tree has the keyboard: the next profile whose name starts
