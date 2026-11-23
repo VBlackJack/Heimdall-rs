@@ -670,6 +670,33 @@ pub enum CopySlot {
     CmdLibRunbookStep,
 }
 
+/// `text` written to the clipboard as a secret, for a copy that is not a tool's button (the
+/// application's share link carries its token).
+pub(crate) fn sensitive_clipboard_write(text: String) -> Task<Message> {
+    sensitive_clipboard::write(text)
+}
+
+impl CopySlot {
+    /// Whether the button copies a secret: a one-time code, a private key or a password.
+    /// Those are kept out of the clipboard history, the cloud clipboard and the monitors,
+    /// whichever tool they come from; the public halves (certificate, public key,
+    /// fingerprint) stay on the normal clipboard.
+    fn is_secret(self) -> bool {
+        matches!(
+            self,
+            Self::TotpCode
+                | Self::CertKey
+                | Self::CertLeafKey
+                | Self::SshPrivate
+                | Self::PasswordMain
+                | Self::PasswordPhonetic
+                | Self::PasswordBatchAll
+                | Self::PasswordBatchRow(_)
+                | Self::PasswordHistory(_)
+        )
+    }
+}
+
 /// What a tool's tab is asked.
 #[derive(Debug, Clone)]
 pub enum ToolMessage {
@@ -1015,6 +1042,9 @@ impl ToolPane {
     fn copy(&mut self, tab: TabId, slot: CopySlot, content: String) -> Task<Message> {
         if content.is_empty() {
             return Task::none();
+        }
+        if slot.is_secret() {
+            return self.copy_secret(tab, slot, content);
         }
         Task::batch([iced::clipboard::write(content), self.check_mark(tab, slot)])
     }
@@ -2358,4 +2388,39 @@ fn results_card<'a>(rows: impl IntoIterator<Item = Element<'a, Message>>) -> Ele
         .width(Length::Fill)
         .style(styles::card)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_buttons_of_secrets_are_routed_to_the_sensitive_clipboard() {
+        for slot in [
+            CopySlot::TotpCode,
+            CopySlot::CertKey,
+            CopySlot::CertLeafKey,
+            CopySlot::SshPrivate,
+            CopySlot::PasswordMain,
+            CopySlot::PasswordPhonetic,
+            CopySlot::PasswordBatchAll,
+            CopySlot::PasswordBatchRow(0),
+            CopySlot::PasswordHistory(0),
+        ] {
+            assert!(slot.is_secret(), "{slot:?}");
+        }
+    }
+
+    #[test]
+    fn the_public_halves_of_a_key_pair_stay_on_the_normal_clipboard() {
+        for slot in [
+            CopySlot::CertFingerprint,
+            CopySlot::CertCert,
+            CopySlot::CertLeafCert,
+            CopySlot::SshFingerprint,
+            CopySlot::SshPublic,
+        ] {
+            assert!(!slot.is_secret(), "{slot:?}");
+        }
+    }
 }
