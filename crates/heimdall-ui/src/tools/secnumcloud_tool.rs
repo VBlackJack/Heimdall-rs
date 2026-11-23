@@ -882,7 +882,9 @@ fn scope_contains_cidr(raw: &str) -> bool {
 
 /// A local timestamp for the audit's start and end, formatted like the C# `DateTime.Now`.
 fn now_timestamp() -> String {
-    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    heimdall_app::time_zone::local_now()
+        .strftime("%Y-%m-%d %H:%M:%S")
+        .to_string()
 }
 
 /// The localized labels and language code for the standalone HTML report, taken from the

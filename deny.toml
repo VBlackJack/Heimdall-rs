@@ -1,6 +1,12 @@
 # Copyright 2026 Julien Bombled
 # Licensed under the Apache License, Version 2.0. See LICENSE.
 
+# Only the targets Heimdall ships are checked (CI builds Windows and Linux). By default
+# cargo-deny checks every target, which flagged macOS-only (paste, via metal) and
+# wasm-only (chrono, via russh-util) dependencies that are never built.
+[graph]
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
+
 [advisories]
 version = 2
 yanked = "deny"
@@ -8,7 +14,6 @@ yanked = "deny"
 # from here, and the date it is to be reviewed by (also listed in the first-release
 # checklist). Re-check them sooner when iced, russh, rsa or i18n-embed is upgraded.
 ignore = [
-    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; pulled by metal, the macOS backend of wgpu, through iced; not built for Linux or Windows; review by 2027-01-20" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; pulled by fontdb and owned_ttf_parser through iced; review by 2027-01-20" },
     { id = "RUSTSEC-2026-0370", reason = "zvariant is unmaintained (merged into zbus 6); pulled by zbus 5, same path as RUSTSEC-2026-0372; review by 2027-01-20" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names is unmaintained (merged into zbus 6); pulled by zbus 5, same path as RUSTSEC-2026-0372; review by 2027-01-20" },

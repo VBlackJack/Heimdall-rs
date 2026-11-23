@@ -524,11 +524,17 @@ impl FtpClient {
                 .await
                 .ok()
                 .and_then(|size| u64::try_from(size).ok());
-            modified = control
-                .mdtm(&name)
-                .await
+            modified = control.mdtm(&name).await.ok().and_then(|date| {
+                u32::try_from(utc_unix_seconds(
+                    date.year(),
+                    date.month(),
+                    date.day(),
+                    date.hour(),
+                    date.minute(),
+                    date.second(),
+                ))
                 .ok()
-                .and_then(|date| u32::try_from(date.and_utc().timestamp()).ok());
+            });
         }
         let fingerprint = Fingerprint {
             size: size.or(entry.size),
@@ -744,11 +750,16 @@ async fn download_locked(
         .ok()
         .and_then(|size| u64::try_from(size).ok())
         .or(entry.size);
-    let modified = control
-        .mdtm(&path)
-        .await
-        .ok()
-        .map(|date| date.and_utc().timestamp());
+    let modified = control.mdtm(&path).await.ok().map(|date| {
+        utc_unix_seconds(
+            date.year(),
+            date.month(),
+            date.day(),
+            date.hour(),
+            date.minute(),
+            date.second(),
+        )
+    });
     let part = with_suffix(local, PART_SUFFIX);
     let record = with_suffix(local, RESUME_SUFFIX);
     let signature = format!("{RESUME_HEADER}\n{size:?}\n{modified:?}\n");
@@ -1170,6 +1181,36 @@ fn mode_type(first: char) -> Option<(char, Option<crate::Special>)> {
     }
 }
 
+/// Seconds in a day, an hour and a minute, for [`utc_unix_seconds`].
+const DAY_SECONDS: i64 = 86_400;
+const HOUR_SECONDS: i64 = 3_600;
+const MINUTE_SECONDS: i64 = 60;
+
+/// Days in one 400-year cycle of the civil calendar, and the days from 0000-03-01 to
+/// 1970-01-01, for [`utc_unix_seconds`].
+const ERA_YEARS: i64 = 400;
+const ERA_DAYS: i64 = 146_097;
+const EPOCH_SHIFT_DAYS: i64 = 719_468;
+
+/// Seconds since 1970-01-01 00:00:00 UTC of a UTC civil date and time, as MDTM replies
+/// (the server's UTC time): what chrono's `and_utc().timestamp()` gave before suppaftp 13
+/// returned a jiff civil date. Done here so jiff is not a direct dependency. Days come from
+/// Howard Hinnant's civil calendar.
+fn utc_unix_seconds(year: i16, month: i8, day: i8, hour: i8, minute: i8, second: i8) -> i64 {
+    let month = i64::from(month);
+    let year = i64::from(year) - i64::from(month <= 2);
+    let era = year.div_euclid(ERA_YEARS);
+    let year_of_era = year - era * ERA_YEARS;
+    let shifted_month = (month + 9) % 12;
+    let day_of_year = (153 * shifted_month + 2) / 5 + i64::from(day) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * ERA_DAYS + day_of_era - EPOCH_SHIFT_DAYS;
+    days * DAY_SECONDS
+        + i64::from(hour) * HOUR_SECONDS
+        + i64::from(minute) * MINUTE_SECONDS
+        + i64::from(second)
+}
+
 /// Whether `said` is a month as `ls` writes it, `Sep`: three ASCII letters.
 fn month(said: &str) -> bool {
     said.len() == 3 && said.bytes().all(|byte| byte.is_ascii_alphabetic())
@@ -1336,8 +1377,19 @@ mod tests {
     use suppaftp::types::Response;
     use suppaftp::{FtpError, Status};
 
-    use super::{Owner, ftp_error, machine_owner, read_lines, tolerated, unix_owner, walks};
+    use super::{
+        Owner, ftp_error, machine_owner, read_lines, tolerated, unix_owner, utc_unix_seconds, walks,
+    };
     use crate::{ItemKind, LeftOut, Refusal, RemoteError, RemoteItem};
+
+    #[test]
+    fn an_mdtm_date_becomes_the_seconds_since_the_epoch_in_utc() {
+        assert_eq!(utc_unix_seconds(1970, 1, 1, 0, 0, 0), 0);
+        assert_eq!(utc_unix_seconds(1969, 12, 31, 23, 59, 59), -1);
+        assert_eq!(utc_unix_seconds(2000, 3, 1, 0, 0, 0), 951_868_800);
+        // A leap day, with a time of day.
+        assert_eq!(utc_unix_seconds(2024, 2, 29, 12, 34, 56), 1_709_210_096);
+    }
 
     fn items(lines: &[String], machine: bool) -> Vec<RemoteItem> {
         read_lines(lines, machine).items

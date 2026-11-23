@@ -20,8 +20,7 @@
 //! or a "Download" goes through; a server's entries onto another server, and files of this
 //! computer onto another local list, refused.
 
-#[path = "support/ftp_server.rs"]
-mod ftp_server;
+use heimdall_test_ftp as ftp_server;
 
 use std::path::Path;
 use std::time::Duration;

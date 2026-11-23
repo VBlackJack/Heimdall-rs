@@ -18,8 +18,7 @@
 //! pinned with their names once accepted, listed, forgotten one key or one server at a
 //! time; and once forgotten, the next connection asks again.
 
-#[path = "support/ftp_server.rs"]
-mod ftp_server;
+use heimdall_test_ftp as ftp_server;
 
 use std::path::Path;
 use std::time::Duration;
