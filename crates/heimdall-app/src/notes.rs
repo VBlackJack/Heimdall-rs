@@ -113,7 +113,7 @@ impl LocalTime {
     /// Now, on this computer's clock.
     #[must_use]
     pub fn now() -> Self {
-        let now = jiff::ZonedDateTime::now();
+        let now = crate::time_zone::local_now();
         // Jiff's parts are small signed integers; a month, a day and a clock part are
         // never negative.
         Self {

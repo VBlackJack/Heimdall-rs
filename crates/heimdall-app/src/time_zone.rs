@@ -29,8 +29,8 @@ use heimdall_core::tools::time_zone_rules::{self, TimeZoneEntry, ZoneRules};
 use heimdall_rdp::TimeZone;
 #[cfg(windows)]
 use heimdall_rdp::Transition;
-use jiff::Timestamp;
 use jiff::tz::{AmbiguousOffset, Offset, TimeZone as IanaZone};
+use jiff::{Timestamp, ZonedDateTime};
 
 /// The zone the system clock follows, with this year's change rules.
 #[cfg(windows)]
@@ -81,11 +81,103 @@ pub fn local() -> Option<TimeZone> {
     }
 }
 
+/// Bytes of a Windows `SYSTEMTIME`, as the registry keeps the dates of the yearly changes.
+#[cfg(any(windows, test))]
+const SYSTEMTIME_BYTES: usize = 16;
+
+/// Seconds in a minute, for the registry's biases, in minutes west of UTC.
+#[cfg(any(windows, test))]
+const MINUTE_SECONDS: i32 = 60;
+
+/// The rule of the zone the system clock follows, from what the registry says of it: the
+/// biases (bias, standard bias, daylight bias), in minutes west of UTC, and the dates of the
+/// two changes. `adjusts` is the "Adjust for daylight saving time automatically" setting:
+/// cleared, the clock keeps the standard time all year, as the Windows API chrono asked did.
+/// `None` for dates that are not `SYSTEMTIME`s.
+#[cfg(any(windows, test))]
+fn registry_rules(
+    biases: [i32; 3],
+    standard_start: &[u8],
+    daylight_start: &[u8],
+    adjusts: bool,
+) -> Option<ZoneRules> {
+    if !adjusts {
+        let [bias, standard_bias, _] = biases;
+        return Some(ZoneRules::fixed(-(bias + standard_bias) * MINUTE_SECONDS));
+    }
+    if standard_start.len() != SYSTEMTIME_BYTES || daylight_start.len() != SYSTEMTIME_BYTES {
+        return None;
+    }
+    // The layout of a zone's `TZI` value: the three biases, then the two dates.
+    let mut tzi = Vec::with_capacity(time_zone_rules::TZI_BYTES);
+    for value in biases {
+        tzi.extend_from_slice(&value.to_le_bytes());
+    }
+    tzi.extend_from_slice(standard_start);
+    tzi.extend_from_slice(daylight_start);
+    ZoneRules::from_windows_tzi(&tzi)
+}
+
+/// The rule of the zone the Windows clock follows, as Windows says it, honouring the
+/// automatic daylight saving setting; `None` when it cannot be read, and off Windows.
+///
+/// The one source of the local offset on Windows: jiff's own reading of the system zone maps
+/// the zone's key to an IANA zone and applies a bundled database, which ignores that setting
+/// and falls back to UTC for a key it does not know, as chrono's `Local` never did.
+fn system_rules() -> Option<ZoneRules> {
+    #[cfg(windows)]
+    {
+        use windows_registry::LOCAL_MACHINE;
+        let zone = LOCAL_MACHINE.open(ZONE_KEY).ok()?;
+        let signed = |name: &str| zone.get_u32(name).ok().map(u32::cast_signed);
+        let adjusts = zone.get_u32("DynamicDaylightTimeDisabled").unwrap_or(0) == 0;
+        let standard_start = zone.get_value("StandardStart").ok()?;
+        let daylight_start = zone.get_value("DaylightStart").ok()?;
+        registry_rules(
+            [
+                signed("Bias")?,
+                signed("StandardBias").unwrap_or(0),
+                signed("DaylightBias").unwrap_or(0),
+            ],
+            &standard_start,
+            &daylight_start,
+            adjusts,
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 /// The offset east of UTC, in seconds, of this computer's clock at `instant`, as .NET's
 /// `ToLocalTime`: the system's own zone and its history.
 #[must_use]
 pub fn local_offset_at(instant: Instant) -> i32 {
-    offset_at_in(&IanaZone::system(), instant.unix_seconds())
+    match system_rules() {
+        Some(rules) => rules.offset_at(instant),
+        None => offset_at_in(&IanaZone::system(), instant.unix_seconds()),
+    }
+}
+
+/// `instant` on this computer's clock, with the offset the clock had then.
+#[must_use]
+pub fn local_zoned(instant: Timestamp) -> ZonedDateTime {
+    let seconds = local_offset_at(Instant::from_unix_seconds(instant.as_second()));
+    let offset = Offset::from_seconds(seconds).unwrap_or(Offset::UTC);
+    instant.to_zoned_datetime(IanaZone::fixed(offset))
+}
+
+/// Now, on this computer's clock.
+#[must_use]
+pub fn local_now() -> ZonedDateTime {
+    local_zoned(Timestamp::now())
+}
+
+/// `time` on this computer's clock; `None` for a time jiff cannot hold.
+#[must_use]
+pub fn local_system_time(time: std::time::SystemTime) -> Option<ZonedDateTime> {
+    Timestamp::try_from(time).ok().map(local_zoned)
 }
 
 /// The offset east of UTC, in seconds, of `zone` at `unix_seconds`; 0 for a time jiff cannot
@@ -99,7 +191,10 @@ fn offset_at_in(zone: &IanaZone, unix_seconds: i64) -> i32 {
 /// clock goes back, the one before a gap when it skips ahead.
 #[must_use]
 pub fn local_offset_of_wall_clock(wall_seconds: i64) -> i32 {
-    wall_clock_offset_in(&IanaZone::system(), wall_seconds)
+    match system_rules() {
+        Some(rules) => rules.offset_of_wall_clock(wall_seconds),
+        None => wall_clock_offset_in(&IanaZone::system(), wall_seconds),
+    }
 }
 
 /// [`local_offset_of_wall_clock`] in `zone`.
@@ -246,6 +341,93 @@ mod tests {
         assert!((-14 * 3_600..=14 * 3_600).contains(&offset), "{offset}");
         let wall = instant.unix_seconds() + i64::from(offset);
         assert_eq!(super::local_offset_of_wall_clock(wall), offset);
+    }
+
+    /// A yearly `SYSTEMTIME`: the `week`th Sunday of `month` at `hour`, 5 the last.
+    fn systemtime(month: u16, week: u16, hour: u16) -> Vec<u8> {
+        [0, month, 0, week, hour, 0, 0, 0]
+            .iter()
+            .flat_map(|field: &u16| field.to_le_bytes())
+            .collect()
+    }
+
+    /// Central Europe's registry values: bias -60, daylight bias -60, back to standard on
+    /// the last Sunday of October at 03:00, to daylight on the last of March at 02:00.
+    fn central_europe(adjusts: bool) -> Option<super::ZoneRules> {
+        super::registry_rules(
+            [-60, 0, -60],
+            &systemtime(10, 5, 3),
+            &systemtime(3, 5, 2),
+            adjusts,
+        )
+    }
+
+    #[test]
+    fn registry_values_give_the_zone_its_daylight_time() {
+        let rules = central_europe(true).expect("rules");
+        let at = super::Instant::from_unix_seconds;
+        assert_eq!(rules.offset_at(at(wall(2026, 1, 15, 12, 0))), PARIS_WINTER);
+        assert_eq!(rules.offset_at(at(wall(2026, 7, 15, 12, 0))), PARIS_SUMMER);
+        // The changes, in UTC: 2026-03-29 01:00 and 2026-10-25 01:00.
+        let spring = wall(2026, 3, 29, 1, 0);
+        assert_eq!(rules.offset_at(at(spring - 1)), PARIS_WINTER);
+        assert_eq!(rules.offset_at(at(spring)), PARIS_SUMMER);
+        let autumn = wall(2026, 10, 25, 1, 0);
+        assert_eq!(rules.offset_at(at(autumn - 1)), PARIS_SUMMER);
+        assert_eq!(rules.offset_at(at(autumn)), PARIS_WINTER);
+    }
+
+    #[test]
+    fn automatic_daylight_saving_turned_off_keeps_the_standard_offset_all_year() {
+        let rules = central_europe(false).expect("rules");
+        assert_eq!(rules.daylight, None);
+        for wall_seconds in [wall(2026, 1, 15, 12, 0), wall(2026, 7, 15, 12, 0)] {
+            let at = super::Instant::from_unix_seconds(wall_seconds);
+            assert_eq!(rules.offset_at(at), PARIS_WINTER);
+            assert_eq!(rules.offset_of_wall_clock(wall_seconds), PARIS_WINTER);
+        }
+    }
+
+    #[test]
+    fn registry_rules_of_the_clock_follow_the_overlap_and_the_gap() {
+        let rules = central_europe(true).expect("rules");
+        // 02:30 on the autumn change is shown twice, the first in summer time.
+        assert_eq!(
+            rules.offset_of_wall_clock(wall(2026, 10, 25, 2, 30)),
+            PARIS_SUMMER
+        );
+        assert_eq!(
+            rules.offset_of_wall_clock(wall(2026, 10, 25, 3, 0)),
+            PARIS_WINTER
+        );
+        // 02:30 on the spring change is never shown: the offset before the jump.
+        assert_eq!(
+            rules.offset_of_wall_clock(wall(2026, 3, 29, 2, 30)),
+            PARIS_WINTER
+        );
+        assert_eq!(
+            rules.offset_of_wall_clock(wall(2026, 3, 29, 3, 0)),
+            PARIS_SUMMER
+        );
+    }
+
+    #[test]
+    fn registry_dates_that_are_not_systemtimes_give_no_rule() {
+        assert_eq!(
+            super::registry_rules([-60, 0, -60], &[0; 3], &systemtime(3, 5, 2), true),
+            None
+        );
+    }
+
+    #[test]
+    fn a_local_time_is_shown_with_the_local_offset() {
+        let instant = jiff::Timestamp::from_second(1_735_122_645).expect("in range");
+        let zoned = super::local_zoned(instant);
+        assert_eq!(zoned.timestamp(), instant);
+        assert_eq!(
+            zoned.offset().seconds(),
+            super::local_offset_at(super::Instant::from_unix_seconds(1_735_122_645))
+        );
     }
 
     /// Paris's offsets: winter and summer time, in seconds east of UTC.

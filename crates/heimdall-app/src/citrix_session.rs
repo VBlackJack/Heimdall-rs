@@ -696,7 +696,7 @@ impl CitrixPane {
     #[must_use]
     pub fn launched_clock(&self) -> Option<String> {
         self.launched_at.map(|at| {
-            jiff::ZonedDateTime::try_from(at)
+            crate::time_zone::local_system_time(at)
                 .map(|at| at.strftime(LAUNCHED_FORMAT).to_string())
                 .unwrap_or_default()
         })

@@ -353,6 +353,60 @@ fn the_relative_time_takes_the_csharp_buckets() {
 // Time zones: the rules the converter's list converts with.
 
 #[test]
+fn a_wall_clock_time_takes_the_offset_the_clock_had_then() {
+    let wall = |text: &str| {
+        date_time::parse(text, &utc)
+            .expect(text)
+            .instant
+            .unix_seconds()
+    };
+    let paris = ZoneRules::from_posix("CET-1CEST,M3.5.0,M10.5.0/3").expect("Paris");
+    // Outside a change, the one offset.
+    assert_eq!(
+        paris.offset_of_wall_clock(wall("2024-01-15T12:00:00Z")),
+        3_600
+    );
+    assert_eq!(
+        paris.offset_of_wall_clock(wall("2024-07-15T12:00:00Z")),
+        7_200
+    );
+    // 2024-10-27: 02:30 is shown twice, the first in daylight time.
+    assert_eq!(
+        paris.offset_of_wall_clock(wall("2024-10-27T02:30:00Z")),
+        7_200
+    );
+    assert_eq!(
+        paris.offset_of_wall_clock(wall("2024-10-27T03:00:00Z")),
+        3_600
+    );
+    // 2024-03-31: 02:30 is never shown, the offset before the jump is standard time.
+    assert_eq!(
+        paris.offset_of_wall_clock(wall("2024-03-31T02:30:00Z")),
+        3_600
+    );
+    assert_eq!(
+        paris.offset_of_wall_clock(wall("2024-03-31T03:00:00Z")),
+        7_200
+    );
+    // A zone without daylight time has its one offset.
+    assert_eq!(
+        ZoneRules::fixed(-5 * 3_600).offset_of_wall_clock(wall("2024-07-15T12:00:00Z")),
+        -5 * 3_600
+    );
+    // The southern hemisphere's change in the other order: 2024-04-07, 03:00 daylight goes
+    // back to 02:00 standard, so 02:30 is shown twice.
+    let sydney = ZoneRules::from_posix("AEST-10AEDT,M10.1.0,M4.1.0/3").expect("Sydney");
+    assert_eq!(
+        sydney.offset_of_wall_clock(wall("2024-04-07T02:30:00Z")),
+        11 * 3_600
+    );
+    assert_eq!(
+        sydney.offset_of_wall_clock(wall("2024-10-06T02:30:00Z")),
+        10 * 3_600
+    );
+}
+
+#[test]
 fn a_posix_rule_reads_and_its_daylight_time_applies() {
     let paris = ZoneRules::from_posix("CET-1CEST,M3.5.0,M10.5.0/3").expect("Paris");
     assert_eq!(paris.standard_seconds, 3_600);

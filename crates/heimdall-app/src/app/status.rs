@@ -77,7 +77,7 @@ impl Announced {
     /// When it was said, in this computer's time.
     #[must_use]
     pub fn clock(&self) -> String {
-        jiff::ZonedDateTime::try_from(self.at)
+        crate::time_zone::local_system_time(self.at)
             .map(|at| at.strftime(CLOCK_FORMAT).to_string())
             .unwrap_or_default()
     }

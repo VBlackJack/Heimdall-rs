@@ -161,7 +161,7 @@ impl fmt::Display for SnapshotChoice {
             .ok()
             .and_then(|secs| jiff::Timestamp::from_second(secs).ok())
             .map(|utc| {
-                utc.to_zoned_datetime(jiff::tz::TimeZone::system())
+                heimdall_app::time_zone::local_zoned(utc)
                     .strftime(SNAPSHOT_TIME_FORMAT)
                     .to_string()
             })

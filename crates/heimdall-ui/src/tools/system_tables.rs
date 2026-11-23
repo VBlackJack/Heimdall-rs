@@ -29,7 +29,7 @@ const READ_TIME_FORMAT: &str = "%H:%M:%S";
 /// The local time now, as the status line says when a table was read: the C#
 /// `DateTime.Now`, not the UTC time of day.
 pub(super) fn read_time_now() -> String {
-    jiff::ZonedDateTime::now()
+    heimdall_app::time_zone::local_now()
         .strftime(READ_TIME_FORMAT)
         .to_string()
 }

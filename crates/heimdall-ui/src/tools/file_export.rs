@@ -111,7 +111,7 @@ pub fn file_name_now(prefix: &str, subject: Option<&str>, format: Format) -> Str
         prefix,
         subject,
         format,
-        jiff::ZonedDateTime::now().datetime(),
+        heimdall_app::time_zone::local_now().datetime(),
     )
 }
 

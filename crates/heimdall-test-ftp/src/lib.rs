@@ -488,12 +488,9 @@ impl Session {
         let received = async {
             let mut chunk = vec![0; CHUNK];
             loop {
-                let read = match data.read(&mut chunk).await {
-                    Ok(read) => read,
-                    // A TLS client that closes without saying so has still said all it had.
-                    Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => 0,
-                    Err(error) => return Err(error),
-                };
+                // A TLS stream that ends without its close_notify is an error, so a cut
+                // upload is aborted (426), as libunftp and vsftpd did.
+                let read = data.read(&mut chunk).await?;
                 if read == 0 {
                     break;
                 }

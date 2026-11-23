@@ -256,7 +256,7 @@ impl SessionRoute {
 
 /// `time` in this computer's time, as the C# "Started" column: `HH:MM:SS`.
 fn clock(time: SystemTime) -> String {
-    jiff::ZonedDateTime::try_from(time)
+    crate::time_zone::local_system_time(time)
         .map(|time| time.strftime(STARTED_FORMAT).to_string())
         .unwrap_or_default()
 }

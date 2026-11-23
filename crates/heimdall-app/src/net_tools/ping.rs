@@ -30,7 +30,7 @@ pub const TIMESTAMP_FORMAT: &str = "%H:%M:%S";
 /// The local time now, as a probe is stamped.
 #[must_use]
 pub fn timestamp_now() -> String {
-    jiff::ZonedDateTime::now()
+    crate::time_zone::local_now()
         .strftime(TIMESTAMP_FORMAT)
         .to_string()
 }
@@ -78,7 +78,7 @@ mod tests {
         let parsed = jiff::fmt::strtime::parse(TIMESTAMP_FORMAT, &stamp)
             .and_then(|parsed| parsed.to_time())
             .expect("HH:MM:SS");
-        let local = jiff::ZonedDateTime::now().time();
+        let local = crate::time_zone::local_now().time();
         // The same second, or the one before at worst; around midnight, a day apart.
         let apart = local
             .duration_since(parsed)

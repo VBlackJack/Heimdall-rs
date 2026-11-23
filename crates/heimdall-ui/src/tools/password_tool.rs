@@ -495,7 +495,7 @@ fn tick(duration: Duration, message: impl FnOnce() -> Message + Send + 'static) 
 
 /// The export's file name, as the C#'s `passwords_{now:yyyyMMdd_HHmmss}.txt`.
 fn export_file_name() -> String {
-    let now = jiff::ZonedDateTime::now();
+    let now = heimdall_app::time_zone::local_now();
     format!(
         "{EXPORT_PREFIX}{}.{EXPORT_EXTENSION}",
         now.strftime("%Y%m%d_%H%M%S")
