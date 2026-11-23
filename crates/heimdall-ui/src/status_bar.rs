@@ -546,6 +546,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::DetachSplitRefused => fl!("ui-status-detach-split-refused"),
             Notice::ScreenshotCopied => fl!("ui-status-screenshot-copied"),
             Notice::ScreenshotFailed => fl!("ui-status-screenshot-failed"),
+            Notice::SecretCopyFailed => fl!("ui-status-secret-copy-failed"),
             Notice::MaskedCopyCopied => fl!("ui-masked-copy-copied"),
             Notice::MaskedCopyNoTerminal => fl!("ui-masked-copy-no-terminal"),
             Notice::CaptureNothingSelected => fl!("ui-status-capture-nothing-selected"),

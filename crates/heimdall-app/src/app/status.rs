@@ -234,6 +234,11 @@ pub enum Notice {
     KeysNotSent,
     /// No image of the session shown could be copied.
     ScreenshotFailed,
+    /// A secret was not put on the clipboard: the clipboard stayed held, or the markers that
+    /// keep it out of the history and the cloud clipboard could not be set. The C#
+    /// `SecretClipboardGuard.TryCopy` returns false there and the view shows no feedback;
+    /// here the user is told, since a secret copied without them must not look copied.
+    SecretCopyFailed,
     /// The masked text of a terminal was copied, as the C# `MaskedCopyCopied` says it.
     MaskedCopyCopied,
     /// The tab has no terminal text to copy, as the C# `MaskedCopyStatusNoTerminal`.

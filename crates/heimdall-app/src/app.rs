@@ -689,6 +689,15 @@ pub enum Message {
         /// Whether it is on the clipboard.
         copied: bool,
     },
+    /// A secret was written to the clipboard through [`Effect::WriteSensitiveClipboard`], or
+    /// could not be: written without its history and cloud exclusion markers counts as not
+    /// written.
+    SensitiveCopied {
+        /// Whether it is on the clipboard, protected.
+        written: bool,
+        /// What is said when it is.
+        copied: Notice,
+    },
     /// The clipboard's image arrived for the desktop of `tab`, a device-independent bitmap:
     /// it held no files and no text.
     ClipboardImage {
@@ -1155,6 +1164,7 @@ impl fmt::Debug for Message {
             Self::ClipboardText { tab, .. } => write!(f, "ClipboardText({}, ..)", tab.value()),
             Self::FileDialogFailed(_) => f.write_str("FileDialogFailed"),
             Self::ScreenshotTaken { copied } => write!(f, "ScreenshotTaken({copied})"),
+            Self::SensitiveCopied { written, .. } => write!(f, "SensitiveCopied({written})"),
             Self::DragOutFailed(failure) => write!(f, "DragOutFailed({failure:?})"),
             Self::ClipboardFiles { tab, paths } => {
                 write!(f, "ClipboardFiles({}, {})", tab.value(), paths.len())
@@ -1471,8 +1481,15 @@ pub enum Effect {
     /// Put text on the clipboard.
     WriteClipboard(String),
     /// Put a secret on the clipboard, kept out of the clipboard history, the cloud clipboard
-    /// and the monitors where the system allows it: a share's access token.
-    WriteSensitiveClipboard(String),
+    /// and the monitors where the system allows it: a share's access token. The shell
+    /// answers with [`Message::SensitiveCopied`] once the write is over; `copied` is what is
+    /// said when it worked, so a copy that failed is never announced as made.
+    WriteSensitiveClipboard {
+        /// The secret.
+        content: String,
+        /// What is said once it is on the clipboard.
+        copied: Notice,
+    },
     /// Put files of this computer on the system's clipboard as copied files, each by its
     /// full path, as Explorer's Copy does: the local file browser's "Copy". Windows only:
     /// elsewhere they stay with Heimdall.
@@ -2053,7 +2070,7 @@ impl fmt::Debug for Effect {
                 write!(f, "Answer({}, {answer:?})", question.value())
             }
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
-            Self::WriteSensitiveClipboard(_) => f.write_str("WriteSensitiveClipboard(..)"),
+            Self::WriteSensitiveClipboard { .. } => f.write_str("WriteSensitiveClipboard(..)"),
             Self::Redact { run, text, .. } => write!(f, "Redact({run}, {} bytes)", text.len()),
             Self::WriteFileList(paths) => write!(f, "WriteFileList({})", paths.len()),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
@@ -4089,6 +4106,14 @@ impl App {
             }
             Message::FileDialogFailed(said) => {
                 self.tell(Notice::FileDialogFailed(said));
+                Vec::new()
+            }
+            Message::SensitiveCopied { written, copied } => {
+                self.tell(if written {
+                    copied
+                } else {
+                    Notice::SecretCopyFailed
+                });
                 Vec::new()
             }
             Message::ScreenshotTaken { copied } => {

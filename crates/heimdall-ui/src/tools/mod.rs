@@ -672,8 +672,11 @@ pub enum CopySlot {
 
 /// `text` written to the clipboard as a secret, for a copy that is not a tool's button (the
 /// application's share link carries its token).
-pub(crate) fn sensitive_clipboard_write(text: String) -> Task<Message> {
-    sensitive_clipboard::write(text)
+pub(crate) fn sensitive_clipboard_write(
+    text: String,
+    done: impl Fn(bool) -> Message + Send + 'static,
+) -> Task<Message> {
+    sensitive_clipboard::write(text, done)
 }
 
 impl CopySlot {
@@ -710,6 +713,9 @@ pub enum ToolMessage {
     CopyShown(u64),
     /// How the export of the button of `.0` to a file went.
     Exported(CopySlot, file_export::Saved),
+    /// The write number `.1` of the secret of the button of `.0` ended: on the clipboard
+    /// (`.2`) or not.
+    SecretCopied(CopySlot, u64, bool),
     /// The hash generator's.
     Hash(HashMessage),
     /// The HMAC generator's.
@@ -932,6 +938,12 @@ pub struct ToolPane {
     copied: Option<(CopySlot, u64)>,
     copies: u64,
     export_failed: Option<String>,
+    /// The last secret copy did not reach the clipboard, protected: said under the header.
+    copy_failed: bool,
+    /// The number of the latest secret write asked for; older answers are ignored.
+    secret_seq: u64,
+    /// The password of that write, when its clipboard countdown is to start once written.
+    secret_pending: Option<zeroize::Zeroizing<String>>,
 }
 
 impl ToolPane {
@@ -1013,6 +1025,9 @@ impl ToolPane {
             copied: None,
             copies: 0,
             export_failed: None,
+            copy_failed: false,
+            secret_seq: 0,
+            secret_pending: None,
         }
     }
 
@@ -1032,7 +1047,7 @@ impl ToolPane {
     }
 
     /// The copy button of `slot` shows its check mark.
-    fn copied(&self, slot: CopySlot) -> bool {
+    pub(crate) fn copied(&self, slot: CopySlot) -> bool {
         self.copied.is_some_and(|(shown, _)| shown == slot)
     }
 
@@ -1044,21 +1059,60 @@ impl ToolPane {
             return Task::none();
         }
         if slot.is_secret() {
-            return self.copy_secret(tab, slot, content);
+            return self.copy_secret(tab, slot, content, false);
         }
         Task::batch([iced::clipboard::write(content), self.check_mark(tab, slot)])
     }
 
     /// As [`Self::copy`] for a secret: kept out of the clipboard history, the cloud clipboard
-    /// and the monitors where the system allows it, as the C# `SetSensitiveText`.
-    fn copy_secret(&mut self, tab: TabId, slot: CopySlot, content: String) -> Task<Message> {
+    /// and the monitors where the system allows it, as the C# `SetSensitiveText`. The check
+    /// mark waits for the write's answer ([`ToolMessage::SecretCopied`]): a secret that is
+    /// not on the clipboard, or not protected, must not look copied. `auto_clear` is a
+    /// password the clipboard clears after a delay: its countdown starts once it is on it.
+    /// Each write has a number and only the latest one's answer counts: the writes run on
+    /// threads of their own and their answers may come in any order.
+    pub(crate) fn copy_secret(
+        &mut self,
+        tab: TabId,
+        slot: CopySlot,
+        content: String,
+        auto_clear: bool,
+    ) -> Task<Message> {
         if content.is_empty() {
             return Task::none();
         }
-        Task::batch([
-            sensitive_clipboard::write(content),
-            self.check_mark(tab, slot),
-        ])
+        self.copy_failed = false;
+        self.secret_seq += 1;
+        let seq = self.secret_seq;
+        self.secret_pending = auto_clear.then(|| zeroize::Zeroizing::new(content.clone()));
+        sensitive_clipboard::write(content, move |written| {
+            Message::Tool(tab, ToolMessage::SecretCopied(slot, seq, written))
+        })
+    }
+
+    /// The answer of write number `seq` of the secret of `slot`: its check mark when it is
+    /// on the clipboard, the strip under the header when it is not. An answer older than
+    /// the latest request changes nothing. Also gives the password to arm a countdown for.
+    fn secret_copied(
+        &mut self,
+        tab: TabId,
+        slot: CopySlot,
+        seq: u64,
+        written: bool,
+    ) -> (Task<Message>, Option<zeroize::Zeroizing<String>>) {
+        if seq != self.secret_seq {
+            return (Task::none(), None);
+        }
+        let pending = self.secret_pending.take();
+        self.copy_failed = !written;
+        if written {
+            (self.check_mark(tab, slot), pending)
+        } else {
+            if self.copied.is_some_and(|(shown, _)| shown == slot) {
+                self.copied = None;
+            }
+            (Task::none(), None)
+        }
     }
 
     /// The check mark of the button of `slot` shown for [`COPY_FEEDBACK`].
@@ -1098,6 +1152,12 @@ impl ToolPane {
                 Task::none()
             }
         }
+    }
+
+    /// Whether the last secret copy did not reach the clipboard, protected.
+    #[must_use]
+    pub fn copy_failure(&self) -> bool {
+        self.copy_failed
     }
 
     /// Why the last export failed, when it did.
@@ -1319,6 +1379,12 @@ impl ToolPanes {
             .is_some_and(|state| matches!(state.pane, Pane::Password(_)))
     }
 
+    /// The state of tool tab `tab`, to change it.
+    #[cfg(test)]
+    pub(crate) fn get_mut(&mut self, tab: TabId) -> Option<&mut ToolPane> {
+        self.panes.get_mut(&tab)
+    }
+
     /// The state of tool tab `tab`.
     #[must_use]
     pub fn get(&self, tab: TabId) -> Option<&ToolPane> {
@@ -1383,6 +1449,17 @@ impl ToolPanes {
             (ToolMessage::CloseHelp, _) => state.help = false,
             (ToolMessage::Exported(slot, saved), _) => {
                 return state.exported(tab, slot, saved);
+            }
+            (ToolMessage::SecretCopied(slot, seq, written), _) => {
+                let (shown, password) = state.secret_copied(tab, slot, seq, written);
+                // The countdown starts only for a password that is on the clipboard, as the
+                // C# `CopySecret` returns before its timer when the copy failed.
+                return match (password, &mut state.pane) {
+                    (Some(password), Pane::Password(pane)) => {
+                        Task::batch([shown, pane.armed(password.to_string()).task(tab, main)])
+                    }
+                    _ => shown,
+                };
             }
             (ToolMessage::CopyShown(copy), _) => {
                 if state.copied.is_some_and(|(_, shown)| shown == copy) {
@@ -1477,14 +1554,7 @@ impl ToolPanes {
             (ToolMessage::Password(message), Pane::Password(pane)) => {
                 return match pane.update(message) {
                     password_tool::Outcome::Copy(slot, content, timer) => {
-                        let copied = state.copy_secret(tab, slot, content);
-                        match timer {
-                            Some(timer) => Task::batch([
-                                copied,
-                                password_tool::Outcome::Tick(timer).task(tab, main),
-                            ]),
-                            None => copied,
-                        }
+                        state.copy_secret(tab, slot, content, timer)
                     }
                     outcome => outcome.task(tab, main),
                 };
@@ -2023,6 +2093,7 @@ pub fn view<'a>(
         header(tab, title, actions),
         state.help.then(|| help_panel(tab, help)),
         state.export_failure().map(export_failed_strip),
+        state.copy_failed.then(copy_failed_strip),
         state.route.view(tab, tool.route_support()),
     ]
     .push(body)
@@ -2083,6 +2154,15 @@ fn header(
 /// Why the last export failed, under the header, as the C# `StatusExportFailed` line.
 fn export_failed_strip<'a>(detail: &str) -> Element<'a, Message> {
     container(error_line(fl!("ui-tool-export-failed", detail = detail)))
+        .padding(HELP_PADDING)
+        .width(Length::Fill)
+        .style(styles::strip)
+        .into()
+}
+
+/// Said under the header when a secret was not put on the clipboard.
+fn copy_failed_strip<'a>() -> Element<'a, Message> {
+    container(error_line(fl!("ui-tool-secret-copy-failed")))
         .padding(HELP_PADDING)
         .width(Length::Fill)
         .style(styles::strip)

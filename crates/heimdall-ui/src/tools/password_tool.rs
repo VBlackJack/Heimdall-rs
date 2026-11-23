@@ -402,9 +402,9 @@ impl fmt::Debug for PasswordMessage {
 pub enum Outcome {
     /// Nothing more.
     Done,
-    /// This copied by its button; the clipboard's countdown `timer` started when it is a
-    /// password and the clipboard is cleared after a delay.
-    Copy(CopySlot, String, Option<u64>),
+    /// This copied by its button; `.2` says the clipboard is cleared after a delay, so a
+    /// countdown starts once the write succeeded ([`PasswordPane::armed`]).
+    Copy(CopySlot, String, bool),
     /// The next second of countdown `.0`.
     Tick(u64),
     /// The clipboard read for countdown `.0`.
@@ -422,7 +422,7 @@ impl fmt::Debug for Outcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Done => f.write_str("Done"),
-            Self::Copy(slot, _, timer) => write!(f, "Copy({slot:?}, .., {timer:?})"),
+            Self::Copy(slot, _, clear) => write!(f, "Copy({slot:?}, .., {clear})"),
             Self::Tick(timer) => write!(f, "Tick({timer})"),
             Self::ReadClipboard(timer) => write!(f, "ReadClipboard({timer})"),
             Self::ClearClipboard(timer) => write!(f, "ClearClipboard({timer})"),
@@ -775,13 +775,18 @@ impl PasswordPane {
         if content.is_empty() {
             return Outcome::Done;
         }
-        let timer = (secret && self.engine.settings().clipboard_auto_clear).then(|| {
-            self.timer += 1;
-            self.copied = Some(Zeroizing::new(content.clone()));
-            self.countdown = Countdown::Running(self.engine.clipboard_clear_seconds());
-            self.timer
-        });
-        Outcome::Copy(slot, content, timer)
+        let clear = secret && self.engine.settings().clipboard_auto_clear;
+        Outcome::Copy(slot, content, clear)
+    }
+
+    /// The password `content` is on the clipboard: its countdown starts, as the C#
+    /// `CopySecret` starts its timer only after a successful copy. A copy that failed never
+    /// reaches here, so a countdown already running goes on.
+    pub fn armed(&mut self, content: String) -> Outcome {
+        self.timer += 1;
+        self.copied = Some(Zeroizing::new(content));
+        self.countdown = Countdown::Running(self.engine.clipboard_clear_seconds());
+        Outcome::Tick(self.timer)
     }
 
     fn refresh_output(&mut self) {
@@ -2057,13 +2062,64 @@ mod tests {
     #[test]
     fn an_outcome_never_writes_out_its_passwords() {
         let write = Outcome::Write(PathBuf::from("b.txt"), Zeroizing::new("hunter2".to_owned()));
-        let copy = Outcome::Copy(CopySlot::PasswordMain, "hunter2".to_owned(), Some(1));
+        let copy = Outcome::Copy(CopySlot::PasswordMain, "hunter2".to_owned(), true);
         let shown = format!("{write:?} {copy:?}");
         assert!(!shown.contains("hunter2"), "{shown}");
     }
 
     fn pane() -> PasswordPane {
         PasswordPane::new(None)
+    }
+
+    /// A copy whose write succeeded: the content copied and the countdown's number.
+    fn copy_armed(pane: &mut PasswordPane, copy: PasswordCopy) -> (String, u64) {
+        let Outcome::Copy(_, content, true) = pane.update(PasswordMessage::Copy(copy)) else {
+            panic!("a copy that starts a countdown");
+        };
+        let Outcome::Tick(timer) = pane.armed(content.clone()) else {
+            panic!("the first tick");
+        };
+        (content, timer)
+    }
+
+    #[test]
+    fn a_copy_arms_no_countdown_before_its_write_answers_and_a_failed_one_leaves_the_running_one() {
+        let mut pane = pane();
+        pane.update(PasswordMessage::Set(Setting::ClipboardAutoClear(true)));
+        pane.update(PasswordMessage::Set(Setting::ClipboardClearIndex(1)));
+        // Asked, not yet written: nothing is armed.
+        assert!(matches!(
+            pane.update(PasswordMessage::Copy(PasswordCopy::Main)),
+            Outcome::Copy(_, _, true)
+        ));
+        assert_eq!(pane.countdown, Countdown::Idle);
+        // A first password is on the clipboard and counting down.
+        let (first, timer) = copy_armed(&mut pane, PasswordCopy::Main);
+        assert!(matches!(
+            pane.update(PasswordMessage::ClipboardTick(timer)),
+            Outcome::Tick(_)
+        ));
+        // A second copy fails: it is asked for, never armed, so the first goes on.
+        assert!(matches!(
+            pane.update(PasswordMessage::Copy(PasswordCopy::Main)),
+            Outcome::Copy(_, _, true)
+        ));
+        assert_eq!(pane.countdown, Countdown::Running(9));
+        for _ in 0..8 {
+            assert!(matches!(
+                pane.update(PasswordMessage::ClipboardTick(timer)),
+                Outcome::Tick(_)
+            ));
+        }
+        assert!(matches!(
+            pane.update(PasswordMessage::ClipboardTick(timer)),
+            Outcome::ReadClipboard(_)
+        ));
+        assert!(matches!(
+            pane.update(PasswordMessage::ClipboardRead(timer, Some(first))),
+            Outcome::ClearClipboard(_)
+        ));
+        assert_eq!(pane.countdown, Countdown::Cleared);
     }
 
     #[test]
@@ -2073,7 +2129,7 @@ mod tests {
             super::super::box_text(&pane.output),
             pane.engine().password()
         );
-        let Outcome::Copy(CopySlot::PasswordMain, copied, None) =
+        let Outcome::Copy(CopySlot::PasswordMain, copied, false) =
             pane.update(PasswordMessage::Copy(PasswordCopy::Main))
         else {
             panic!("copied without a countdown");
@@ -2131,11 +2187,7 @@ mod tests {
         let mut pane = pane();
         pane.update(PasswordMessage::Set(Setting::ClipboardAutoClear(true)));
         pane.update(PasswordMessage::Set(Setting::ClipboardClearIndex(1)));
-        let Outcome::Copy(_, copied, Some(timer)) =
-            pane.update(PasswordMessage::Copy(PasswordCopy::Main))
-        else {
-            panic!("a countdown");
-        };
+        let (copied, timer) = copy_armed(&mut pane, PasswordCopy::Main);
         assert_eq!(pane.countdown, Countdown::Running(10));
         for _ in 0..9 {
             assert!(matches!(
@@ -2155,11 +2207,7 @@ mod tests {
         pane.update(PasswordMessage::ClipboardHintDone(timer));
         assert_eq!(pane.countdown, Countdown::Idle);
         // Something else copied meanwhile is left where it is.
-        let Outcome::Copy(_, _, Some(timer)) =
-            pane.update(PasswordMessage::Copy(PasswordCopy::Main))
-        else {
-            panic!("a countdown");
-        };
+        let (_, timer) = copy_armed(&mut pane, PasswordCopy::Main);
         assert!(matches!(
             pane.update(PasswordMessage::ClipboardRead(
                 timer,
@@ -2173,11 +2221,7 @@ mod tests {
     fn closing_the_tab_hands_over_a_password_still_counting_down_to_its_clear() {
         let mut pane = pane();
         pane.update(PasswordMessage::Set(Setting::ClipboardAutoClear(true)));
-        let Outcome::Copy(_, copied, Some(_)) =
-            pane.update(PasswordMessage::Copy(PasswordCopy::Main))
-        else {
-            panic!("a countdown");
-        };
+        let (copied, _) = copy_armed(&mut pane, PasswordCopy::Main);
         assert_eq!(
             pane.closing().as_deref().map(String::as_str),
             Some(copied.as_str()),
@@ -2187,11 +2231,7 @@ mod tests {
         assert!(pane.closing().is_none(), "handed over once");
 
         // Already cleared: nothing is owed.
-        let Outcome::Copy(_, copied, Some(timer)) =
-            pane.update(PasswordMessage::Copy(PasswordCopy::Main))
-        else {
-            panic!("a countdown");
-        };
+        let (copied, timer) = copy_armed(&mut pane, PasswordCopy::Main);
         pane.update(PasswordMessage::ClipboardRead(timer, Some(copied)));
         assert!(pane.closing().is_none());
 
@@ -2226,10 +2266,12 @@ mod tests {
         panes.sync(&app);
         let tab = app.tabs.last().expect("its tab").id;
         for message in [
-            PasswordMessage::Set(Setting::ClipboardAutoClear(true)),
-            PasswordMessage::Copy(PasswordCopy::Main),
+            ToolMessage::Password(PasswordMessage::Set(Setting::ClipboardAutoClear(true))),
+            ToolMessage::Password(PasswordMessage::Copy(PasswordCopy::Main)),
+            // The write answers: written, so the countdown starts.
+            ToolMessage::SecretCopied(CopySlot::PasswordMain, 1, true),
         ] {
-            let _ = panes.update(tab, ToolMessage::Password(message), None, &app);
+            let _ = panes.update(tab, message, None, &app);
         }
         let Some(super::super::Pane::Password(pane)) = panes.get(tab).map(|state| &state.pane)
         else {
@@ -2250,11 +2292,7 @@ mod tests {
     fn the_phonetic_reading_is_cleared_from_the_clipboard_as_the_password_is() {
         let mut pane = pane();
         pane.update(PasswordMessage::Set(Setting::ClipboardAutoClear(true)));
-        let Outcome::Copy(CopySlot::PasswordPhonetic, copied, Some(_)) =
-            pane.update(PasswordMessage::Copy(PasswordCopy::Phonetic))
-        else {
-            panic!("the phonetic reading starts a countdown");
-        };
+        let (copied, _) = copy_armed(&mut pane, PasswordCopy::Phonetic);
         assert_eq!(copied, pane.engine().phonetic());
         assert!(matches!(pane.countdown, Countdown::Running(_)));
     }
