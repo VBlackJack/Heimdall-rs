@@ -838,9 +838,24 @@ fn what_is_remembered_leaves_no_trace_in_the_settings_an_export_or_any_file() {
     assert!(store_holds(&system, PASSWORD));
 
     // The settings export: the document the Export button writes.
-    let effects = app.update(Message::SettingsTransfer(
+    let mut effects = app.update(Message::SettingsTransfer(
         heimdall_app::SettingsTransferMessage::Export,
     ));
+    // The source file lives under the temp folder. When that folder is inside the user's
+    // home folder (a default Windows profile), the export asks before carrying such a path:
+    // answer yes, as a user would, so the document is produced wherever the temp folder is.
+    // The document with the paths is the larger one: it is the one that must hold no secret.
+    if effects.is_empty() {
+        assert!(
+            matches!(
+                app.dialog,
+                Some(heimdall_app::Dialog::ConfirmSettingsExportPaths { .. })
+            ),
+            "no document and no question: {:?}",
+            app.dialog
+        );
+        effects = app.update(Message::ConfirmDialog);
+    }
     let documents: Vec<String> = effects
         .into_iter()
         .filter_map(|effect| match effect {
