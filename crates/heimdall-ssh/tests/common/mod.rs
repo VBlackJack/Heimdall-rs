@@ -33,7 +33,7 @@ use heimdall_ssh::{
     Secret, UsernameQuestion,
 };
 use russh::keys::{Algorithm, PrivateKey, PublicKey};
-use russh::server::{self, Auth, Msg, Response, Session};
+use russh::server::{self, Auth, Msg, PublicKeyOffer, Response, Session, VerifiedPublicKey};
 use russh::{Channel, ChannelId, MethodKind, MethodSet, Preferred};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
@@ -640,8 +640,9 @@ impl server::Handler for Connection {
     async fn auth_publickey_offered(
         &mut self,
         user: &str,
-        key: &PublicKey,
+        offer: PublicKeyOffer<'_>,
     ) -> Result<Auth, Self::Error> {
+        let key = offer.public_key;
         self.observe(|o| o.publickey_offers.push(key.clone()));
         Ok(if self.is_authorized(user, key) {
             Auth::Accept
@@ -650,8 +651,12 @@ impl server::Handler for Connection {
         })
     }
 
-    async fn auth_publickey(&mut self, user: &str, key: &PublicKey) -> Result<Auth, Self::Error> {
-        Ok(self.check_key(user, key))
+    async fn auth_publickey(
+        &mut self,
+        user: &str,
+        key: VerifiedPublicKey<'_>,
+    ) -> Result<Auth, Self::Error> {
+        Ok(self.check_key(user, key.public_key))
     }
 
     async fn auth_keyboard_interactive<'a>(

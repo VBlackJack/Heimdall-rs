@@ -27,6 +27,8 @@ publish = false
 heimdall-app = { path = "crates/heimdall-app" }
 heimdall-core = { path = "crates/heimdall-core" }
 heimdall-dragout = { path = "crates/heimdall-dragout" }
+# heimdall-test-ftp: the FTP server of the Files tests, a dev-dependency only.
+heimdall-test-ftp = { path = "crates/heimdall-test-ftp" }
 heimdall-titlebar = { path = "crates/heimdall-titlebar" }
 heimdall-files = { path = "crates/heimdall-files" }
 heimdall-keyring = { path = "crates/heimdall-keyring" }
@@ -72,9 +74,6 @@ ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] 
 # two-face: the syntaxes iced's highlighter colours with, to name the one a file is shown in.
 two-face = { version = "0.5.2", default-features = false, features = ["syntect-default-fancy"] }
 log = { version = "0.4.34", features = ["std"] }
-# libunftp, unftp-sbe-fs: an FTP server in the Files tests only; ring, as the workspace.
-libunftp = { version = "0.23.1", default-features = false, features = ["ring"] }
-unftp-sbe-fs = "0.4.0"
 # rcgen: test certificates only.
 rcgen = { version = "0.14.5", default-features = false, features = ["crypto", "ring"] }
 ring = "0.17.14"
@@ -82,7 +81,7 @@ ring = "0.17.14"
 # font stack.
 roxmltree = "0.21.1"
 # des: 3DES-CBC, offered only to a profile that allows legacy algorithms.
-russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa", "flate2", "des"] }
+russh = { version = "0.65.0", default-features = false, features = ["ring", "rsa", "flate2", "des"] }
 rust-embed = "8.12.0"
 # rustls-native-certs: the system's certificate store, for an FTPS certificate it trusts, as in
 # the C#, and a VNC one.
@@ -115,7 +114,7 @@ hmac = "0.13.0"
 # hkdf: HKDF-SHA256 in sealvault::kdf, for the Windows Hello envelope; already in the tree
 # through russh, at this version.
 hkdf = "0.13.0"
-suppaftp = { version = "12.1.1", default-features = false, features = ["tokio-rustls-ring"] }
+suppaftp = { version = "13.0.0", default-features = false, features = ["tokio-rustls-ring"] }
 # rfd: the system's open, save and folder dialogs on Windows and macOS, as the C#
 # OpenFileDialog and SaveFileDialog. Not built on Linux: there heimdall-ui speaks to the
 # desktop portal's FileChooser itself, over zbus (see docs/native-libraries.md).
@@ -169,8 +168,10 @@ tokio-util = "0.7.19"
 # regex: what a terminal macro waits for, when written as a regular expression, and the
 # Regex Tester tool's patterns that need no backtracking; already in the tree.
 regex = "1.13.1"
-# chrono: this computer's clock, for the date a note is written; already in the tree.
-chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+# jiff: this computer's clock and time zone, for the times the app shows and the dates it
+# names a file or a note after (chrono, unmaintained, RUSTSEC-2026-0543, was this). The
+# system zone comes from the zoneinfo files on Unix and from a bundled database on Windows.
+jiff = { version = "1.0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-bundle-platform"] }
 toml = "1.1.6"
 # unicode-normalization: accents folded out of the tree's search, as the C# FormD fold.
 unicode-normalization = "0.1.25"

@@ -21,8 +21,7 @@
 //! pane, which stays where it was; nothing done while it lists or asks a question, the next
 //! report followed then; never an FTP pane, and nothing ever typed into the shell.
 
-#[path = "support/ftp_server.rs"]
-mod ftp_server;
+use heimdall_test_ftp as ftp_server;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};

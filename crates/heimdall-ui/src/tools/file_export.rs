@@ -25,7 +25,6 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use chrono::NaiveDateTime;
 use heimdall_app::TabId;
 use iced::{Task, window};
 
@@ -85,7 +84,7 @@ pub fn file_name(
     prefix: &str,
     subject: Option<&str>,
     format: Format,
-    now: NaiveDateTime,
+    now: jiff::civil::DateTime,
 ) -> String {
     let mut name = prefix.to_owned();
     if let Some(subject) = subject.map(str::trim).filter(|subject| !subject.is_empty()) {
@@ -99,7 +98,7 @@ pub fn file_name(
         }));
     }
     name.push(SEPARATOR);
-    name.push_str(&now.format(TIMESTAMP_FORMAT).to_string());
+    name.push_str(&now.strftime(TIMESTAMP_FORMAT).to_string());
     name.push('.');
     name.push_str(format.extension());
     name
@@ -108,7 +107,12 @@ pub fn file_name(
 /// [`file_name`] at the local time now, as the C# `DateTime.Now`.
 #[must_use]
 pub fn file_name_now(prefix: &str, subject: Option<&str>, format: Format) -> String {
-    file_name(prefix, subject, format, chrono::Local::now().naive_local())
+    file_name(
+        prefix,
+        subject,
+        format,
+        heimdall_app::time_zone::local_now().datetime(),
+    )
 }
 
 /// An export waiting for the place it is saved: the button it answers, the dialog's title

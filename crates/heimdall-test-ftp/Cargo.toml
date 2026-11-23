@@ -1,0 +1,21 @@
+# Copyright 2026 Julien Bombled
+# Licensed under the Apache License, Version 2.0. See LICENSE.
+
+[package]
+name = "heimdall-test-ftp"
+description = "An FTP and explicit FTPS server for tests: serves a folder on a free local port. Never a dependency of the application."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# fs: the served folder is read and written through tokio.
+tokio = { workspace = true, features = ["fs"] }
+tokio-rustls.workspace = true
+
+[lints]
+workspace = true
