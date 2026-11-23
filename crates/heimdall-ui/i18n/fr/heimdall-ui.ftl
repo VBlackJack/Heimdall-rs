@@ -5975,6 +5975,13 @@ ui-network-scan-kind-telnet = Telnet
 ui-network-scan-kind-web = Web
 # Tab strip: the list of every open tab and the arrangement by folder, as the C# one.
 ui-tab-menu-group-by-folder = Grouper les onglets par dossier
+ui-tab-menu-collapse-folder = Replier les onglets du dossier
+ui-tab-menu-expand-folder = Déplier les onglets du dossier
+ui-tab-menu-collapse-other-folders = Replier les autres dossiers
+ui-tab-menu-close-folder = Fermer les onglets du dossier
+ui-tab-folder-chip-open = Onglets du dossier { $folder }, dépliés
+ui-tab-folder-chip-folded = Onglets du dossier { $folder }, repliés
+ui-tab-folder-chip-lone = Onglets du dossier { $folder }, dépliés ; ce sont les seuls onglets ouverts, ils ne peuvent pas être repliés
 ui-tab-list-tooltip = Tous les onglets ouverts
 ui-tab-list-entry = { $name } - { $state }
 

@@ -1811,6 +1811,9 @@ pub struct TabMenuState {
     pub pinned: bool,
     /// The tabs are gathered by the folder of their profile.
     pub grouped: bool,
+    /// What it offers of its folder group; `None` for a tab in no group, which the arrangement
+    /// by folder never gathers.
+    pub folder: Option<FolderEntries>,
     /// How many tabs "Reopen closed tab" opens again; 0 hides it, as the C# shows it only
     /// with a tab to reopen.
     pub reopen_closed: usize,
@@ -1833,6 +1836,15 @@ pub struct TabMenuState {
     pub detach_secondary: bool,
     /// What it offers of a split.
     pub split: SplitEntries,
+}
+
+/// What a tab's menu offers of its folder group, as the C# `AppendTabGroupItems`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FolderEntries {
+    /// The group is folded behind its chip: the entry unfolds it.
+    pub folded: bool,
+    /// The strip holds another folder group: "Collapse the other folders" is offered.
+    pub other_folders: bool,
 }
 
 /// What a tab's menu offers of a split, as the C# one.
@@ -2226,6 +2238,22 @@ fn own_tab_entries<'a>(state: &TabMenuState) -> Vec<Element<'a, Message>> {
         state.grouped,
         AppMessage::TabMenu(TabMenuMessage::ToggleGroupByFolder),
     ));
+    if let Some(folder) = state.folder {
+        own.push(entry(
+            if folder.folded {
+                fl!("ui-tab-menu-expand-folder")
+            } else {
+                fl!("ui-tab-menu-collapse-folder")
+            },
+            Some(AppMessage::TabMenu(TabMenuMessage::ToggleFolderFold(tab))),
+        ));
+        if folder.other_folders {
+            own.push(entry(
+                fl!("ui-tab-menu-collapse-other-folders"),
+                Some(AppMessage::TabMenu(TabMenuMessage::FoldOtherFolders(tab))),
+            ));
+        }
+    }
     if state.reopen_closed > 0 {
         own.push(keyed_entry(
             if state.reopen_closed > 1 {
@@ -2305,7 +2333,7 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
         .map(|profile| profile_tab_entries(tab, profile, state.editable, state.external_tools))
         .unwrap_or_default();
     let close = |group| menu(TabMenuMessage::Close { tab, group });
-    let closing = vec![
+    let mut closing = vec![
         entry(
             fl!("ui-tab-menu-close-others"),
             close(TabGroup::Others).filter(|_| state.others),
@@ -2314,13 +2342,23 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             fl!("ui-tab-menu-close-right"),
             close(TabGroup::Right).filter(|_| state.right),
         ),
+    ];
+    // Between "Close to the right" and "Close all tabs", as the C# lists it, for a tab in a
+    // folder group only.
+    if state.folder.is_some() {
+        closing.push(entry(
+            fl!("ui-tab-menu-close-folder"),
+            close(TabGroup::Folder),
+        ));
+    }
+    closing.extend([
         // Reachable from the menu, as the C# "Close all tabs", asking once with the counts.
         entry(
             fl!("ui-tab-menu-close-all"),
             close(TabGroup::All).filter(|_| state.all),
         ),
         close_entry(state),
-    ];
+    ]);
     menu_card(join_sections([
         session,
         resolution,
