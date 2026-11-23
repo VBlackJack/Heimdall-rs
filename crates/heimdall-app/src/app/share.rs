@@ -148,16 +148,21 @@ impl App {
             ShareMessage::CopyUrl => match self.share_info() {
                 Some(info) => {
                     let url = info.url();
-                    self.tell(Notice::Share(ShareNotice::UrlCopied));
-                    vec![Effect::WriteSensitiveClipboard(url)]
+                    // Said once the write reports back: a copy that failed is not announced.
+                    vec![Effect::WriteSensitiveClipboard {
+                        content: url,
+                        copied: Notice::Share(ShareNotice::UrlCopied),
+                    }]
                 }
                 None => Vec::new(),
             },
             ShareMessage::CopyCommand => match self.share_info() {
                 Some(info) => {
                     let command = info.curl_command();
-                    self.tell(Notice::Share(ShareNotice::CommandCopied));
-                    vec![Effect::WriteSensitiveClipboard(command)]
+                    vec![Effect::WriteSensitiveClipboard {
+                        content: command,
+                        copied: Notice::Share(ShareNotice::CommandCopied),
+                    }]
                 }
                 None => Vec::new(),
             },

@@ -69,9 +69,11 @@ fn marker_formats() -> [(&'static str, [u8; 4]); 3] {
 /// `text` written to the clipboard as a secret. On Windows it is written with its markers or
 /// not at all: a copy without them would reach the clipboard history and the cloud clipboard,
 /// so a failure is logged and nothing is copied, as the C# `SecretClipboardGuard.TryCopy`
-/// returns false (the generator shows nothing then). Elsewhere, where the clipboard cannot
-/// carry the markers, it is written as plain text.
-pub fn write(text: String) -> Task<Message> {
+/// returns false. `done` is told whether it was written with its markers, so the caller shows
+/// its check mark or its notice only for a copy that happened (the C# generators show nothing
+/// on false; here the user is told). Elsewhere, where the clipboard cannot carry the markers,
+/// it is written as plain text, which is the whole protection that system has.
+pub fn write(text: String, done: impl Fn(bool) -> Message + Send + 'static) -> Task<Message> {
     #[cfg(windows)]
     {
         let secret = zeroize::Zeroizing::new(text);
@@ -81,18 +83,17 @@ pub fn write(text: String) -> Task<Message> {
                     .await
                     .unwrap_or_else(|error| Err(error.to_string()))
             },
-            |written| written,
+            move |written| {
+                if let Err(error) = &written {
+                    log::warn!("the secret was not copied, its markers could not be set: {error}");
+                }
+                done(written.is_ok())
+            },
         )
-        .then(|written| {
-            if let Err(error) = written {
-                log::warn!("the secret was not copied, its markers could not be set: {error}");
-            }
-            Task::none()
-        })
     }
     #[cfg(not(windows))]
     {
-        iced::clipboard::write(text)
+        iced::clipboard::write(text).chain(Task::done(done(true)))
     }
 }
 

@@ -5311,8 +5311,13 @@ impl Shell {
                 },
             ),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
-            Effect::WriteSensitiveClipboard(content) => {
-                crate::tools::sensitive_clipboard_write(content)
+            Effect::WriteSensitiveClipboard { content, copied } => {
+                crate::tools::sensitive_clipboard_write(content, move |written| {
+                    Message::App(AppMessage::SensitiveCopied {
+                        written,
+                        copied: copied.clone(),
+                    })
+                })
             }
             // Off the UI thread: a 4 MiB text takes a moment. The text is neither logged nor
             // kept past the call; a thread that fails leaves the dialog unable to copy.
@@ -16064,6 +16069,37 @@ mod tests {
         // A menu over it keeps the keys.
         shell.menu = Some((TreeMenu::Tab(tab), iced::Point::ORIGIN));
         assert!(shell.password_key(&enter).is_none());
+    }
+
+    #[test]
+    fn a_secret_copy_that_failed_shows_no_check_mark_and_says_so() {
+        use crate::tools::{CopySlot, ToolMessage};
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = Shell::with_app(App::new(AppConfig {
+            profiles_file: dir.path().join("profiles.toml"),
+            known_hosts: dir.path().join("known_hosts"),
+            legacy_dir: None,
+            agent: AgentSource::Disabled,
+            initial_grid: INITIAL_GRID,
+            files_start: dir.path().to_owned(),
+            system_credentials: heimdall_app::SystemCredentials::memory(),
+        }));
+        let _ = shell.update(Message::OpenTool(heimdall_app::tools::ToolId::Totp));
+        let tab = shell.shown_tab_id().expect("the tool's tab");
+        let slot = CopySlot::TotpCode;
+        let answer = |written| Message::Tool(tab, ToolMessage::SecretCopied(slot, None, written));
+
+        // The write failed: no check mark, and the user is told.
+        let _ = shell.update(answer(false));
+        let pane = shell.tools.get(tab).expect("the tool's pane");
+        assert!(!pane.copied(slot), "a failed copy shows no check mark");
+        assert!(pane.copy_failure());
+
+        // The next copy worked: the check mark shows and the failure is gone.
+        let _ = shell.update(answer(true));
+        let pane = shell.tools.get(tab).expect("the tool's pane");
+        assert!(pane.copied(slot));
+        assert!(!pane.copy_failure());
     }
 
     #[test]

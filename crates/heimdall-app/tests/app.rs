@@ -926,7 +926,10 @@ fn closing_a_tab_still_connecting_does_not_ask() {
 fn effects_never_show_clipboard_text() {
     let effect = Effect::WriteClipboard("hunter2".to_owned());
     assert!(!format!("{effect:?}").contains("hunter2"));
-    let sensitive = Effect::WriteSensitiveClipboard("hunter2".to_owned());
+    let sensitive = Effect::WriteSensitiveClipboard {
+        content: "hunter2".to_owned(),
+        copied: heimdall_app::Notice::MaskedCopyCopied,
+    };
     assert!(!format!("{sensitive:?}").contains("hunter2"));
 }
 

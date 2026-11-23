@@ -170,6 +170,40 @@ fn the_chosen_address_is_kept_by_the_dialog() {
     assert_eq!(form.bind, lan);
 }
 
+/// The secret a copy button of the share puts on the clipboard: one sensitive write, which
+/// says `notice` once it worked.
+fn secret_copy(app: &mut App, message: ShareMessage, notice: &ShareNotice) -> String {
+    match share(app, message).as_slice() {
+        [
+            Effect::WriteSensitiveClipboard {
+                content,
+                copied: Notice::Share(copied),
+            },
+        ] if copied == notice => content.clone(),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// After a copy of the share URL was asked for: nothing is said before the write answers, a
+/// write that failed says so instead of "copied", and one that worked says "copied".
+fn the_write_answer_decides_what_is_said(app: &mut App) {
+    assert!(matches!(
+        app.notice(),
+        Some(Notice::Share(ShareNotice::Started(_)))
+    ));
+    let copied = Notice::Share(ShareNotice::UrlCopied);
+    app.update(Message::SensitiveCopied {
+        written: false,
+        copied: copied.clone(),
+    });
+    assert_eq!(app.notice(), Some(&Notice::SecretCopyFailed));
+    app.update(Message::SensitiveCopied {
+        written: true,
+        copied: copied.clone(),
+    });
+    assert_eq!(app.notice(), Some(&copied));
+}
+
 #[tokio::test]
 async fn a_share_runs_is_copied_and_is_stopped_by_the_toggle() {
     let dir = tempfile::tempdir().unwrap();
@@ -206,17 +240,16 @@ async fn a_share_runs_is_copied_and_is_stopped_by_the_toggle() {
     ));
 
     // The URL and the command carry the token, and the status line never does.
-    let url = match share(&mut app, ShareMessage::CopyUrl).as_slice() {
-        [Effect::WriteSensitiveClipboard(url)] => url.clone(),
-        other => panic!("{other:?}"),
-    };
+    let url = secret_copy(&mut app, ShareMessage::CopyUrl, &ShareNotice::UrlCopied);
+    the_write_answer_decides_what_is_said(&mut app);
     assert!(url.starts_with(&format!("http://{}/?token=", info.addr)));
     let token = url.rsplit('=').next().unwrap().to_owned();
     assert_eq!(token.len(), 64);
-    let command = match share(&mut app, ShareMessage::CopyCommand).as_slice() {
-        [Effect::WriteSensitiveClipboard(command)] => command.clone(),
-        other => panic!("{other:?}"),
-    };
+    let command = secret_copy(
+        &mut app,
+        ShareMessage::CopyCommand,
+        &ShareNotice::CommandCopied,
+    );
     assert!(command.contains(&format!("Authorization: Bearer {token}")));
     assert!(
         !command.contains(&format!("?token={token}")),
