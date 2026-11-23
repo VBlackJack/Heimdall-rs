@@ -148,6 +148,7 @@ mod shared_passwords;
 mod shell_directory;
 pub mod split;
 mod status;
+mod tab_folders;
 mod tab_menu;
 mod telnet_tab;
 mod tool_entry;
@@ -1469,6 +1470,9 @@ pub enum Effect {
     },
     /// Put text on the clipboard.
     WriteClipboard(String),
+    /// Put a secret on the clipboard, kept out of the clipboard history, the cloud clipboard
+    /// and the monitors where the system allows it: a share's access token.
+    WriteSensitiveClipboard(String),
     /// Put files of this computer on the system's clipboard as copied files, each by its
     /// full path, as Explorer's Copy does: the local file browser's "Copy". Windows only:
     /// elsewhere they stay with Heimdall.
@@ -2049,6 +2053,7 @@ impl fmt::Debug for Effect {
                 write!(f, "Answer({}, {answer:?})", question.value())
             }
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
+            Self::WriteSensitiveClipboard(_) => f.write_str("WriteSensitiveClipboard(..)"),
             Self::Redact { run, text, .. } => write!(f, "Redact({run}, {} bytes)", text.len()),
             Self::WriteFileList(paths) => write!(f, "WriteFileList({})", paths.len()),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
@@ -3644,6 +3649,9 @@ pub struct App {
     desktop_sessions: session_events::DesktopSessions,
     /// The folders of the tree shown closed, by path, [`NO_FOLDER`] included.
     closed_folders: std::collections::HashSet<String>,
+    /// The folder groups of the tab strip folded behind their chip, by lowercase folder path:
+    /// a view state of this run, like the pin, as the C# `_collapsedTabGroups`.
+    folded_tab_folders: std::collections::HashSet<String>,
     /// The tree's filters, beyond its search.
     tree_filter: TreeFilter,
     /// The tabs closed lately, to reopen: in memory alone, forgotten on lock and on quit.
@@ -3797,6 +3805,7 @@ impl App {
             session_logs: crate::session_log::SessionLogs::default(),
             desktop_sessions: session_events::DesktopSessions::default(),
             closed_folders: std::collections::HashSet::new(),
+            folded_tab_folders: std::collections::HashSet::new(),
             tree_filter: TreeFilter::default(),
             recently_closed: RecentlyClosed::default(),
         };
@@ -3905,6 +3914,7 @@ impl App {
         effects.extend(self.prune_floating());
         // On every change of the tabs, as the C# refresh on every change of the strip.
         self.refresh_session_load_notice();
+        self.settle_tab_folds();
         self.follow_desktop_sessions();
         self.note_status();
         if effects.iter().any(|effect| matches!(effect, Effect::Exit)) {

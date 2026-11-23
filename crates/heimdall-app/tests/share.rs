@@ -207,14 +207,14 @@ async fn a_share_runs_is_copied_and_is_stopped_by_the_toggle() {
 
     // The URL and the command carry the token, and the status line never does.
     let url = match share(&mut app, ShareMessage::CopyUrl).as_slice() {
-        [Effect::WriteClipboard(url)] => url.clone(),
+        [Effect::WriteSensitiveClipboard(url)] => url.clone(),
         other => panic!("{other:?}"),
     };
     assert!(url.starts_with(&format!("http://{}/?token=", info.addr)));
     let token = url.rsplit('=').next().unwrap().to_owned();
     assert_eq!(token.len(), 64);
     let command = match share(&mut app, ShareMessage::CopyCommand).as_slice() {
-        [Effect::WriteClipboard(command)] => command.clone(),
+        [Effect::WriteSensitiveClipboard(command)] => command.clone(),
         other => panic!("{other:?}"),
     };
     assert!(command.contains(&format!("Authorization: Bearer {token}")));
